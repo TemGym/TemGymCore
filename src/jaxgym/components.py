@@ -81,6 +81,9 @@ class Descanner:
         (descan_error_xx, descan_error_xy, descan_error_yx, descan_error_yy,
          descan_error_dxx, descan_error_dxy, descan_error_dyx, descan_error_dyy) = self.descan_error
         
+        descan_error_xx = 1.0 + descan_error_xx
+        descan_error_yy = 1.0 + descan_error_yy
+        
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
 
         new_x = x * descan_error_xx + descan_error_xy * y + offset_x
