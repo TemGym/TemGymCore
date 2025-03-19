@@ -105,7 +105,7 @@ def map_px_on_scan_to_detector(Detector, sample_interpolant,
     
     det_pixel_xs = np.round(ray_det_coords_x / det_pixel_size + det_shape[1] / 2).astype(np.int32)
     det_pixel_ys = np.round(ray_det_coords_y / det_pixel_size + det_shape[0] / 2).astype(np.int32)
-    
+
     return det_pixel_xs, det_pixel_ys, sample_vals
 
 

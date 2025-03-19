@@ -1,6 +1,5 @@
 import jax_dataclasses as jdc
 import jax.numpy as jnp
-from typing import Optional
 from .utils import get_pixel_coords
 from numpy.typing import NDArray
 from typing import Tuple

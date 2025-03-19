@@ -14,7 +14,6 @@ from typing_extensions import TypeAlias
 
 Radians: TypeAlias = jnp.float64  # type: ignore
 
-
 @jdc.pytree_dataclass
 class Lens:
     z: float
@@ -322,11 +321,10 @@ class Detector:
     z: float
     pixel_size: jdc.Static[float]
     shape: jdc.Static[Tuple[int, int]]
-    rotation: jdc.Static[Degrees] = 0.
-    flip_y: jdc.Static[int] = 0
     center: jdc.Static[Tuple[float, float]] = (0., 0.)
     coords: jdc.Static[NDArray] = jdc.field(init=False)
-
+    rotation: Degrees = 0.
+    
     def __post_init__(self):
         object.__setattr__(self, "coords", self.get_coords())
 
@@ -365,18 +363,12 @@ class Detector:
                        image_size_x / 2 - pixel_size,
                        shape_x, endpoint=True) + centre_x
 
-        if self.flip_y:
-            y_lin = -y_lin
-        
         y, x = jnp.meshgrid(y_lin, x_lin, indexing='ij')
 
         det_rotation_rad = jnp.deg2rad(self.rotation)
 
         y_rot = jnp.cos(det_rotation_rad) * y - jnp.sin(det_rotation_rad) * x
         x_rot = jnp.sin(det_rotation_rad) * y + jnp.cos(det_rotation_rad) * x
-
-        if self.flip_y:
-            y_rot = -y_rot
 
         r = jnp.stack((y_rot, x_rot), axis=-1).reshape(-1, 2)
 
