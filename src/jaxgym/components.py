@@ -67,8 +67,6 @@ class ThickLens:
 
 @jdc.pytree_dataclass
 class Descanner:
-    # Implicit in the descanner is that there is no lens above it, and 
-    # the incoming beam above is from a point source above the sample. 
     z: float
     descan_error: Tuple[float, float, float, float]  # Error in the scan position pos_x, y, tilt_x, y
     offset_x: float
@@ -77,7 +75,6 @@ class Descanner:
     def step(self, ray: Ray):
         offset_x, offset_y = self.offset_x, self.offset_y
 
-        ##TODO: Redescribe descan terms so that 0, 0 means no error, not 1, 1 in Axx, Ayy.
         (descan_error_xx, descan_error_xy, descan_error_yx, descan_error_yy,
          descan_error_dxx, descan_error_dxy, descan_error_dyx, descan_error_dyy) = self.descan_error
         
@@ -224,7 +221,7 @@ class ScanGrid:
 
         return r
     
-    
+
     def scan_position(self, yx: Tuple[int, int]) -> Tuple[float, float]:
         y, x = yx
         # Get the scan position in physical units
