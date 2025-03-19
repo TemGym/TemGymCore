@@ -2,11 +2,10 @@ import jax_dataclasses as jdc
 import jax.numpy as jnp
 from jax.numpy import ndarray as NDArray
 from typing import (
-    Tuple, Optional,  Sequence, Union
+    Tuple
 )
 
-from .ray import Ray, propagate, GaussianRay, ray_on_grid, ray_matrix
-from . import UsageError
+from .ray import Ray, propagate, ray_matrix
 from .utils import R2P, P2R
 from . import (
     Degrees,
