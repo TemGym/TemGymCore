@@ -224,15 +224,6 @@ class ScanGrid:
 
         return r
     
-    def on_grid(self, ray: Ray, as_int: bool = True) -> NDArray:
-        return ray_on_grid(
-            ray,
-            shape=self.complex_image.shape,
-            pixel_size=self.pixel_size,
-            flip_y=self.flip_y,
-            rotation=self.rotation,
-            as_int=as_int,
-        )
     
     def scan_position(self, yx: Tuple[int, int]) -> Tuple[float, float]:
         y, x = yx
@@ -363,16 +354,6 @@ class Detector:
         coord: complex = P2R(mag, angle + jnp.deg2rad(self.rotation))
         self.center = coord.imag, coord.real
 
-    def on_grid(self, ray: Ray, as_int: bool = True) -> NDArray:
-        return ray_on_grid(
-            ray,
-            shape=self.shape,
-            pixel_size=self.pixel_size,
-            flip_y=self.flip_y,
-            rotation=self.rotation,
-            as_int=as_int,
-        )
-
     def get_coords(self):
         centre_x, centre_y = self.center
         shape_y, shape_x = self.shape
@@ -380,20 +361,26 @@ class Detector:
         image_size_y = shape_y * pixel_size
         image_size_x = shape_x * pixel_size
 
-        y_image = jnp.linspace(-image_size_y / 2,
-                               image_size_y / 2 - pixel_size,
-                               shape_y, endpoint=True) + centre_y
+        y_lin = jnp.linspace(-image_size_y / 2,
+                       image_size_y / 2 - pixel_size,
+                       shape_y, endpoint=True) + centre_y
 
-        x_image = jnp.linspace(-image_size_x / 2,
-                               image_size_x / 2 - pixel_size,
-                               shape_x, endpoint=True) + centre_x
+        x_lin = jnp.linspace(-image_size_x / 2,
+                       image_size_x / 2 - pixel_size,
+                       shape_x, endpoint=True) + centre_x
 
-        y, x = jnp.meshgrid(y_image, x_image, indexing='ij')
+        if self.flip_y:
+            y_lin = -y_lin
+        
+        y, x = jnp.meshgrid(y_lin, x_lin, indexing='ij')
 
         det_rotation_rad = jnp.deg2rad(self.rotation)
 
         y_rot = jnp.cos(det_rotation_rad) * y - jnp.sin(det_rotation_rad) * x
         x_rot = jnp.sin(det_rotation_rad) * y + jnp.cos(det_rotation_rad) * x
+
+        if self.flip_y:
+            y_rot = -y_rot
 
         r = jnp.stack((y_rot, x_rot), axis=-1).reshape(-1, 2)
 
