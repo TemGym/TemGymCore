@@ -35,7 +35,7 @@ def _identity():
     return jnp.eye(2)
 
 
-def _rotate(radians: 'Radians', jnp=jnp):
+def _rotate(radians: 'Radians'):
     # From libertem.corrections.coordinates v0.11.1
     # https://en.wikipedia.org/wiki/Rotation_matrix
     # y, x instead of x, y
@@ -45,21 +45,21 @@ def _rotate(radians: 'Radians', jnp=jnp):
     ])
 
 
-def _rotate_deg(degrees: 'Degrees', jnp=jnp):
+def _rotate_deg_to_rad(degrees: 'Degrees'):
     # From libertem.corrections.coordinates v0.11.1
-    return _rotate(jnp.pi / 180 * degrees, jnp)
+    return _rotate(jnp.pi / 180 * degrees)
 
 
-def get_pixel_coords(
-    rays_x, rays_y, shape, pixel_size, flip_y=1, scan_rotation: 'Degrees' = 0.
+def metres_to_pixels(
+    rays_x, rays_y, shape, pixel_size, flip_y=1, rotation = 0.
 ):
-    transform = jax.lax.cond(flip_y,
-                             lambda _: _flip_y(),
-                             lambda _: _identity(),
-                             operand=None)
+    if flip_y:
+        transform = _flip_y()
+    else:
+        transform = _identity()
 
     # Transformations are applied right to left
-    transform = _rotate_deg(jnp.array(scan_rotation), jnp) @ transform
+    transform = _rotate_deg_to_rad(jnp.array(rotation), jnp) @ transform
 
     y_transformed, x_transformed = (jnp.array((rays_y, rays_x)).T @ transform).T
 
@@ -68,17 +68,7 @@ def get_pixel_coords(
     pixel_coords_y = (y_transformed / pixel_size) + (sy // 2)
 
     return (pixel_coords_x, pixel_coords_y)
-
-
-def initial_matrix(n_rays: int):
-    matrix = jnp.zeros(
-        (n_rays, 5),
-        dtype=jnp.float64,
-    )  # x, y, theta_x, theta_y, 1
-
-    matrix = matrix.at[:, 4].set(jnp.ones(n_rays))
-
-    return matrix
+    
 
 
 @jax.jit

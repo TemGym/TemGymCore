@@ -60,53 +60,36 @@ def get_transfer_matrices(model, scan_pos_m):
 def map_px_on_detector_to_scan(ScanGrid, Detector, detector_image,
                                ray_scan_coords_x, ray_scan_coords_y,
                                ray_det_coords_x, ray_det_coords_y):
-    # When propagating backwards we need the negative of the scan rotation to be applied to the ray scan coordinates,
-    # so that we can index pixels correctly on the scan grid - essentially we are rotating 
-    # back into the coordinate system of the scan grid, so that a pixel at (0, 0) in the scan grid
-    # represents the top left corner of the scan grid.
     
-    scan_rotation = -ScanGrid.scan_rotation
-    scan_step = ScanGrid.scan_step
     scan_shape = ScanGrid.scan_shape
-    det_shape = Detector.shape
-    det_pixel_size = Detector.pixel_size
 
-    # Rotate the scan coordinates.
-    scan_rotation_rad = np.deg2rad(scan_rotation)
-    ray_scan_coords_y_rot = np.cos(scan_rotation_rad) * ray_scan_coords_y - np.sin(scan_rotation_rad) * ray_scan_coords_x
-    ray_scan_coords_x_rot = np.sin(scan_rotation_rad) * ray_scan_coords_y + np.cos(scan_rotation_rad) * ray_scan_coords_x
-
-    # Convert rotated scan coordinates into pixel indices.
-    scan_pixel_xs = np.round(ray_scan_coords_x_rot / scan_step[1] + scan_shape[1] / 2).astype(np.int32)
-    scan_pixel_ys = np.round(ray_scan_coords_y_rot / scan_step[0] + scan_shape[0] / 2).astype(np.int32)
+    scan_pixel_ys, scan_pixel_xs = ScanGrid.metres_to_pixels([ray_scan_coords_y, ray_scan_coords_x])
 
     # Create a mask of indices within bounds.
-    mask = (scan_pixel_xs >= 0) & (scan_pixel_xs < scan_shape[1]) & \
-           (scan_pixel_ys >= 0) & (scan_pixel_ys < scan_shape[0])
+    mask = (scan_pixel_ys >= 0) & (scan_pixel_ys < scan_shape[0]) & \
+           (scan_pixel_xs >= 0) & (scan_pixel_xs < scan_shape[1])
     
-    det_pixel_xs = np.round(ray_det_coords_x / det_pixel_size + det_shape[1] / 2).astype(np.int32)
-    det_pixel_ys = np.round(ray_det_coords_y / det_pixel_size + det_shape[0] / 2).astype(np.int32)
+    det_pixels_ys, det_pixels_xs = Detector.metres_to_pixels([ray_det_coords_y, ray_det_coords_x])
 
-    detector_vals = detector_image[det_pixel_ys, det_pixel_xs]
+    detector_vals = detector_image[det_pixels_ys, det_pixels_xs]
     
-    return scan_pixel_xs[mask], scan_pixel_ys[mask], detector_vals[mask]
+    return scan_pixel_ys[mask], scan_pixel_xs[mask], detector_vals[mask]
 
 
 def map_px_on_scan_to_detector(Detector, sample_interpolant, 
                                ray_scan_coords_x, ray_scan_coords_y,
                                ray_det_coords_x, ray_det_coords_y):
     
-    det_pixel_size = Detector.pixel_size
-    det_shape = Detector.shape
-
     # Stack the scan coordinates.
     scan_pts = np.stack([ray_scan_coords_y, ray_scan_coords_x], axis=-1)
+
+    # Interpolate the sample intensity at the scan coordinates.
     sample_vals = sample_interpolant(scan_pts)
     
-    det_pixel_xs = np.round(ray_det_coords_x / det_pixel_size + det_shape[1] / 2).astype(np.int32)
-    det_pixel_ys = np.round(ray_det_coords_y / det_pixel_size + det_shape[0] / 2).astype(np.int32)
+    # Convert the detector coordinates to pixel indices.
+    ray_det_pixel_ys, ray_det_pixel_xs = Detector.metres_to_pixels([ray_det_coords_y, ray_det_coords_x])
 
-    return det_pixel_xs, det_pixel_ys, sample_vals
+    return ray_det_pixel_ys, ray_det_pixel_xs, sample_vals
 
 
 def run_model_for_rays_and_slopes(transfer_matrices, input_slopes, scan_position):
@@ -233,7 +216,7 @@ def project_frame_forward(model, detector_frame, sample_interpolant, scan_pos):
     Detector = model[-1]
 
     # Map the detector pixel coordinates from scan grid to the detector
-    det_x_px, det_y_px, sample_intensity = map_px_on_scan_to_detector(
+    det_y_px, det_x_px, sample_intensity = map_px_on_scan_to_detector(
         Detector, sample_interpolant, sample_rays_x, sample_rays_y, det_rays_x, det_rays_y
     )
     
@@ -243,6 +226,7 @@ def project_frame_forward(model, detector_frame, sample_interpolant, scan_pos):
 
 
 def project_frame_backward(model, detector_frame, scan_pos):
+
     # Return all the transfer matrices necessary for us to propagate rays through the system
     transfer_matrices, total_transfer_matrix, detector_to_sample = get_transfer_matrices(model, scan_pos)
 
@@ -254,7 +238,8 @@ def project_frame_backward(model, detector_frame, scan_pos):
     # Map the detector pixel coordinates to the scan grid
     ScanGrid = model[1]
     Detector = model[-1]
-    sample_x_px, sample_y_px, detector_intensity = map_px_on_detector_to_scan(
+
+    sample_y_px, sample_x_px, detector_intensity = map_px_on_detector_to_scan(
         ScanGrid, Detector, detector_frame, sample_rays_x, sample_rays_y, det_rays_x, det_rays_y
     )
 

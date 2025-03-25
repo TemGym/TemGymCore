@@ -6,7 +6,7 @@ from typing import (
 )
 
 from .ray import Ray, propagate, ray_matrix
-from .utils import R2P, P2R
+from .utils import R2P, P2R, _identity, _flip_y, _rotate_deg_to_rad
 from . import (
     Degrees,
 )
@@ -171,6 +171,7 @@ class PointSource:
     def step(self, ray: Ray):
         return ray
     
+
 @jdc.pytree_dataclass
 class ScanGrid:
     z: float
@@ -190,6 +191,7 @@ class ScanGrid:
                         ray.blocked)
         return Ray
     
+
     def get_coords(self):
 
         centre_x, centre_y = self.center
@@ -207,36 +209,37 @@ class ScanGrid:
                                image_size_x / 2 - scan_step_x,
                                shape_x, endpoint=True) + centre_x
 
-
         y, x = jnp.meshgrid(y_image, x_image, indexing='ij')
 
         scan_rotation_rad = jnp.deg2rad(self.scan_rotation)
 
-        y_rot = jnp.cos(scan_rotation_rad) * y - jnp.sin(scan_rotation_rad) * x
-        x_rot = jnp.sin(scan_rotation_rad) * y + jnp.cos(scan_rotation_rad) * x
+        pos_r, pos_a = R2P(x + y * 1j)
+        pos_c = P2R(pos_r, pos_a + scan_rotation_rad)
+        y_rot, x_rot = pos_c.imag, pos_c.real
 
         r = jnp.stack((y_rot, x_rot), axis=-1).reshape(-1, 2)
 
         return r
     
 
-    def scan_position(self, yx: Tuple[int, int]) -> Tuple[float, float]:
-        y, x = yx
-        # Get the scan position in physical units
-        scan_step_y, scan_step_x = self.scan_step
-        sy, sx = self.scan_shape
-        scan_position_x = (x - sx / 2.) * scan_step_x
-        scan_position_y = (y - sy / 2.) * scan_step_y
+    def metres_to_pixels(self, yx: Tuple[float, float]) -> Tuple[int, int]:
 
-        scan_rotation_rad = jnp.deg2rad(self.scan_rotation)
-        if scan_rotation_rad != 0.:
-            pos_r, pos_a = R2P(scan_position_x + scan_position_y * 1j)
-            pos_c = P2R(pos_r, pos_a + scan_rotation_rad)
-            scan_position_y, scan_position_x = pos_c.imag, pos_c.real
-        return (scan_position_y, scan_position_x)
+        scan_step_y, scan_step_x = self.scan_step
+        scan_shape_y, scan_shape_x = self.scan_shape
+
+        scan_positions_y, scan_positions_x = yx
+        scan_rotation = self.scan_rotation
+
+        transform = _rotate_deg_to_rad(jnp.array(scan_rotation))
+
+        y_transformed, x_transformed = (jnp.array((scan_positions_y, scan_positions_x)).T @ transform).T
+
+        pixel_coords_x = ((x_transformed / scan_step_x) + (scan_shape_x // 2)).astype(jnp.int32)
+        pixel_coords_y = ((y_transformed / scan_step_y) + (scan_shape_y // 2)).astype(jnp.int32)
+
+        return pixel_coords_y, pixel_coords_x
 
     
-
 @jdc.pytree_dataclass
 class Aperture:
     z: float
@@ -323,53 +326,79 @@ class Detector:
     shape: jdc.Static[Tuple[int, int]]
     center: jdc.Static[Tuple[float, float]] = (0., 0.)
     coords: jdc.Static[NDArray] = jdc.field(init=False)
-    rotation: Degrees = 0.
+    rotation: jdc.Static[Degrees] = 0.
+    flip_y: jdc.Static[bool] = False
     
     def __post_init__(self):
         object.__setattr__(self, "coords", self.get_coords())
 
+
     def step(self, ray: Ray):
         return ray
 
-    def set_center_px(self, center_px: Tuple[int, int]):
-        """
-        For the desired image center in pixels (after any flip / rotation)
-        set the image center in the physical coordinates of the microscope
-
-        The continuous coordinate can be set directly on detector.center
-        """
-        iy, ix = center_px
-        sy, sx = self.shape
-        cont_y = (iy - sy // 2) * self.pixel_size
-        cont_x = (ix - sx // 2) * self.pixel_size
-        if self.flip_y:
-            cont_y = -1 * cont_y
-        mag, angle = R2P(cont_x + 1j * cont_y)
-        coord: complex = P2R(mag, angle + jnp.deg2rad(self.rotation))
-        self.center = coord.imag, coord.real
 
     def get_coords(self):
+
+        flip_y = self.flip_y
+        det_rotation = self.rotation
         centre_x, centre_y = self.center
-        shape_y, shape_x = self.shape
+        det_shape_y, det_shape_x = self.shape
         pixel_size = self.pixel_size
-        image_size_y = shape_y * pixel_size
-        image_size_x = shape_x * pixel_size
+        image_size_y = det_shape_y * pixel_size
+        image_size_x = det_shape_x * pixel_size
 
         y_lin = jnp.linspace(-image_size_y / 2,
                        image_size_y / 2 - pixel_size,
-                       shape_y, endpoint=True) + centre_y
+                       det_shape_y, endpoint=True) + centre_y
 
         x_lin = jnp.linspace(-image_size_x / 2,
                        image_size_x / 2 - pixel_size,
-                       shape_x, endpoint=True) + centre_x
+                       det_shape_x, endpoint=True) + centre_x
+        
 
         y, x = jnp.meshgrid(y_lin, x_lin, indexing='ij')
 
-        det_rotation_rad = jnp.deg2rad(self.rotation)
+        # Shift the coordinates based on the detector center position
+        det_positions_y_centred = y - centre_y
+        det_positions_x_centred = x - centre_x
 
-        y_rot = jnp.cos(det_rotation_rad) * y - jnp.sin(det_rotation_rad) * x
-        x_rot = jnp.sin(det_rotation_rad) * y + jnp.cos(det_rotation_rad) * x
+        # Create the transformation matrix for rotation of the coordinates
+        if flip_y:
+            transform = _flip_y()
+        else:
+            transform = _identity()
 
-        r = jnp.stack((y_rot, x_rot), axis=-1).reshape(-1, 2)
+        transform = _rotate_deg_to_rad(jnp.array(det_rotation)) @ transform
+
+        # Rotate the coordinates
+        y_transformed, x_transformed = (jnp.array((det_positions_y_centred, det_positions_x_centred)).T @ transform).T
+
+        # Shift the coordinates back to the original position
+        y_transformed += centre_y
+        x_transformed += centre_x
+
+        r = jnp.stack((y_transformed, x_transformed), axis=-1).reshape(-1, 2)
 
         return r
+    
+
+    def metres_to_pixels(self, yx: Tuple[float, float]) -> Tuple[int, int]:
+        flip_y = self.flip_y
+        pixel_size = self.pixel_size
+        det_shape_y, det_shape_x = self.shape
+        det_positions_y, det_positions_x = yx
+        det_rotation = self.rotation
+
+        if flip_y:
+            transform = _flip_y()
+        else:
+            transform = _identity()
+
+        transform = _rotate_deg_to_rad(jnp.array(det_rotation)) @ transform
+
+        y_transformed, x_transformed = (jnp.array((det_positions_y, det_positions_x)).T @ transform).T
+
+        pixel_coords_x = ((x_transformed / pixel_size) + (det_shape_x // 2)).astype(jnp.int32)       
+        pixel_coords_y = ((y_transformed / pixel_size) + (det_shape_y // 2)).astype(jnp.int32)        
+        
+        return pixel_coords_y, pixel_coords_x

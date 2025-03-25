@@ -1,0 +1,29 @@
+{
+  "semi_conv": 0.05,
+  "defocus": 0.01,
+  "camera_length": 1.0,
+  "scan_shape": [
+    24,
+    24
+  ],
+  "det_shape": [
+    64,
+    64
+  ],
+  "scan_step_yx": [
+    0.0005,
+    0.0005
+  ],
+  "det_px_size": 0.002,
+  "scan_rotation": 0,
+  "descan_error": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ]
+}

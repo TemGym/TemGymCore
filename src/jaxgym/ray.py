@@ -1,13 +1,11 @@
 import jax_dataclasses as jdc
 import jax.numpy as jnp
-from .utils import get_pixel_coords
 from numpy.typing import NDArray
 from typing import Tuple
 from . import (
     PositiveFloat,
     Degrees,
 )
-import jax
 
 
 @jdc.pytree_dataclass
