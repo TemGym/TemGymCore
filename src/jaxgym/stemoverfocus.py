@@ -86,7 +86,7 @@ def map_px_on_scan_to_detector(Detector, sample_interpolant,
     # Interpolate the sample intensity at the scan coordinates.
     sample_vals = sample_interpolant(scan_pts)
     
-    # Convert the detector coordinates to pixel indices.
+    # Convert the ray detector coordinates to pixel indices.
     ray_det_pixel_ys, ray_det_pixel_xs = Detector.metres_to_pixels([ray_det_coords_y, ray_det_coords_x])
 
     return ray_det_pixel_ys, ray_det_pixel_xs, sample_vals
