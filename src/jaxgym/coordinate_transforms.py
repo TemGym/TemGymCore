@@ -2,6 +2,12 @@ import jax.numpy as jnp
 from . import Degrees, Radians
 RadiansJNP = jnp.float64
 
+
+def _rotate_with_deg_to_rad(degrees: 'Degrees'):
+    # From libertem.corrections.coordinates v0.11.1
+    return _rotate(jnp.pi / 180 * degrees)
+
+
 def _identity():
     # From libertem.corrections.coordinates v0.11.1
     return jnp.eye(3)
@@ -61,7 +67,7 @@ def metres_to_pixels_transform(centre_yx,
     rotation_transform = _rotate_with_deg_to_rad(rotation)
     scale_transform = _scale(pixel_size_yx)
     shape_yx = jnp.array(shape_yx)
-    pixel_shift_transform = _shift(shape_yx // 2)
+    pixel_shift_transform = _shift(shape_yx / 2)
 
     transform = pixel_shift_transform @ scale_transform @ centre_shift_transform @ rotation_transform @ flip_transform
 
@@ -85,15 +91,10 @@ def rotation_shift_transform(centre_yx,
     return transform
 
 
-def _rotate_with_deg_to_rad(degrees: 'Degrees'):
-    # From libertem.corrections.coordinates v0.11.1
-    return _rotate(jnp.pi / 180 * degrees)
-
-
 def apply_transformation(y, x, transformation):
     # All of our coordinate transforms are 3x3 transformations, 
     # so we need to add an array of 1s to the end of our coordinates array
     r = jnp.stack([y, x, jnp.ones_like(y)], axis=-1)
-    r_transformed = r @ transformation
-    y_transformed, x_transformed, _ = r_transformed.T
+    r_transformed = transformation @ r.T 
+    y_transformed, x_transformed, _ = r_transformed
     return y_transformed, x_transformed

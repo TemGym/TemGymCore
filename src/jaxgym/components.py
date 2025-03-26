@@ -13,6 +13,7 @@ from . import (
 from typing_extensions import TypeAlias
 
 Radians: TypeAlias = jnp.float64  # type: ignore
+EPS = 1e-12
 
 @jdc.pytree_dataclass
 class Lens:
@@ -197,13 +198,14 @@ class ScanGrid:
         extent_x = scan_shape_x * scan_step_yx[1]
 
         # Y is positive downwards by default as per numpy array convention
-        y_lin = jnp.linspace(extent_y / 2,
-                             -extent_y / 2,
-                             scan_shape_y, endpoint=True)
+        # Y is positive downwards by default as per numpy array convention
+        y_lin = jnp.linspace((extent_y - scan_step_yx[0]) / 2,
+                             (-extent_y + scan_step_yx[0]) / 2,
+                             num=scan_shape_y)
 
-        x_lin = jnp.linspace(-extent_x / 2,
-                             extent_x / 2,
-                             scan_shape_x, endpoint=True)
+        x_lin = jnp.linspace((-extent_x + scan_step_yx[1]) / 2,
+                             (extent_x - scan_step_yx[1]) / 2,
+                             num=scan_shape_x)
         
         y, x = jnp.meshgrid(y_lin, x_lin, indexing='ij')
 
@@ -229,8 +231,8 @@ class ScanGrid:
         metres_to_pixels_transformation = metres_to_pixels_transform(centre_yx, scan_step_yx, scan_shape, 0, scan_rotation)
         ray_pixels_y, ray_pixels_x = apply_transformation(ray_coords_y, ray_coords_x, metres_to_pixels_transformation) 
         
-        ray_pixels_y = jnp.round(ray_pixels_y).astype(jnp.int32)       
-        ray_pixels_x = jnp.round(ray_pixels_x).astype(jnp.int32)    
+        ray_pixels_y = (jnp.floor(ray_pixels_y) + EPS).astype(jnp.int32)       
+        ray_pixels_x = (jnp.floor(ray_pixels_x) + EPS).astype(jnp.int32)    
 
         return ray_pixels_y, ray_pixels_x
 
@@ -355,18 +357,17 @@ class Detector:
         centre_yx = self.centre_yx
         det_shape_y, det_shape_x = self.shape
         pixel_size = self.pixel_size
-        image_size_y = det_shape_y * pixel_size
-        image_size_x = det_shape_x * pixel_size
+        extent_y = det_shape_y * pixel_size
+        extent_x = det_shape_x * pixel_size
 
         # Y is positive downwards by default as per numpy array convention
-        y_lin = jnp.linspace(image_size_y / 2,
-                             -image_size_y / 2,
-                             det_shape_y, endpoint=True)
+        y_lin = jnp.linspace((extent_y - pixel_size) / 2,
+                             (-extent_y + pixel_size) / 2,
+                             num=det_shape_y)
 
-        x_lin = jnp.linspace(-image_size_x / 2,
-                             image_size_x / 2,
-                             det_shape_x, endpoint=True)
-        
+        x_lin = jnp.linspace((-extent_x + pixel_size) / 2,
+                             (extent_x - pixel_size) / 2,
+                             num=det_shape_x)
 
         y, x = jnp.meshgrid(y_lin, x_lin, indexing='ij')
 
@@ -394,8 +395,8 @@ class Detector:
         metres_to_pixels_transformation = metres_to_pixels_transform(centre_yx, pixel_size_yx, det_shape, flip_y, det_rotation)
         ray_pixels_y, ray_pixels_x = apply_transformation(ray_coords_y, ray_coords_x, metres_to_pixels_transformation) 
         
-        ray_pixels_y = jnp.round(ray_pixels_y).astype(jnp.int32)       
-        ray_pixels_x = jnp.round(ray_pixels_x).astype(jnp.int32)    
+        ray_pixels_y = (jnp.floor(ray_pixels_y) + EPS).astype(jnp.int32)       
+        ray_pixels_x = (jnp.floor(ray_pixels_x) + EPS).astype(jnp.int32)    
 
         return ray_pixels_y, ray_pixels_x
 
