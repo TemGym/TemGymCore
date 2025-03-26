@@ -61,7 +61,7 @@ def map_px_on_detector_to_scan(ScanGrid, Detector, detector_image,
                                ray_scan_coords_x, ray_scan_coords_y,
                                ray_det_coords_x, ray_det_coords_y):
     
-    scan_shape = ScanGrid.scan_shape
+    scan_shape = ScanGrid.scan_shape_yx
 
     scan_pixel_ys, scan_pixel_xs = ScanGrid.metres_to_pixels([ray_scan_coords_y, ray_scan_coords_x])
 
@@ -243,7 +243,7 @@ def project_frame_backward(model, detector_frame, scan_pos):
         ScanGrid, Detector, detector_frame, sample_rays_x, sample_rays_y, det_rays_x, det_rays_y
     )
 
-    shifted_sum = np.zeros(ScanGrid.scan_shape, dtype=np.complex64)
+    shifted_sum = np.zeros(ScanGrid.scan_shape_yx, dtype=np.complex64)
     np.add.at(shifted_sum, (sample_y_px, sample_x_px), detector_intensity)
 
     return shifted_sum

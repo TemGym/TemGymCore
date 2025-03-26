@@ -29,8 +29,8 @@ def _rotate(radians: 'Radians'):
 
 def _scale(pixel_size_yx):
     return jnp.array([
-        (1 / pixel_size_yx[0], 0., 0.),
-        (0., 1 / pixel_size_yx[1], 0.),
+        (pixel_size_yx[0], 0., 0.),
+        (0., pixel_size_yx[1], 0.),
         (0., 0., 1.)
     ])
 
@@ -52,41 +52,24 @@ def _flip_y():
     ])
 
 
-def metres_to_pixels_transform(centre_yx, 
+def pixels_to_metres_transform(centre_yx, 
                                pixel_size_yx, 
                                shape_yx, 
                                flip_y=False, 
                                rotation = 0. # Degrees
 ):
-    if flip_y:
+    if not flip_y:
         flip_transform = _flip_y()
     else:
         flip_transform = _identity()
 
-    centre_shift_transform = _shift(centre_yx)
-    rotation_transform = _rotate_with_deg_to_rad(rotation)
-    scale_transform = _scale(pixel_size_yx)
     shape_yx = jnp.array(shape_yx)
-    pixel_shift_transform = _shift(shape_yx / 2)
-
-    transform = pixel_shift_transform @ scale_transform @ centre_shift_transform @ rotation_transform @ flip_transform
-
-    return transform
-
-
-def rotation_shift_transform(centre_yx, 
-                             flip_y=False, 
-                             rotation = 0. # Degrees
-):
-    if flip_y:
-        flip_transform = _flip_y()
-    else:
-        flip_transform = _identity()
-
-    rotation_transform = _rotate_with_deg_to_rad(rotation)
+    pixel_shift_transform = _shift(-shape_yx / 2)
+    scale_transform = _scale(pixel_size_yx)
     centre_shift_transform = _shift(centre_yx)
+    rotation_transform = _rotate_with_deg_to_rad(rotation)
 
-    transform = centre_shift_transform @ rotation_transform @ flip_transform
+    transform = flip_transform @ rotation_transform @ centre_shift_transform @ scale_transform @ pixel_shift_transform
 
     return transform
 
