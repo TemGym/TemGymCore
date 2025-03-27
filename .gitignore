@@ -36,4 +36,5 @@ dist/
 *.txt
 *.png
 *nsys-rep
+*.npy
 examples/fourdstem_example/fourdstem_overfocused.npy

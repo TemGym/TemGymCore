@@ -6,7 +6,7 @@ from typing import (
 )
 
 from .ray import Ray, propagate, ray_matrix
-from .coordinate_transforms import metres_to_pixels_transform, pixels_to_metres_transform, apply_transformation
+from .coordinate_transforms import pixels_to_metres_transform, apply_transformation
 from . import (
     Degrees,
 )
