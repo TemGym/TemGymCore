@@ -57,31 +57,6 @@ def propagate(distance, ray: Ray):
     return Ray
 
 
-def ray_on_grid(
-    ray,
-    shape: Tuple[int, int],
-    pixel_size: 'PositiveFloat',
-    flip_y: bool = False,
-    rotation: Degrees = 0.,
-    as_int: bool = True
-) -> Tuple[NDArray, NDArray]:
-    """Returns in yy, xx!"""
-    xx, yy = get_pixel_coords(
-        rays_x=ray.x,
-        rays_y=ray.y,
-        shape=shape,
-        pixel_size=pixel_size,
-        flip_y=flip_y,
-        scan_rotation=rotation,
-    )
-
-    if as_int:
-        xx = jnp.round(xx).astype(jnp.int32)
-        yy = jnp.round(yy).astype(jnp.int32)
-
-    return yy, xx
-
-
 def ray_matrix(x, y, dx, dy,
                z, amplitude,
                pathlength, wavelength,

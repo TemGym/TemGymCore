@@ -15,12 +15,14 @@ def get_ray_coords_between_planes_from_pt_src(model,
     semi_conv = PointSource.semi_conv 
 
     # Find all input slopes for a max semiconvergence angle that will hit the detector pixels
-    input_slopes = find_input_slopes_that_hit_detpx_from_pt_src(
+    input_slopes_yx, mask = find_input_slopes_that_hit_detpx_from_pt_src(
         detector_coords_yx, pt_src_pos_yx, semi_conv, total_transfer_matrix
     )
     
+    input_slopes_yx_masked = input_slopes_yx[mask]
+
     # Run the model to obtain the ray coordinates at each component in the model
-    coords = use_transfer_matrices_to_propagate_rays_from_pt_src(all_transfer_matrices, pt_src_pos_yx, input_slopes)
+    coords = use_transfer_matrices_to_propagate_rays_from_pt_src(all_transfer_matrices, pt_src_pos_yx, input_slopes_yx_masked)
 
     # Stack coordinates and perform the inverse matrix multiplication to get the sample coordinates
     xs, ys, dxs, dys = coords
@@ -110,9 +112,9 @@ def find_input_slopes_that_hit_detpx_from_pt_src(
 
     F = (theta_x_in**2 + theta_y_in**2) - semi_conv**2
     mask = F <= 0
-    input_slopes_masked = np.stack([theta_x_in, theta_y_in]) * mask
-    
-    return input_slopes_masked
+    input_slopes_yx = np.stack([theta_y_in, theta_x_in])
+
+    return input_slopes_yx, mask
 
 
 def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):
