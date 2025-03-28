@@ -58,18 +58,19 @@ def pixels_to_metres_transform(centre_yx,
                                flip_y=False, 
                                rotation = 0. # Degrees
 ):
-    if not flip_y:
+    if flip_y:
         flip_transform = _flip_y()
     else:
         flip_transform = _identity()
 
+    metres_to_px_flip_y = _flip_y()
     shape_yx = jnp.array(shape_yx)
     pixel_shift_transform = _shift(-shape_yx / 2)
     scale_transform = _scale(pixel_size_yx)
     centre_shift_transform = _shift(centre_yx)
     rotation_transform = _rotate_with_deg_to_rad(rotation)
 
-    transform = flip_transform @ rotation_transform @ centre_shift_transform @ scale_transform @ pixel_shift_transform
+    transform = flip_transform @ metres_to_px_flip_y @ rotation_transform @ centre_shift_transform @ scale_transform @ pixel_shift_transform
 
     return transform
 

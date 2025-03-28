@@ -17,11 +17,14 @@ def run_to_component(ray, component):
     ray = component.step(ray)
     return ray
 
-def run_model_for_jacobians(ray, model):
+def solve_model(ray, model):
 
     model_ray_jacobians = []
 
-    # Get all jacobians from one component to another
+    #Run the step function of the first component at the starting plane
+    component_jacobian = jax.jacobian(model[0].step)(ray)
+    model_ray_jacobians.append(component_jacobian)
+
     for i in range(1, len(model)):
         distance = (model[i].z - ray.z).squeeze()
 

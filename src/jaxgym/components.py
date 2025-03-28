@@ -204,10 +204,10 @@ class ScanGrid:
         xx_px = xx_px.ravel()
 
         pixels_to_metres_transformation = pixels_to_metres_transform(centre_yx, 
-                                                                scan_step_yx, 
-                                                                scan_shape_yx, 
-                                                                0, 
-                                                                scan_rotation)
+                                                                     scan_step_yx, 
+                                                                     scan_shape_yx, 
+                                                                     0, 
+                                                                     scan_rotation)
         
         y_transformed, x_transformed = apply_transformation(yy_px, xx_px, pixels_to_metres_transformation)
 
@@ -225,10 +225,10 @@ class ScanGrid:
         ray_coords_y, ray_coords_x = rays_yx
 
         pixels_to_metres_transformation = pixels_to_metres_transform(centre_yx, 
-                                                                scan_step_yx, 
-                                                                scan_shape_yx, 
-                                                                0, 
-                                                                scan_rotation)
+                                                                     scan_step_yx, 
+                                                                     scan_shape_yx, 
+                                                                     0, 
+                                                                     scan_rotation)
         
         metres_to_pixels_transformation = jnp.linalg.inv(pixels_to_metres_transformation)
         
@@ -394,10 +394,10 @@ class Detector:
         ray_coords_y, ray_coords_x = rays_yx
 
         pixels_to_metres_transformation = pixels_to_metres_transform(det_centre_yx, 
-                                                                          det_step_yx, 
-                                                                          det_shape_yx, 
-                                                                          0, 
-                                                                          det_rotation)
+                                                                     det_step_yx, 
+                                                                     det_shape_yx, 
+                                                                     0, 
+                                                                     det_rotation)
         
         metres_to_pixels_transformation = jnp.linalg.inv(pixels_to_metres_transformation)
         
