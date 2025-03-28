@@ -19,7 +19,7 @@ def get_ray_coords_between_planes_from_pt_src(model,
         detector_coords_yx, pt_src_pos_yx, semi_conv, total_transfer_matrix
     )
     
-    input_slopes_yx_masked = input_slopes_yx[mask]
+    input_slopes_yx_masked = input_slopes_yx[:, mask]
 
     # Run the model to obtain the ray coordinates at each component in the model
     coords = use_transfer_matrices_to_propagate_rays_from_pt_src(all_transfer_matrices, pt_src_pos_yx, input_slopes_yx_masked)
