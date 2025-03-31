@@ -65,7 +65,7 @@ def map_px_on_detector_to_scan(ScanGrid, Detector, detector_image,
                                ray_scan_coords_x, ray_scan_coords_y,
                                ray_det_coords_x, ray_det_coords_y):
     
-    scan_shape = ScanGrid.scan_shape_yx
+    scan_shape = ScanGrid.scan_shape
 
     scan_pixel_ys, scan_pixel_xs = ScanGrid.metres_to_pixels([ray_scan_coords_x, ray_scan_coords_y])
 
@@ -84,8 +84,8 @@ def map_px_on_scan_to_detector(Detector, sample_interpolant,
                                ray_scan_coords_x, ray_scan_coords_y,
                                ray_det_coords_x, ray_det_coords_y):
     
-    # Stack the scan coordinates.
-    scan_pts = np.stack([ray_scan_coords_x, ray_scan_coords_y], axis=-1)
+
+    scan_pts = np.stack([ray_scan_coords_y, ray_scan_coords_x], axis=-1)
 
     # Interpolate the sample intensity at the scan coordinates.
     sample_vals = sample_interpolant(scan_pts)
@@ -143,7 +143,7 @@ def project_frame_backward(model: list,
         ScanGrid, Detector, detector_frame, sample_rays_x, sample_rays_y, det_rays_x, det_rays_y
     )
 
-    shifted_sum = np.zeros(ScanGrid.scan_shape_yx, dtype=np.complex64)
+    shifted_sum = np.zeros(ScanGrid.scan_shape, dtype=np.complex64)
     np.add.at(shifted_sum, (sample_y_px, sample_x_px), detector_intensity)
 
     return shifted_sum

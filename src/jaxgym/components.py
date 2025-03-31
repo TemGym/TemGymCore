@@ -31,9 +31,8 @@ class Lens:
         pathlength = ray.pathlength - (x ** 2 + y ** 2) / (2 * f)
 
         Ray = ray_matrix(x, y, new_dx, new_dy,
-                        ray.z, ray.amplitude,
-                        pathlength, ray.wavelength,
-                        ray.blocked)
+                        ray.z,
+                        pathlength)
         return Ray
 
 
@@ -55,9 +54,8 @@ class ThickLens:
 
         new_z = ray.z - (self.z_po - self.z_pi)
         Ray = ray_matrix(x, y, new_dx, new_dy,
-                        new_z, ray.amplitude,
-                        pathlength, ray.wavelength,
-                        ray.blocked)
+                        new_z,
+                        pathlength)
         return Ray
 
     @property
@@ -91,9 +89,8 @@ class Descanner:
         pathlength = ray.pathlength - (offset_x * x) - (offset_y * y)
 
         Ray = ray_matrix(new_x, new_y, new_dx, new_dy,
-                         ray.z, ray.amplitude,
-                         pathlength, ray.wavelength,
-                         ray.blocked)
+                         ray.z,
+                         pathlength)
         return Ray
 
 
@@ -112,9 +109,8 @@ class Deflector:
         pathlength = ray.pathlength + dx * x + dy * y
 
         Ray = ray_matrix(x, y, new_dx, new_dy,
-                        ray.z, ray.amplitude,
-                        pathlength, ray.wavelength,
-                        ray.blocked)
+                        ray.z,
+                        pathlength)
         return Ray
 
 @jdc.pytree_dataclass
@@ -136,9 +132,8 @@ class Rotator:
         pathlength = ray.pathlength
 
         Ray = ray_matrix(new_x, new_y, new_dx, new_dy,
-                        ray.z, ray.amplitude,
-                        pathlength, ray.wavelength,
-                        ray.blocked)
+                        ray.z,
+                        pathlength)
         return Ray
 
 @jdc.pytree_dataclass
@@ -176,10 +171,10 @@ class PointSource:
 @jdc.pytree_dataclass
 class ScanGrid:
     z: float
-    scan_centre: Coords_XY = (0., 0.)
     scan_step: Scale_YX
     scan_shape: Shape_YX
     scan_rotation: Degrees
+    scan_centre: Coords_XY = (0., 0.)
 
     @property
     def coords(self) -> NDArray:
@@ -322,9 +317,9 @@ class Biprism:
 @jdc.pytree_dataclass
 class Detector:
     z: float
-    det_centre: Coords_XY = (0., 0.)
     det_pixel_size: Scale_YX
     det_shape: Shape_YX
+    det_centre: Coords_XY = (0., 0.)
     det_rotation: Degrees = 0.
     flip_y: bool = False
     

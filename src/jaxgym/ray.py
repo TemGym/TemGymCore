@@ -48,23 +48,17 @@ def propagate(distance, ray: Ray):
     pathlength = ray.pathlength + distance * jnp.sqrt(1 + dx ** 2 + dy ** 2)
 
     Ray = ray_matrix(new_x, new_y, dx, dy,
-                    ray.z + distance, ray.amplitude,
-                    pathlength, ray.wavelength,
-                    ray.blocked)
+                    ray.z + distance, pathlength)
     return Ray
 
 
 def ray_matrix(x, y, dx, dy,
-               z, amplitude,
-               pathlength, wavelength,
-               blocked):
+               z, pathlength):
 
     new_matrix = jnp.array([x, y, dx, dy, jnp.ones_like(x)]).T  # Doesnt work if all values have 0 shape
+
     return Ray(
         matrix=new_matrix,
         z=z,
-        amplitude=amplitude,
         pathlength=pathlength,
-        wavelength=wavelength,
-        blocked=blocked
     )
