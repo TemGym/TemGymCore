@@ -10,12 +10,9 @@ from . import (
 
 @jdc.pytree_dataclass
 class Ray:
-    matrix: jnp.ndarray  # Shape (5,) vector [x, y, dx, dy, 1]
     z: float
-    amplitude: float
+    matrix: jnp.ndarray  # Shape (5,) vector [x, y, dx, dy, 1]
     pathlength: float
-    wavelength: float
-    blocked: float
 
     @property
     def x(self):

@@ -6,9 +6,9 @@ from typing import (
 )
 
 from .ray import Ray, propagate, ray_matrix
-from .coordinate_transforms import pixels_to_metres_transform, apply_transformation
+from .coordinate_transforms import _pixels_to_metres, _metres_to_pixels
 from . import (
-    Degrees,
+    Degrees, Coords_XY, Scale_YX, Coords_YX, Pixels_YX, Shape_YX
 )
 from typing_extensions import TypeAlias
 
@@ -74,7 +74,7 @@ class Descanner:
     def step(self, ray: Ray):
         offset_x, offset_y = self.offset_x, self.offset_y
 
-        (descan_error_xx, descan_error_xy, descan_error_yx, descan_error_yy,
+        (descan_error_xx, descan_error_xy, descan_error, descan_error_yy,
          descan_error_dxx, descan_error_dxy, descan_error_dyx, descan_error_dyy) = self.descan_error
         
         descan_error_xx = 1.0 + descan_error_xx
@@ -83,7 +83,7 @@ class Descanner:
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
 
         new_x = x * descan_error_xx + descan_error_xy * y + offset_x
-        new_y = y * descan_error_yy + descan_error_yx * x + offset_y
+        new_y = y * descan_error_yy + descan_error * x + offset_y
 
         new_dx = dx + x * descan_error_dxx + y * descan_error_dxy
         new_dy = dy + y * descan_error_dyy + x * descan_error_dyx
@@ -176,89 +176,69 @@ class PointSource:
 @jdc.pytree_dataclass
 class ScanGrid:
     z: float
-    scan_rotation: jdc.Static[Degrees]
-    scan_step_yx: jdc.Static[float]
-    scan_shape_yx: jdc.Static[Tuple[int, int]]
-    centre_yx: jdc.Static[Tuple[float, float]]= (0., 0.)
+    scan_centre: Coords_XY = (0., 0.)
+    scan_step: Scale_YX
+    scan_shape: Shape_YX
+    scan_rotation: Degrees
 
     @property
     def coords(self) -> NDArray:
         return self.get_coords()
 
+
     def step(self, ray: Ray):
         return ray
 
-    def get_coords(self):
 
-        scan_rotation = self.scan_rotation
-        centre_yx = self.centre_yx
-        scan_shape_yx = self.scan_shape_yx
-        scan_step_yx = self.scan_step_yx
+    def get_coords(self) -> Coords_XY:
 
-        y_px = jnp.arange(scan_shape_yx[0])
-        x_px = jnp.arange(scan_shape_yx[1])
+        scan_shape = self.scan_shape
+
+        y_px = jnp.arange(scan_shape[0])
+        x_px = jnp.arange(scan_shape[1])
 
         yy_px, xx_px = jnp.meshgrid(y_px, x_px, indexing='ij')
 
         yy_px = yy_px.ravel()
         xx_px = xx_px.ravel()
 
-        pixels_to_metres_transformation = pixels_to_metres_transform(centre_yx, 
-                                                                     scan_step_yx, 
-                                                                     scan_shape_yx, 
-                                                                     0, 
-                                                                     scan_rotation)
-        
-        y_transformed, x_transformed = apply_transformation(yy_px, xx_px, pixels_to_metres_transformation)
+        scan_coords_x, scan_coords_y = self.pixels_to_metres((yy_px, xx_px))
 
-        scan_coords_yx = jnp.stack((y_transformed, x_transformed), axis=-1).reshape(-1, 2)
+        scan_coords_xy = jnp.stack((scan_coords_x, scan_coords_y), axis=-1).reshape(-1, 2)
 
-        return scan_coords_yx
+        return scan_coords_xy
     
 
-    def metres_to_pixels(self, rays_yx: Tuple[float, float]) -> Tuple[int, int]:
-        centre_yx = self.centre_yx
-        scan_step_yx = self.scan_step_yx
-        scan_shape_yx = self.scan_shape_yx
-        scan_rotation = self.scan_rotation
+    def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
+        centre = self.scan_centre
+        step = self.scan_step
+        shape = self.scan_shape
+        rotation = self.scan_rotation
 
-        ray_coords_y, ray_coords_x = rays_yx
+        pixels_y, pixels_x = _metres_to_pixels(coords, 
+                                              centre,
+                                              step,
+                                              shape,
+                                              rotation)
 
-        pixels_to_metres_transformation = pixels_to_metres_transform(centre_yx, 
-                                                                     scan_step_yx, 
-                                                                     scan_shape_yx, 
-                                                                     0, 
-                                                                     scan_rotation)
+
+        return pixels_y, pixels_x
+
+
+    def pixels_to_metres(self, pixels: Pixels_YX) -> Coords_XY:
         
-        metres_to_pixels_transformation = jnp.linalg.inv(pixels_to_metres_transformation)
-        
-        ray_pixels_y, ray_pixels_x = apply_transformation(ray_coords_y, ray_coords_x, metres_to_pixels_transformation) 
-        
-        ray_pixels_y = jnp.round(ray_pixels_y).astype(jnp.int32)       
-        ray_pixels_x = jnp.round(ray_pixels_x).astype(jnp.int32)    
+        centre = self.scan_centre
+        step = self.scan_step
+        shape = self.scan_shape
+        rotation = self.scan_rotation
 
-        return ray_pixels_y, ray_pixels_x
-
-
-    def pixels_to_metres(self, rays_yx: Tuple[float, float]) -> Tuple[int, int]:
-        centre_yx = self.centre_yx
-        scan_step_yx = self.scan_step_yx
-        scan_shape_yx = self.scan_shape_yx
-        scan_rotation = self.scan_rotation
-
-        rays_y, rays_x = rays_yx
-
-        pixels_to_metres_transformation = pixels_to_metres_transform(centre_yx, 
-                                   scan_step_yx, 
-                                   scan_shape_yx, 
-                                   0, 
-                                   scan_rotation)
-        
-        metres_to_pixels_transformation = jnp.linalg.inv(pixels_to_metres_transformation)
-
-        ray_coords_y, ray_coords_x = apply_transformation(rays_y, rays_x, metres_to_pixels_transformation) 
+        coords_x, coords_y = _pixels_to_metres(pixels, 
+                                              centre,
+                                              step,
+                                              shape,
+                                              rotation)
     
-        return ray_coords_y, ray_coords_x
+        return coords_x, coords_y
     
 @jdc.pytree_dataclass
 class Aperture:
@@ -342,12 +322,13 @@ class Biprism:
 @jdc.pytree_dataclass
 class Detector:
     z: float
-    det_pixel_size_yx: jdc.Static[float]
-    det_shape_yx: jdc.Static[Tuple[int, int]]
-    det_centre_yx: jdc.Static[Tuple[float, float]] = (0., 0.)
-    det_rotation: jdc.Static[Degrees] = 0.
-    flip_y: jdc.Static[bool] = False
+    det_centre: Coords_XY = (0., 0.)
+    det_pixel_size: Scale_YX
+    det_shape: Shape_YX
+    det_rotation: Degrees = 0.
+    flip_y: bool = False
     
+
     @property
     def coords(self) -> NDArray:
         return self.get_coords()
@@ -357,73 +338,51 @@ class Detector:
         return ray
 
 
-    def get_coords(self):
+    def get_coords(self) -> Coords_XY:
 
-        det_rotation = self.det_rotation
-        det_centre_yx = self.det_centre_yx
-        det_shape_yx = self.det_shape_yx
-        det_step_yx = self.det_pixel_size_yx
+        det_shape = self.det_shape
 
-        y_px = jnp.arange(det_shape_yx[0])
-        x_px = jnp.arange(det_shape_yx[1])
+        y_px = jnp.arange(det_shape[0])
+        x_px = jnp.arange(det_shape[1])
 
         yy_px, xx_px = jnp.meshgrid(y_px, x_px, indexing='ij')
 
         yy_px = yy_px.ravel()
         xx_px = xx_px.ravel()
 
-        pixels_to_metres_transformation = pixels_to_metres_transform(det_centre_yx, 
-                                                                     det_step_yx, 
-                                                                     det_shape_yx, 
-                                                                     0, 
-                                                                     det_rotation)
-        
-        y_transformed, x_transformed = apply_transformation(yy_px, xx_px, pixels_to_metres_transformation)
+        det_coords_x, det_coords_y = self.pixels_to_metres((yy_px, xx_px))
 
-        det_coords_yx = jnp.stack((y_transformed, x_transformed), axis=-1).reshape(-1, 2)
+        det_coords_xy = jnp.stack((det_coords_x, det_coords_y), axis=-1).reshape(-1, 2)
 
-        return det_coords_yx
+        return det_coords_xy
     
 
-    def metres_to_pixels(self, rays_yx: Tuple[float, float]) -> Tuple[int, int]:
-        det_centre_yx = self.det_centre_yx
-        det_step_yx = self.det_pixel_size_yx
-        det_shape_yx = self.det_shape_yx
+    def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
+        centre = self.det_centre
+        step = self.det_pixel_size
+        shape = self.det_shape
+        rotation = self.det_rotation
+
+        pixels_y, pixels_x = _metres_to_pixels(coords, 
+                                              centre,
+                                              step,
+                                              shape,
+                                              rotation)
+
+        return pixels_y, pixels_x
+
+
+    def pixels_to_metres(self, pixels: Pixels_YX) -> Coords_XY:
+        
+        det_centre = self.det_centre
+        det_step = self.det_pixel_size
+        det_shape = self.det_shape
         det_rotation = self.det_rotation
 
-        ray_coords_y, ray_coords_x = rays_yx
-
-        pixels_to_metres_transformation = pixels_to_metres_transform(det_centre_yx, 
-                                                                     det_step_yx, 
-                                                                     det_shape_yx, 
-                                                                     0, 
-                                                                     det_rotation)
-        
-        metres_to_pixels_transformation = jnp.linalg.inv(pixels_to_metres_transformation)
-        
-        ray_pixels_y, ray_pixels_x = apply_transformation(ray_coords_y, ray_coords_x, metres_to_pixels_transformation) 
-        
-        ray_pixels_y = jnp.round(ray_pixels_y).astype(jnp.int32)       
-        ray_pixels_x = jnp.round(ray_pixels_x).astype(jnp.int32)    
-
-        return ray_pixels_y, ray_pixels_x
-
-
-    def pixels_to_metres(self, rays_yx: Tuple[float, float]) -> Tuple[int, int]:
-        det_centre_yx = self.det_centre_yx
-        det_step_yx = self.det_pixel_size_yx
-        det_shape_yx = self.det_shape_yx
-        det_rotation = self.det_rotation
-
-        rays_y, rays_x = rays_yx
-
-        pixels_to_metres_transformation = pixels_to_metres_transform(det_centre_yx, 
-                                                                     det_step_yx, 
-                                                                     det_shape_yx, 
-                                                                     0, 
-                                                                     det_rotation)
-        
-
-        ray_coords_y, ray_coords_x = apply_transformation(rays_y, rays_x, pixels_to_metres_transformation) 
+        coords_x, coords_y = _pixels_to_metres(pixels, 
+                                              det_centre,
+                                              det_step,
+                                              det_shape,
+                                              det_rotation)
     
-        return ray_coords_y, ray_coords_x
+        return coords_x, coords_y

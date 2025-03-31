@@ -1,11 +1,12 @@
 import numpy as np
+from . import Coords_XY
 
 
-def get_ray_coords_between_planes_from_pt_src(model, 
-                                              pt_src_pos_yx, 
-                                              total_transfer_matrix, 
-                                              all_transfer_matrices, 
-                                              det_transfer_matrix_to_specific_plane):
+def get_ray_coords_between_planes_from_pt_src(model: list, 
+                                              pt_src: Coords_XY, 
+                                              total_transfer_matrix: np.ndarray, 
+                                              all_transfer_matrices: list, 
+                                              det_transfer_matrix_to_specific_plane: np.ndarray):
     
     # Note the first model component must be a pt source!
 
@@ -16,13 +17,13 @@ def get_ray_coords_between_planes_from_pt_src(model,
 
     # Find all input slopes for a max semiconvergence angle that will hit the detector pixels
     input_slopes_yx, mask = find_input_slopes_that_hit_detpx_from_pt_src(
-        detector_coords_yx, pt_src_pos_yx, semi_conv, total_transfer_matrix
+        detector_coords_yx, pt_src, semi_conv, total_transfer_matrix
     )
     
     input_slopes_yx_masked = input_slopes_yx[:, mask]
 
     # Run the model to obtain the ray coordinates at each component in the model
-    coords = use_transfer_matrices_to_propagate_rays_from_pt_src(all_transfer_matrices, pt_src_pos_yx, input_slopes_yx_masked)
+    coords = use_transfer_matrices_to_propagate_rays_from_pt_src(all_transfer_matrices, pt_src, input_slopes_yx_masked)
 
     # Stack coordinates and perform the inverse matrix multiplication to get the sample coordinates
     xs, ys, dxs, dys = coords
@@ -38,10 +39,10 @@ def get_ray_coords_between_planes_from_pt_src(model,
     return specified_plane_x, specified_plane_y, det_rays_x, det_rays_y
 
 
-def use_transfer_matrices_to_propagate_rays_from_pt_src(transfer_matrices, input_pos_yx, input_slopes_yx):
+def use_transfer_matrices_to_propagate_rays_from_pt_src(transfer_matrices, input_pos_xy, input_slopes_xy):
     # Given an input pt_source position and slopes, propagate the rays through the system
-    input_pos_y, input_pos_x = input_pos_yx
-    input_slopes_y, input_slopes_x = input_slopes_yx
+    input_pos_x, input_pos_y = input_pos_xy
+    input_slopes_x, input_slopes_y = input_slopes_xy
 
     # Make the input rays we can run through one last time in the model to find positions at sample and detector
     rays_at_source_with_semi_conv = np.vstack([
@@ -72,20 +73,23 @@ def use_transfer_matrices_to_propagate_rays_from_pt_src(transfer_matrices, input
 
 
 def find_input_slopes_that_hit_detpx_from_pt_src(
-    detector_coords_yx, pos_yx, semi_conv, transformation_matrix
+    detector_coords: Coords_XY, 
+    pos: Coords_XY, 
+    semi_conv: float, 
+    transformation_matrix: np.ndarray
 ):
     """
     Given a set of detector pixel coordinates, a semi-convergence angle from a source, and a transformation matrix,
     find a mask that tells us what slopes will hit the detector pixels from the point source.
     """
-    pos_y, pos_x = pos_yx
+    pos_x, pos_y = pos
 
     A_xx, A_xy, B_xx, B_xy = transformation_matrix[0, :4]  # Select first row excluding the last column
     A_yx, A_yy, B_yx, B_yy = transformation_matrix[1, :4]  # Select second row excluding the last column
 
     delta_x, delta_y = transformation_matrix[0, 4], transformation_matrix[1, 4]
 
-    y_out, x_out = detector_coords_yx[:, 0], detector_coords_yx[:, 1]
+    x_out, y_out = detector_coords[:, 0], detector_coords[:, 1]
 
     denom = B_xx * B_yy - B_xy * B_yx
     theta_x_in = (
@@ -112,9 +116,9 @@ def find_input_slopes_that_hit_detpx_from_pt_src(
 
     F = (theta_x_in**2 + theta_y_in**2) - semi_conv**2
     mask = F <= 0
-    input_slopes_yx = np.stack([theta_y_in, theta_x_in])
+    input_slopes_xy = np.stack([theta_x_in, theta_y_in])
 
-    return input_slopes_yx, mask
+    return input_slopes_xy, mask
 
 
 def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):

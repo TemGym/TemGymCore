@@ -9,8 +9,11 @@ from .propagate import (find_input_slopes_that_hit_detpx_from_pt_src,
                         get_ray_coords_between_planes_from_pt_src,
                         accumulate_transfer_matrices)
 
+from . import Coords_XY
+
 @jax.jit
-def solve_model_fourdstem_wrapper(model, scan_pos_m):
+def solve_model_fourdstem_wrapper(model: list, 
+                                  scan_pos_m: Coords_XY) -> tuple:
 
     # Unpack model components.
     PointSource = model[0]
@@ -18,7 +21,7 @@ def solve_model_fourdstem_wrapper(model, scan_pos_m):
     Descanner = model[2]
     Detector = model[3]
 
-    scan_y, scan_x = scan_pos_m[0], scan_pos_m[1]
+    scan_x, scan_y = scan_pos_m[0], scan_pos_m[1]
 
     # Prepare input ray position for this scan point.
     input_ray_positions = jnp.array([scan_x, scan_y, 0.0, 0.0, 1.0])
@@ -26,10 +29,7 @@ def solve_model_fourdstem_wrapper(model, scan_pos_m):
     ray = Ray(
         z=PointSource.z,
         matrix=input_ray_positions,
-        amplitude=jnp.ones(1),
         pathlength=jnp.zeros(1),
-        wavelength=jnp.ones(1),
-        blocked=jnp.zeros(1, dtype=float)
     )
 
     # Create a new Descanner with the current scan offsets.
@@ -67,13 +67,13 @@ def map_px_on_detector_to_scan(ScanGrid, Detector, detector_image,
     
     scan_shape = ScanGrid.scan_shape_yx
 
-    scan_pixel_ys, scan_pixel_xs = ScanGrid.metres_to_pixels([ray_scan_coords_y, ray_scan_coords_x])
+    scan_pixel_ys, scan_pixel_xs = ScanGrid.metres_to_pixels([ray_scan_coords_x, ray_scan_coords_y])
 
     # Create a mask of indices within bounds.
     mask = (scan_pixel_ys >= 0) & (scan_pixel_ys < scan_shape[0]) & \
            (scan_pixel_xs >= 0) & (scan_pixel_xs < scan_shape[1])
     
-    det_pixels_ys, det_pixels_xs = Detector.metres_to_pixels([ray_det_coords_y, ray_det_coords_x])
+    det_pixels_ys, det_pixels_xs = Detector.metres_to_pixels([ray_det_coords_x, ray_det_coords_y])
 
     detector_vals = detector_image[det_pixels_ys, det_pixels_xs]
     
@@ -85,25 +85,28 @@ def map_px_on_scan_to_detector(Detector, sample_interpolant,
                                ray_det_coords_x, ray_det_coords_y):
     
     # Stack the scan coordinates.
-    scan_pts_yx = np.stack([ray_scan_coords_y, ray_scan_coords_x], axis=-1)
+    scan_pts = np.stack([ray_scan_coords_x, ray_scan_coords_y], axis=-1)
 
     # Interpolate the sample intensity at the scan coordinates.
-    sample_vals = sample_interpolant(scan_pts_yx)
+    sample_vals = sample_interpolant(scan_pts)
     
     # Convert the ray detector coordinates to pixel indices.
-    ray_det_pixel_ys, ray_det_pixel_xs = Detector.metres_to_pixels([ray_det_coords_y, ray_det_coords_x])
+    ray_det_pixel_ys, ray_det_pixel_xs = Detector.metres_to_pixels([ray_det_coords_x, ray_det_coords_y])
 
     return ray_det_pixel_ys, ray_det_pixel_xs, sample_vals
 
 
-def project_frame_forward(model, detector_frame, sample_interpolant, scan_pos_yx):
+def project_frame_forward(model: list, 
+                          detector_frame: np.ndarray, 
+                          sample_interpolant: callable, 
+                          scan_pos: Coords_XY) -> np.ndarray:
 
     # Return all the transfer matrices necessary for us to propagate rays through the system
-    transfer_matrices, total_transfer_matrix, detector_to_sample = solve_model_fourdstem_wrapper(model, scan_pos_yx)
+    transfer_matrices, total_transfer_matrix, detector_to_sample = solve_model_fourdstem_wrapper(model, scan_pos)
 
     # Get ray coordinates at the scan and detector
     sample_rays_x, sample_rays_y, det_rays_x, det_rays_y = get_ray_coords_between_planes_from_pt_src(
-        model, scan_pos_yx, total_transfer_matrix, transfer_matrices, detector_to_sample
+        model, scan_pos, total_transfer_matrix, transfer_matrices, detector_to_sample
     )
 
     # Unpack model components.
@@ -119,7 +122,9 @@ def project_frame_forward(model, detector_frame, sample_interpolant, scan_pos_yx
     return detector_frame
 
 
-def project_frame_backward(model, detector_frame, scan_pos):
+def project_frame_backward(model: list, 
+                           detector_frame: np.ndarray, 
+                           scan_pos: Coords_XY) -> np.ndarray:
 
     # Return all the transfer matrices necessary for us to propagate rays through the system
     # We do this by propagating a single ray through the system, and finding it's gradients
