@@ -195,15 +195,6 @@ def do_shifted_sum(shifted_sum_image: np.ndarray,
             shifted_sum_image[y, x] += flat_detector_intensity[i]
     return shifted_sum_image
 
-@jax.jit
-def do_shifted_sum_jit(shifted_sum_image: jnp.ndarray,
-                       flat_sample_y_px: jnp.ndarray,
-                       flat_sample_x_px: jnp.ndarray,
-                       flat_detector_intensity: jnp.ndarray) -> jnp.ndarray:
-    
-    # Accumulate the detector intensities into shifted_sum_image
-    return shifted_sum_image.at[flat_sample_y_px, flat_sample_x_px].add(flat_detector_intensity)
-
 
 def compute_fourdstem_dataset(model: list,
                               fourdstem_array: np.ndarray,

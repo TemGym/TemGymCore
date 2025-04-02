@@ -71,7 +71,7 @@ def get_ray_coords_between_planes_from_pt_src_jit(model: list,
     det_rays_x = detector_rays[0]
     det_rays_y = detector_rays[1]
 
-    return specified_plane_x, specified_plane_y, det_rays_x, det_rays_y, mask
+    return specified_plane_x, specified_plane_y, det_rays_x, det_rays_y
 
 
 def use_transfer_matrices_to_propagate_rays_from_pt_src(transfer_matrices, input_pos_xy, input_slopes_xy):
