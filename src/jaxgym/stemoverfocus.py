@@ -267,7 +267,7 @@ def project_frame_backward_jit(model: list,
     transfer_matrices, total_transfer_matrix, detector_to_sample = solve_model_fourdstem_wrapper(model, scan_pos)
 
     # Get ray coordinates at the scan and detector
-    sample_rays_x, sample_rays_y, det_rays_x, det_rays_y = get_ray_coords_between_planes_from_pt_src_jit(
+    sample_rays_x, sample_rays_y, det_rays_x, det_rays_y, mask = get_ray_coords_between_planes_from_pt_src_jit(
         model, scan_pos, total_transfer_matrix, transfer_matrices, detector_to_sample
     )
 
