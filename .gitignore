@@ -37,4 +37,4 @@ dist/
 *.png
 *nsys-rep
 *.npy
-examples/fourdstem_example/fourdstem_overfocused.npy
+examples/fourdstem_example/fourdstem_array.npy

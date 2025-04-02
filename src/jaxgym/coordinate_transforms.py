@@ -56,8 +56,7 @@ def pixels_to_metres_transform(centre: Coords_XY,
                                pixel_size: Scale_YX,
                                shape: Shape_YX, 
                                flip_y=False, 
-                               rotation: Degrees = 0.0
-):
+                               rotation: Degrees = 0.0):
     """
     Transforms pixel coordinates into metre coordinates using a series of matrix operations.
 
@@ -116,8 +115,7 @@ def _metres_to_pixels(ray_coords: Coords_XY,
                                         that needs to be converted.
         centre (Coords_XY - tuple of float): A tuple (x, y) representing the centre of the transformation,
                                     typically the midpoint of the pixel space.
-        step (Scale_YX - tuple of float): A tuple (y_step, x_step) representing the scale factor or 
-                                resolution along the y and x axes.
+        step (Scale_YX - tuple of float): A tuple (y_step, x_step) representing the scale factor along the y and x axes.
         shape (Shape_YX - tuple of int): A tuple (height, width) specifying the overall dimensions of the 
                                 pixel space.
         rotation (Degrees - float): The rotation angle in degrees to be applied during the transformation.
@@ -159,7 +157,7 @@ def _pixels_to_metres(ray_pixels: Pixels_YX,
                                         that needs to be converted.
         centre (Coords_XY - tuple of float): A tuple (x, y) representing the centre of the transformation,
                                     typically the midpoint of the pixel space.
-        step (Scale_YX - tuple of float): A tuple (y_step, x_step) representing the scale or resolution along the
+        step (Scale_YX - tuple of float): A tuple (y_step, x_step) representing the scale along the
                                 y and x axes in metre units.
         shape (Shape_YX - tuple of int): A tuple (height, width) specifying the overall dimensions of the pixel space.
         rotation (Degrees - float): The rotation angle in degrees to be applied during the transformation.
@@ -179,7 +177,6 @@ def _pixels_to_metres(ray_pixels: Pixels_YX,
     ray_coords_y, ray_coords_x = apply_transformation(ray_pixels_y, ray_pixels_x, pixels_to_metres_transformation) 
 
     return ray_coords_x, ray_coords_y
-
 
 
 def apply_transformation(y, x, transformation):

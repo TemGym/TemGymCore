@@ -62,30 +62,31 @@ class ThickLens:
     def z(self):
         return self.z_po
 
+
 @jdc.pytree_dataclass
 class Descanner:
     z: float
-    descan_error: Tuple[float, float, float, float]  # Error in the scan position pos_x, y, tilt_x, y
     offset_x: float
     offset_y: float
+    descan_error: jnp.ndarray
 
     def step(self, ray: Ray):
         offset_x, offset_y = self.offset_x, self.offset_y
 
-        (descan_error_xx, descan_error_xy, descan_error, descan_error_yy,
+        (descan_error_xx, descan_error_xy, descan_error_yx, descan_error_yy,
          descan_error_dxx, descan_error_dxy, descan_error_dyx, descan_error_dyy) = self.descan_error
-        
+
         descan_error_xx = 1.0 + descan_error_xx
         descan_error_yy = 1.0 + descan_error_yy
-        
+
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
 
         new_x = x * descan_error_xx + descan_error_xy * y + offset_x
-        new_y = y * descan_error_yy + descan_error * x + offset_y
+        new_y = y * descan_error_yy + descan_error_yx * x + offset_y
 
         new_dx = dx + x * descan_error_dxx + y * descan_error_dxy
         new_dy = dy + y * descan_error_dyy + x * descan_error_dyx
-        
+
         pathlength = ray.pathlength - (offset_x * x) - (offset_y * y)
 
         Ray = ray_matrix(new_x, new_y, new_dx, new_dy,
@@ -172,9 +173,10 @@ class PointSource:
 class ScanGrid:
     z: float
     scan_step: Scale_YX
-    scan_shape: Shape_YX
+    scan_shape: jdc.Static[Shape_YX]
     scan_rotation: Degrees
     scan_centre: Coords_XY = (0., 0.)
+    
 
     @property
     def coords(self) -> NDArray:
@@ -215,7 +217,6 @@ class ScanGrid:
                                               step,
                                               shape,
                                               rotation)
-
 
         return pixels_y, pixels_x
 
@@ -318,7 +319,7 @@ class Biprism:
 class Detector:
     z: float
     det_pixel_size: Scale_YX
-    det_shape: Shape_YX
+    det_shape: jdc.Static[Shape_YX]
     det_centre: Coords_XY = (0., 0.)
     det_rotation: Degrees = 0.
     flip_y: bool = False
@@ -359,25 +360,25 @@ class Detector:
         rotation = self.det_rotation
 
         pixels_y, pixels_x = _metres_to_pixels(coords, 
-                                              centre,
-                                              step,
-                                              shape,
-                                              rotation)
+                                               centre,
+                                               step,
+                                               shape,
+                                               rotation)
 
         return pixels_y, pixels_x
 
 
     def pixels_to_metres(self, pixels: Pixels_YX) -> Coords_XY:
         
-        det_centre = self.det_centre
-        det_step = self.det_pixel_size
-        det_shape = self.det_shape
-        det_rotation = self.det_rotation
+        centre = self.det_centre
+        step = self.det_pixel_size
+        shape = self.det_shape
+        rotation = self.det_rotation
 
         coords_x, coords_y = _pixels_to_metres(pixels, 
-                                              det_centre,
-                                              det_step,
-                                              det_shape,
-                                              det_rotation)
+                                               centre,
+                                               step,
+                                               shape,
+                                               rotation)
     
         return coords_x, coords_y
