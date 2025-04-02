@@ -10,8 +10,8 @@ from jax.scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import rotate
 from scipy.ndimage import zoom
 
-from jaxgym.stemoverfocus import compute_fourdstem_dataset, solve_model_fourdstem_wrapper
-from jaxgym.propagate import find_input_slopes_that_hit_detpx_from_pt_src, accumulate_transfer_matrices
+from jaxgym.stemoverfocus import solve_model_fourdstem_wrapper
+from jaxgym.propagate import find_input_slopes, accumulate_transfer_matrices
 
 import matplotlib.pyplot as plt
 import sympy as sp
@@ -132,7 +132,7 @@ def test_find_input_slopes_that_hit_detpx_from_pt_src():
     x3_solution = float(solution[x3])
     x4_solution = float(solution[x4])
 
-    input_slopes, mask = find_input_slopes_that_hit_detpx_from_pt_src(detector_coords, pos, 0.001, transfer_matrix)
+    input_slopes, mask = find_input_slopes(0.001, pos, detector_coords, transfer_matrix)
 
     np.testing.assert_allclose(input_slopes[0], np.array([x3_solution]), rtol=1e-5)
     np.testing.assert_allclose(input_slopes[1], np.array([x4_solution]), rtol=1e-5)

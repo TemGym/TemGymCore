@@ -14,7 +14,7 @@ import numba
 
 from . import Coords_XY
 
-# @jax.jit
+@jax.jit
 def solve_model_fourdstem_wrapper(model: list, 
                                   scan_pos_m: Coords_XY) -> tuple:
 

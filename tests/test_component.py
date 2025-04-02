@@ -155,6 +155,7 @@ def test_descanner(offset_xy, input_ray_xy, expected_output_xy):
         z=0.0,
         offset_x=offset_xy[0],
         offset_y=offset_xy[1],
+        descan_error=[0,0,0,0,0,0,0,0]
     )
 
     output_ray = descanner.step(input_ray)
