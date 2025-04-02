@@ -3,86 +3,84 @@ import jax.numpy as jnp
 from . import Coords_XY
 
 
-def get_ray_coords_between_planes_from_pt_src(model: list, 
-                                              pt_src: Coords_XY, 
-                                              total_transfer_matrix: np.ndarray, 
-                                              all_transfer_matrices: list, 
-                                              det_transfer_matrix_to_specific_plane: np.ndarray):
+def ray_coords_at_plane(semi_conv: float, 
+                        pt_src: Coords_XY, 
+                        detector_coords: Coords_XY,
+                        total_transfer_matrix: np.ndarray, 
+                        det_transfer_matrix_to_specific_plane: np.ndarray):
     
-    # Note the first model component must be a pt source!
+    """
+    For all rays from a point source within a given semi-convergence angle, that hit the detector pixels,
+    find their positions at slopes any any specified plane in the sytem. 
 
-    PointSource = model[0]
-    Detector = model[3]
-    detector_coords = Detector.coords
-    semi_conv = PointSource.semi_conv 
+    Parameters:
+        semi_conv (float): The maximum semiconvergence angle defining the range of input slopes.
+        pt_src (Coords_XY): The (x, y) coordinates of the source point.
+        detector_coords (Coords_XY): The (x, y) coordinates defining the detector pixel layout.
+        total_transfer_matrix (numpy.ndarray): The overall transfer matrix used to propagate rays from the source to the detector.
+        det_transfer_matrix_to_specific_plane (numpy.ndarray): The transfer matrix used to map detector coordinates 
+                                                                to a specific plane.
+    Returns:
+        tuple:
+            specified_plane_x (numpy.ndarray): The x-coordinates of the rays at the specific plane.
+            specified_plane_y (numpy.ndarray): The y-coordinates of the rays at the specific plane.
+            mask (numpy.ndarray): A boolean array indicating which input slopes resulted in valid ray intersections 
+                                    with the detector.
+    """
+    
 
     # Find all input slopes for a max semiconvergence angle that will hit the detector pixels
-    input_slopes, mask = find_input_slopes_that_hit_detpx_from_pt_src(
-        detector_coords, pt_src, semi_conv, total_transfer_matrix
+    input_slopes, mask = find_input_slopes(
+        semi_conv, pt_src, detector_coords, total_transfer_matrix
     )
     
-    # Run the model to obtain the ray coordinates at each component in the model
-    coords = use_transfer_matrices_to_propagate_rays_from_pt_src(all_transfer_matrices, pt_src, input_slopes)
+    # Propagate rays with a transfer matrix obtained by solving the model
+    coords = propagate_rays(pt_src, input_slopes, total_transfer_matrix)
 
-    # Stack coordinates and perform the inverse matrix multiplication to get the sample coordinates
+    # Stack coordinates and perform the inverse matrix multiplication to get the ray coordinates at a specific plane
     xs, ys, dxs, dys = coords
-    detector_rays = np.stack([xs[-1], ys[-1], dxs[-1], dys[-1], np.ones_like(xs[-1])])
+    detector_rays = np.stack([xs, ys, dxs, dys, np.ones_like(xs)])
     specified_plane = np.dot(det_transfer_matrix_to_specific_plane, detector_rays)
 
     # Unpack the sample and detector ray coordinates
     specified_plane_x = specified_plane[0]
     specified_plane_y = specified_plane[1]
-    det_rays_x = detector_rays[0]
-    det_rays_y = detector_rays[1]
 
-    return specified_plane_x, specified_plane_y, det_rays_x, det_rays_y, mask
+    return specified_plane_x, specified_plane_y, mask
 
 
-def get_ray_coords_between_planes_from_pt_src_jit(model: list, 
-                                                  pt_src: Coords_XY, 
-                                                  total_transfer_matrix: np.ndarray, 
-                                                  all_transfer_matrices: list, 
-                                                  det_transfer_matrix_to_specific_plane: np.ndarray):
-    
-    # Note the first model component must be a pt source!
-
-    PointSource = model[0]
-    semi_conv = PointSource.semi_conv 
-
-    Detector = model[-1]
-    detector_coords = Detector.coords
-
-    # Find all input slopes for a max semiconvergence angle that will hit the detector pixels
-    input_slopes, mask = find_input_slopes_that_hit_detpx_from_pt_src(
-        detector_coords, pt_src, semi_conv, total_transfer_matrix
-    )
-    
-    # Run the model to obtain the ray coordinates at each component in the model
-    coords = use_transfer_matrices_to_propagate_rays_from_pt_src_jit(all_transfer_matrices, pt_src, input_slopes)
-
-    # Stack coordinates and perform the inverse matrix multiplication to get the sample coordinates
-    xs, ys, dxs, dys = coords
-    detector_rays = jnp.stack([xs[-1], ys[-1], dxs[-1], dys[-1], jnp.ones_like(xs[-1])])
-    specified_plane = jnp.dot(det_transfer_matrix_to_specific_plane, detector_rays)
-
-    # Unpack the sample and detector ray coordinates
-    specified_plane_x = specified_plane[0]
-    specified_plane_y = specified_plane[1]
-    det_rays_x = detector_rays[0]
-    det_rays_y = detector_rays[1]
-
-    return specified_plane_x, specified_plane_y, det_rays_x, det_rays_y, mask
+def propagate_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
+    """
+    Propagate rays through an optical system using the provided transfer matrix.
+    This function takes an initial point source position (x, y) and their corresponding slopes, constructs a ray vector, 
+    and propagates these rays through the system by applying the transfer matrix. The output is a set of propagated ray coordinates.
+    Parameters
+    ----------
+    input_pos_xy : tuple
+        A tuple (input_pos_x, input_pos_y) representing the x and y coordinates of the source position.
+    input_slopes_xy : tuple
+        A tuple (input_slopes_x, input_slopes_y) representing the slopes of the rays in the x and y directions.
+    transfer_matrix : numpy.ndarray
+        A matrix used to propagate the rays. It should be compatible with the constructed ray vector so that the dot product results in a propagated coordinate array.
+    Returns
+    -------
+    numpy.ndarray
+        A 2D numpy array of shape (4, N) where N is the number of rays. The rows correspond to:
+            - x positions
+            - y positions
+            - x slopes (dxs)
+            - y slopes (dys)
+    """
 
 
-def use_transfer_matrices_to_propagate_rays_from_pt_src(transfer_matrices, input_pos_xy, input_slopes_xy):
     # Given an input pt_source position and slopes, propagate the rays through the system
     input_pos_x, input_pos_y = input_pos_xy
     input_slopes_x, input_slopes_y = input_slopes_xy
 
     # Make the input rays we can run through one last time in the model to find positions at sample and detector
     rays_at_source_with_semi_conv = np.vstack([
-        np.full((input_slopes_x.shape[0]), input_pos_x),
-        np.full((input_slopes_y.shape[0]), input_pos_y),
+        np.full(input_slopes_x.shape[0], input_pos_x),
+        np.full(input_slopes_y.shape[0], input_pos_y),
         input_slopes_x,
         input_slopes_y,
         np.ones_like(input_slopes_x)
@@ -90,65 +88,27 @@ def use_transfer_matrices_to_propagate_rays_from_pt_src(transfer_matrices, input
 
     # Propagate the point source coordinates through the forward ABCD matrices
     coord_list = [rays_at_source_with_semi_conv]
-    for ABCD in transfer_matrices:
-        new_coord = np.dot(ABCD, coord_list[-1])
-        coord_list.append(new_coord)
+    end_coords = np.dot(transfer_matrix, coord_list[-1])
         
-    # Stack the propagated coordinates into an array for easier indexing
-    coords_array = np.stack(coord_list, axis=0)
-    
-    xs = coords_array[:, 0, :]
-    ys = coords_array[:, 1, :]
-    dxs = coords_array[:, 2, :]
-    dys = coords_array[:, 3, :]
+    xs = end_coords[0, :]
+    ys = end_coords[1, :]
+    dxs = end_coords[2, :]
+    dys = end_coords[3, :]
 
     coords = np.array([xs, ys, dxs, dys])
     
     return coords
 
 
-def use_transfer_matrices_to_propagate_rays_from_pt_src_jit(transfer_matrices, input_pos_xy, input_slopes_xy):
-    # Given an input pt_source position and slopes, propagate the rays through the system
-    input_pos_x, input_pos_y = input_pos_xy
-    input_slopes_x, input_slopes_y = input_slopes_xy
-
-    # Make the input rays we can run through one last time in the model to find positions at sample and detector
-    rays_at_source_with_semi_conv = jnp.vstack([
-        jnp.full((input_slopes_x.shape[0]), input_pos_x),
-        jnp.full((input_slopes_y.shape[0]), input_pos_y),
-        input_slopes_x,
-        input_slopes_y,
-        jnp.ones_like(input_slopes_x)
-    ])
-
-    # Propagate the point source coordinates through the forward ABCD matrices
-    coord_list = [rays_at_source_with_semi_conv]
-    for ABCD in transfer_matrices:
-        new_coord = jnp.dot(ABCD, coord_list[-1])
-        coord_list.append(new_coord)
-        
-    # Stack the propagated coordinates into an array for easier indexing
-    coords_array = jnp.stack(coord_list, axis=0)
-    
-    xs = coords_array[:, 0, :]
-    ys = coords_array[:, 1, :]
-    dxs = coords_array[:, 2, :]
-    dys = coords_array[:, 3, :]
-
-    coords = jnp.array([xs, ys, dxs, dys])
-    
-    return coords
-
-
-def find_input_slopes_that_hit_detpx_from_pt_src(
-    detector_coords: Coords_XY, 
-    pos: Coords_XY, 
-    semi_conv: float, 
+def find_input_slopes(
+    semi_conv: float,
+    pos: Coords_XY,
+    detector_coords: Coords_XY,
     transformation_matrix: np.ndarray
 ):
     """
     Given a set of detector pixel coordinates, a semi-convergence angle from a source, and a transformation matrix,
-    find a mask that tells us what slopes will hit the detector pixels from the point source.
+    find the slopes and mask that tells us what slopes will hit the detector pixels from the point source.
     """
     pos_x, pos_y = pos
 
@@ -185,7 +145,7 @@ def find_input_slopes_that_hit_detpx_from_pt_src(
     F = (theta_x_in**2 + theta_y_in**2) - semi_conv**2
     mask = F <= 0
 
-    input_slopes_xy = jnp.stack([theta_x_in, theta_y_in])
+    input_slopes_xy = np.stack([theta_x_in, theta_y_in])
 
     return input_slopes_xy, mask
 

@@ -6,7 +6,7 @@ from typing import (
 )
 
 from .ray import Ray, propagate, ray_matrix
-from .coordinate_transforms import _pixels_to_metres, _metres_to_pixels
+from .coordinate_transforms import apply_transformation, pixels_to_metres_transform
 from . import (
     Degrees, Coords_XY, Scale_YX, Coords_YX, Pixels_YX, Shape_YX
 )
@@ -176,7 +176,12 @@ class ScanGrid:
     scan_shape: jdc.Static[Shape_YX]
     scan_rotation: Degrees
     scan_centre: Coords_XY = (0., 0.)
-    
+    metres_to_pixels_mat: jnp.ndarray = jdc.field(init=False)
+    pixels_to_metres_mat: jnp.ndarray = jdc.field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "metres_to_pixels_mat", self.get_metres_to_pixels_transform())
+        object.__setattr__(self, "pixels_to_metres_mat", self.get_pixels_to_metres_transform())
 
     @property
     def coords(self) -> NDArray:
@@ -206,35 +211,42 @@ class ScanGrid:
         return scan_coords_xy
     
 
-    def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
+    def get_metres_to_pixels_transform(self) -> NDArray:
         centre = self.scan_centre
         step = self.scan_step
         shape = self.scan_shape
         rotation = self.scan_rotation
+        pixels_to_metres_mat = pixels_to_metres_transform(centre, step, shape, False, rotation)
+        metres_to_pixels_mat = jnp.linalg.inv(pixels_to_metres_mat)
 
-        pixels_y, pixels_x = _metres_to_pixels(coords, 
-                                              centre,
-                                              step,
-                                              shape,
-                                              rotation)
+        return metres_to_pixels_mat
+    
+
+    def get_pixels_to_metres_transform(self) -> NDArray:
+        centre = self.scan_centre
+        step = self.scan_step
+        shape = self.scan_shape
+        rotation = self.scan_rotation
+        pixels_to_metres_mat = pixels_to_metres_transform(centre, step, shape, False, rotation)
+
+        return pixels_to_metres_mat
+     
+
+    def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
+        coords_x, coords_y = coords
+        pixels_y, pixels_x = apply_transformation(coords_y, coords_x, self.metres_to_pixels_mat)
+        pixels_y = jnp.round(pixels_y).astype(jnp.int32)       
+        pixels_x = jnp.round(pixels_x).astype(jnp.int32)   
 
         return pixels_y, pixels_x
 
 
     def pixels_to_metres(self, pixels: Pixels_YX) -> Coords_XY:
-        
-        centre = self.scan_centre
-        step = self.scan_step
-        shape = self.scan_shape
-        rotation = self.scan_rotation
+        pixels_y, pixels_x = pixels
+        metres_y, metres_x = apply_transformation(pixels_y, pixels_x, self.pixels_to_metres_mat)
 
-        coords_x, coords_y = _pixels_to_metres(pixels, 
-                                              centre,
-                                              step,
-                                              shape,
-                                              rotation)
+        return metres_x, metres_y
     
-        return coords_x, coords_y
     
 @jdc.pytree_dataclass
 class Aperture:
@@ -323,7 +335,13 @@ class Detector:
     det_centre: Coords_XY = (0., 0.)
     det_rotation: Degrees = 0.
     flip_y: bool = False
-    
+    metres_to_pixels_mat: jnp.ndarray = jdc.field(init=False)
+    pixels_to_metres_mat: jnp.ndarray = jdc.field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "metres_to_pixels_mat", self.get_metres_to_pixels_transform())
+        object.__setattr__(self, "pixels_to_metres_mat", self.get_pixels_to_metres_transform())
+
 
     @property
     def coords(self) -> NDArray:
@@ -353,32 +371,38 @@ class Detector:
         return det_coords_xy
     
 
-    def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
+    def get_metres_to_pixels_transform(self) -> NDArray:
         centre = self.det_centre
         step = self.det_pixel_size
         shape = self.det_shape
         rotation = self.det_rotation
+        pixels_to_metres_mat = pixels_to_metres_transform(centre, step, shape, False, rotation)
+        metres_to_pixels_mat = jnp.linalg.inv(pixels_to_metres_mat)
 
-        pixels_y, pixels_x = _metres_to_pixels(coords, 
-                                               centre,
-                                               step,
-                                               shape,
-                                               rotation)
+        return metres_to_pixels_mat
+    
+    def get_pixels_to_metres_transform(self) -> NDArray:
+        centre = self.det_centre
+        step = self.det_pixel_size
+        shape = self.det_shape
+        rotation = self.det_rotation
+        pixels_to_metres_mat = pixels_to_metres_transform(centre, step, shape, False, rotation)
+
+        return pixels_to_metres_mat
+     
+
+    def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
+        coords_x, coords_y = coords
+        pixels_y, pixels_x = apply_transformation(coords_y, coords_x, self.metres_to_pixels_mat)
+
+        pixels_y = jnp.round(pixels_y).astype(jnp.int32)
+        pixels_x = jnp.round(pixels_x).astype(jnp.int32)  
 
         return pixels_y, pixels_x
 
 
     def pixels_to_metres(self, pixels: Pixels_YX) -> Coords_XY:
-        
-        centre = self.det_centre
-        step = self.det_pixel_size
-        shape = self.det_shape
-        rotation = self.det_rotation
+        pixels_y, pixels_x = pixels
+        metres_y, metres_x = apply_transformation(pixels_y, pixels_x, self.pixels_to_metres_mat)
 
-        coords_x, coords_y = _pixels_to_metres(pixels, 
-                                               centre,
-                                               step,
-                                               shape,
-                                               rotation)
-    
-        return coords_x, coords_y
+        return metres_x, metres_y

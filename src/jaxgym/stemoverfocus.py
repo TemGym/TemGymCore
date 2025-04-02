@@ -4,8 +4,8 @@ import jax.numpy as jnp
 from .ray import Ray
 from . import components as comp
 from .run import solve_model
-from .propagate import (get_ray_coords_between_planes_from_pt_src,
-                        get_ray_coords_between_planes_from_pt_src_jit,
+from .propagate import (ray_coords_at_plane,
+                        propagate_rays,
                         accumulate_transfer_matrices)
 
 import tqdm.auto as tqdm
@@ -66,119 +66,110 @@ def solve_model_fourdstem_wrapper(model: list,
     return transfer_matrices, total_transfer_matrix, detector_to_scan_grid
 
 
-def map_px_on_detector_to_scan_jit(ScanGrid, Detector, detector_image,
-                               ray_scan_coords_x, ray_scan_coords_y,
-                               ray_det_coords_x, ray_det_coords_y):
-    
-    scan_pixel_ys, scan_pixel_xs = ScanGrid.metres_to_pixels([ray_scan_coords_x, ray_scan_coords_y])
-    det_pixels_ys, det_pixels_xs = Detector.metres_to_pixels([ray_det_coords_x, ray_det_coords_y])
+def project_frame_backward(model: list, 
+                           det_coords: np.ndarray,
+                           det_frame: np.ndarray,
+                           scan_pos: Coords_XY) -> np.ndarray:
 
-    detector_vals = detector_image[det_pixels_ys, det_pixels_xs]
-    
-    return scan_pixel_ys, scan_pixel_xs, detector_vals
+    PointSource = model[0]
+    ScanGrid = model[1]
+    semi_conv = PointSource.semi_conv
 
+    # Return all the transfer matrices necessary for us to propagate rays through the system
+    # We do this by propagating a single ray through the system, and finding it's gradients
+    _, total_transfer_matrix, det_to_scan = solve_model_fourdstem_wrapper(model, scan_pos)
 
-def map_px_on_scan_to_detector_jit(Detector, sample_interpolant, 
-                               ray_scan_coords_x, ray_scan_coords_y,
-                               ray_det_coords_x, ray_det_coords_y):
-    
+    # Get ray coordinates at the scan from the det
+    scan_rays_x, scan_rays_y, semi_conv_mask = ray_coords_at_plane(
+        semi_conv, scan_pos, det_coords, total_transfer_matrix, det_to_scan
+    )
 
-    scan_pts = jnp.stack([ray_scan_coords_y, ray_scan_coords_x], axis=-1)
+    # Select rays that have a slope less than semi_conv 
+    scan_rays_x = scan_rays_x[semi_conv_mask]
+    scan_rays_y = scan_rays_y[semi_conv_mask]
+    det_values = det_frame.flatten()[semi_conv_mask]
 
-    # Interpolate the sample intensity at the scan coordinates.
-    sample_vals = sample_interpolant(scan_pts)
-    
-    # Convert the ray detector coordinates to pixel indices.
-    ray_det_pixel_ys, ray_det_pixel_xs = Detector.metres_to_pixels([ray_det_coords_x, ray_det_coords_y])
+    # Convert the ray coordinates to pixel indices.
+    scan_y_px, scan_x_px = ScanGrid.metres_to_pixels([scan_rays_x, scan_rays_y])
 
-    return ray_det_pixel_ys, ray_det_pixel_xs, sample_vals
-
-
-def map_px_on_detector_to_scan(ScanGrid, Detector, detector_image,
-                               ray_scan_coords_x, ray_scan_coords_y,
-                               ray_det_coords_x, ray_det_coords_y):
-    
-    scan_pixel_ys, scan_pixel_xs = ScanGrid.metres_to_pixels([ray_scan_coords_x, ray_scan_coords_y])
-    det_pixels_ys, det_pixels_xs = Detector.metres_to_pixels([ray_det_coords_x, ray_det_coords_y])
-
-    detector_vals = detector_image[det_pixels_ys, det_pixels_xs]
-    
-    return scan_pixel_ys, scan_pixel_xs, detector_vals
+    return scan_y_px, scan_x_px, det_values
 
 
-def map_px_on_scan_to_detector(Detector, sample_interpolant, 
-                               ray_scan_coords_x, ray_scan_coords_y,
-                               ray_det_coords_x, ray_det_coords_y):
-    
-
-    scan_pts = np.stack([ray_scan_coords_y, ray_scan_coords_x], axis=-1)
-
-    # Interpolate the sample intensity at the scan coordinates.
-    sample_vals = sample_interpolant(scan_pts)
-    
-    # Convert the ray detector coordinates to pixel indices.
-    ray_det_pixel_ys, ray_det_pixel_xs = Detector.metres_to_pixels([ray_det_coords_x, ray_det_coords_y])
-
-    return ray_det_pixel_ys, ray_det_pixel_xs, sample_vals
-
-
-def project_frame_forward(model: list, 
-                          detector_frame: np.ndarray, 
-                          sample_interpolant: callable, 
+def project_frame_forward(model: list,
+                          det_coords: np.ndarray,
+                          sample_interpolant: callable,
                           scan_pos: Coords_XY) -> np.ndarray:
+     
+    PointSource = model[0]
+    Detector = model[3]
+    semi_conv = PointSource.semi_conv
 
     # Return all the transfer matrices necessary for us to propagate rays through the system
-    transfer_matrices, total_transfer_matrix, detector_to_sample = solve_model_fourdstem_wrapper(model, scan_pos)
+    # We do this by propagating a single ray through the system, and finding it's gradients
+    _, total_transfer_matrix, detector_to_scan = solve_model_fourdstem_wrapper(model, scan_pos)
 
-    # Get ray coordinates at the scan and detector
-    sample_rays_x, sample_rays_y, det_rays_x, det_rays_y, mask = get_ray_coords_between_planes_from_pt_src(
-        model, scan_pos, total_transfer_matrix, transfer_matrices, detector_to_sample
+    # Get ray coordinates at the scan from the detector
+    scan_rays_x, scan_rays_y, mask = ray_coords_at_plane(
+        semi_conv, scan_pos, det_coords, total_transfer_matrix, detector_to_scan
     )
 
-    sample_rays_x = sample_rays_x[mask]
-    sample_rays_y = sample_rays_y[mask]
-    det_rays_x = det_rays_x[mask]
-    det_rays_y = det_rays_y[mask]
+    # Select rays that have a slope less than semi_conv 
+    scan_rays_x = scan_rays_x[mask]
+    scan_rays_y = scan_rays_y[mask]
+    det_rays_x = det_coords[mask, 0]
+    det_rays_y = det_coords[mask, 1]
 
-    # Unpack model components.
-    Detector = model[-1]
+    scan_pts = np.stack([scan_rays_y, scan_rays_x], axis=-1)
 
-    # Map the detector pixel coordinates from scan grid to the detector
-    det_y_px, det_x_px, sample_intensity = map_px_on_scan_to_detector(
-        Detector, sample_interpolant, sample_rays_x, sample_rays_y, det_rays_x, det_rays_y
-    )
+    # Interpolate the sample intensity at the scan coordinates.
+    sample_vals = sample_interpolant(scan_pts)
+
+    det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
+
+    return det_pixels_y, det_pixels_x, sample_vals
+
+
+def compute_fourdstem_dataset(model: list,
+                              fourdstem_array: np.ndarray,
+                              sample_interpolant: callable) -> np.ndarray:
     
-    detector_frame[det_y_px, det_x_px] = sample_intensity
-
-    return detector_frame
-
-
-def project_frame_forward_jit(model: list, 
-                              sample_interpolant: callable, 
-                              detector_frame: np.ndarray, 
-                              scan_pos: Coords_XY) -> np.ndarray:
-
-    # Return all the transfer matrices necessary for us to propagate rays through the system
-    transfer_matrices, total_transfer_matrix, detector_to_sample = solve_model_fourdstem_wrapper(model, scan_pos)
-
-    # Get ray coordinates at the scan and detector
-    sample_rays_x, sample_rays_y, det_rays_x, det_rays_y, mask = get_ray_coords_between_planes_from_pt_src_jit(
-        model, scan_pos, total_transfer_matrix, transfer_matrices, detector_to_sample
-    )
-
-    # Unpack model components.
     Detector = model[-1]
+    ScanGrid = model[1]
+    scan_coords = ScanGrid.coords
+    det_coords = Detector.coords
 
-    # Map the detector pixel coordinates from scan grid to the detector
-    det_y_px, det_x_px, sample_intensity = map_px_on_scan_to_detector_jit(
-        Detector, sample_interpolant, sample_rays_x, sample_rays_y, det_rays_x, det_rays_y
-    )
+    for idx in tqdm.trange(fourdstem_array.shape[0], desc='Scan Y', leave=True):
+        scan_pos = scan_coords[idx]
+        det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(model, det_coords, sample_interpolant, scan_pos)
+
+        fourdstem_array[idx, det_pixels_y, det_pixels_x] = sample_vals
+
+    return fourdstem_array
+
+
+def compute_scan_grid_rays_and_intensities(model: list,
+                                           fourdstem_array: np.ndarray) -> np.ndarray:
     
-    sample_intensity = jnp.where(mask, sample_intensity, 0)
+    ScanGrid = model[1]
+    Detector = model[-1]
+    det_coords = Detector.coords
+    scan_coords = ScanGrid.coords
 
-    detector_frame = detector_frame.at[det_y_px, det_x_px].set(sample_intensity)
+    sample_px_ys = []
+    sample_px_xs = []
+    detector_intensities = []
 
-    return detector_frame
+    for idx in tqdm.trange(fourdstem_array.shape[0], desc='Scan Y'):
+        scan_pos = scan_coords[idx]
+    
+        # Compute the backward projection for this scan position.
+        sample_px_y, sample_px_x, detector_intensity = project_frame_backward(model, det_coords, fourdstem_array[idx], scan_pos)
+        sample_px_ys.append(sample_px_y)
+        sample_px_xs.append(sample_px_x)
+        detector_intensities.append(detector_intensity)
+
+    return sample_px_ys, sample_px_xs, detector_intensities
+
 
 @numba.njit
 def do_shifted_sum(shifted_sum_image: np.ndarray,
@@ -194,131 +185,3 @@ def do_shifted_sum(shifted_sum_image: np.ndarray,
         if y >= 0 and y < height and x >= 0 and x < width:
             shifted_sum_image[y, x] += flat_detector_intensity[i]
     return shifted_sum_image
-
-
-def compute_fourdstem_dataset(model: list,
-                              fourdstem_array: np.ndarray,
-                              sample_interpolant: callable) -> np.ndarray:
-    
-    Detector = model[-1]
-    ScanGrid = model[1]
-    scan_coords = ScanGrid.coords
-
-    for idx in tqdm.trange(fourdstem_array.shape[0], desc='Scan Y', leave=True):
-            scan_pos = scan_coords[idx]
-            det_frame = np.zeros(Detector.det_shape, dtype=np.complex64)
-            fourdstem_array[idx] = project_frame_forward(model, det_frame, sample_interpolant, scan_pos)
-
-    return fourdstem_array
-
-
-@jax.jit
-def compute_fourdstem_dataset_jit(model: list, 
-                                  fourdstem_array: jnp.ndarray, 
-                                  sample_interpolant: callable) -> jnp.ndarray:
-
-    ScanGrid = model[1]
-    scan_coords = ScanGrid.coords
-
-    def _project_frame_forward(scan_pos, det_frame):
-        return project_frame_forward_jit(model, sample_interpolant, det_frame, scan_pos)
-    
-    # Vectorize over both scan grid axes.
-    vmapped_process = jax.vmap(_project_frame_forward, in_axes=(0, 0))
-
-    # Return a 4D stem array
-    return vmapped_process(scan_coords, fourdstem_array)
-
-
-def project_frame_backward(model: list, 
-                           detector_frame: np.ndarray, 
-                           scan_pos: Coords_XY) -> np.ndarray:
-
-    # Return all the transfer matrices necessary for us to propagate rays through the system
-    # We do this by propagating a single ray through the system, and finding it's gradients
-    transfer_matrices, total_transfer_matrix, detector_to_sample = solve_model_fourdstem_wrapper(model, scan_pos)
-
-    # Get ray coordinates at the scan and detector
-    sample_rays_x, sample_rays_y, det_rays_x, det_rays_y = get_ray_coords_between_planes_from_pt_src(
-        model, scan_pos, total_transfer_matrix, transfer_matrices, detector_to_sample
-    )
-
-    # Map the detector pixel coordinates to the scan grid
-    ScanGrid = model[1]
-    Detector = model[-1]
-
-    sample_y_px, sample_x_px, detector_intensity, mask = map_px_on_detector_to_scan(
-        ScanGrid, Detector, detector_frame, sample_rays_x, sample_rays_y, det_rays_x, det_rays_y
-    )
-    detector_intensity_masked = np.where(mask, detector_intensity, 0)
-
-    return sample_y_px, sample_x_px, detector_intensity_masked
-
-
-def project_frame_backward_jit(model: list, 
-                               detector_frame: np.ndarray, 
-                               scan_pos: Coords_XY) -> np.ndarray:
-
-    Detector = model[-1]
-    ScanGrid = model[1]
-
-    # Return all the transfer matrices necessary for us to propagate rays through the system
-    # We do this by propagating a single ray through the system, and finding it's gradients
-    transfer_matrices, total_transfer_matrix, detector_to_sample = solve_model_fourdstem_wrapper(model, scan_pos)
-
-    # Get ray coordinates at the scan and detector
-    sample_rays_x, sample_rays_y, det_rays_x, det_rays_y, mask = get_ray_coords_between_planes_from_pt_src_jit(
-        model, scan_pos, total_transfer_matrix, transfer_matrices, detector_to_sample
-    )
-
-    # Map the detector pixel coordinates to the scan grid
-    ScanGrid = model[1]
-    Detector = model[-1]
-
-    sample_y_px, sample_x_px, detector_intensity = map_px_on_detector_to_scan_jit(
-        ScanGrid, Detector, detector_frame, sample_rays_x, sample_rays_y, det_rays_x, det_rays_y
-    )
-
-    return sample_y_px, sample_x_px, detector_intensity
-
-
-def collect_backprojection_coords_and_intensities(model: list,
-                                                  fourdstem_array: np.ndarray) -> np.ndarray:
-    
-    ScanGrid = model[1]
-    scan_coords = ScanGrid.coords
-
-    sample_px_ys = []
-    sample_px_xs = []
-    detector_intensities = []
-
-    for idx in tqdm.trange(fourdstem_array.shape[0], desc='Scan Y'):
-            scan_pos = scan_coords[idx]
-        
-             # Compute the backward projection for this scan position.
-            sample_px_y, sample_px_x, detector_intensity = project_frame_backward(model, fourdstem_array[idx], scan_pos)
-            sample_px_ys.append(sample_px_y)
-            sample_px_xs.append(sample_px_x)
-            detector_intensities.append(detector_intensity)
-
-    return sample_px_ys, sample_px_xs, detector_intensities
-
-
-@jax.jit
-def collect_backprojection_coords_and_intensities_jit(model: list, 
-                                                      fourdstem_array: jnp.ndarray) -> np.ndarray:
-
-    ScanGrid = model[1]
-    scan_coords = ScanGrid.coords
-
-    def _project_frame_backward(scan_pos, det_frame):
-        return project_frame_backward_jit(model, det_frame, scan_pos)
-    
-    # Vectorize over both scan grid axes.
-    vmapped_process = jax.vmap(_project_frame_backward, in_axes=(0, 0))
-
-    # Sum over all scan points to get the total shifted sum image.
-    return vmapped_process(scan_coords, fourdstem_array) # This returns sample_px_ys, sample_px_xs, detector_intensities
-
-
-

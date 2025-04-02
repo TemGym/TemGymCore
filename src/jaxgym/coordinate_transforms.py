@@ -99,10 +99,10 @@ def pixels_to_metres_transform(centre: Coords_XY,
 
 
 def _metres_to_pixels(ray_coords: Coords_XY, 
-                     centre: Coords_XY, 
-                     step: Scale_YX, 
-                     shape: Shape_YX,
-                     rotation: Degrees) -> Pixels_YX: 
+                      centre: Coords_XY, 
+                      step: Scale_YX, 
+                      shape: Shape_YX,
+                      rotation: Degrees) -> Pixels_YX: 
 
     """
     Convert a coordinate point specified in metres to its corresponding
@@ -126,10 +126,10 @@ def _metres_to_pixels(ray_coords: Coords_XY,
     ray_coords_x, ray_coords_y = ray_coords
 
     pixels_to_metres_transformation = pixels_to_metres_transform(centre, 
-                                                                    step, 
-                                                                    shape, 
-                                                                    False, 
-                                                                    rotation)
+                                                                 step, 
+                                                                 shape, 
+                                                                 False, 
+                                                                 rotation)
     
     metres_to_pixels_transformation = jnp.linalg.inv(pixels_to_metres_transformation)
     
