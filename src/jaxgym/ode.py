@@ -148,6 +148,8 @@ def solve_ode(y0, z0, z1, phi_lambda, E_lambda, u0):
     return sol.ys[-1]
 
 def electron_equation_of_motion(z, x, args):
+    #z
+    #x = [x, y, px, py, opl]
     phi_lambda, E_lambda, u0 = args
 
     v = 1.0 + x[2]**2 + x[3]**2

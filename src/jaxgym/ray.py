@@ -17,3 +17,6 @@ class Ray:
     _one: 1.0
     z: float
     pathlength: float
+
+
+def ray_matrix(ray: ray_matrix)
