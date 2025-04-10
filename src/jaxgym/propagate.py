@@ -1,52 +1,59 @@
 import numpy as np
 import jax.numpy as jnp
 from . import Coords_XY
+from functools import partial
+import numpy as np
+import jax.numpy as jnp
 
 
-def ray_coords_at_plane(semi_conv: float, 
-                        pt_src: Coords_XY, 
-                        detector_coords: Coords_XY,
-                        total_transfer_matrix: np.ndarray, 
-                        det_transfer_matrix_to_specific_plane: np.ndarray):
-    
+def ray_coords_at_plane(
+    semi_conv: float, 
+    pt_src: Coords_XY, 
+    detector_coords: Coords_XY,
+    total_transfer_matrix: NDArray, 
+    det_transfer_matrix_to_specific_plane: NDArray,
+    xp
+):
     """
     For all rays from a point source within a given semi-convergence angle, that hit the detector pixels,
-    find their positions at slopes any any specified plane in the sytem. 
+    find their positions at slopes any any specified plane in the system.
 
     Parameters:
         semi_conv (float): The maximum semiconvergence angle defining the range of input slopes.
         pt_src (Coords_XY): The (x, y) coordinates of the source point.
         detector_coords (Coords_XY): The (x, y) coordinates defining the detector pixel layout.
-        total_transfer_matrix (numpy.ndarray): The overall transfer matrix used to propagate rays from the source to the detector.
-        det_transfer_matrix_to_specific_plane (numpy.ndarray): The transfer matrix used to map detector coordinates 
-                                                                to a specific plane.
+        total_transfer_matrix (xp.ndarray): The overall transfer matrix used to propagate rays from the source to the detector.
+        det_transfer_matrix_to_specific_plane (xp.ndarray): The transfer matrix used to map detector coordinates 
+                                                            to a specific plane.
+        xp: Module, either numpy or jax.numpy.
     Returns:
         tuple:
-            specified_plane_x (numpy.ndarray): The x-coordinates of the rays at the specific plane.
-            specified_plane_y (numpy.ndarray): The y-coordinates of the rays at the specific plane.
-            mask (numpy.ndarray): A boolean array indicating which input slopes resulted in valid ray intersections 
-                                    with the detector.
+            specified_plane_x (xp.ndarray): The x-coordinates of the rays at the specific plane.
+            specified_plane_y (xp.ndarray): The y-coordinates of the rays at the specific plane.
+            mask (xp.ndarray): A boolean array indicating which input slopes resulted in valid ray intersections 
+                               with the detector.
     """
     
-
-    # Find all input slopes for a max semiconvergence angle that will hit the detector pixels
-    input_slopes, mask = find_input_slopes(
-        semi_conv, pt_src, detector_coords, total_transfer_matrix
-    )
+    # Find input slopes and mask (assumes find_input_slopes has been adapted similarly to handle xp)
+    input_slopes, mask = find_input_slopes(semi_conv, pt_src, detector_coords, total_transfer_matrix)
     
-    # Propagate rays with a transfer matrix obtained by solving the model
+    # Propagate rays (assumes propagate_rays has been adapted similarly to handle xp)
     coords = propagate_rays(pt_src, input_slopes, total_transfer_matrix)
 
-    # Stack coordinates and perform the inverse matrix multiplication to get the ray coordinates at a specific plane
     xs, ys, dxs, dys = coords
-    detector_rays = np.stack([xs, ys, dxs, dys, np.ones_like(xs)])
-    specified_plane = np.dot(det_transfer_matrix_to_specific_plane, detector_rays)
 
-    # Unpack the sample and detector ray coordinates
+    # Create homogeneous coordinate array using xp equivalents
+    detector_rays = xp.stack([xs, ys, dxs, dys, xp.ones_like(xs)])
+    specified_plane = xp.dot(det_transfer_matrix_to_specific_plane, detector_rays)
+
     specified_plane_x = specified_plane[0]
     specified_plane_y = specified_plane[1]
 
     return specified_plane_x, specified_plane_y, mask
+
+# Create partial function versions to choose between numpy and jax.numpy easily:
+ray_coords_at_plane_np = partial(ray_coords_at_plane, xp=np)
+ray_coords_at_plane_jnp = partial(ray_coords_at_plane, xp=jnp)
 
 
 def propagate_rays(input_pos_xy, input_slopes_xy, transfer_matrix):

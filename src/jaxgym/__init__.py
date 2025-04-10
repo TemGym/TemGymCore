@@ -14,7 +14,6 @@ Coords_YX: TypeAlias = tuple[NDArray[np.floating], NDArray[np.floating]]
 Pixels_YX: TypeAlias = tuple[NDArray[np.integer], NDArray[np.integer]]
 
 
-
 BackendT = Literal['cpu', 'gpu']
 
 

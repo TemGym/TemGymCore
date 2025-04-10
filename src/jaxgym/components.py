@@ -11,9 +11,12 @@ from . import (
     Degrees, Coords_XY, Scale_YX, Coords_YX, Pixels_YX, Shape_YX
 )
 from typing_extensions import TypeAlias
+import diffrax
+from .ode import solve_ode
 
 Radians: TypeAlias = jnp.float64  # type: ignore
 EPS = 1e-12
+
 
 @jdc.pytree_dataclass
 class Lens:
@@ -34,6 +37,16 @@ class Lens:
                         ray.z,
                         pathlength)
         return Ray
+
+
+class Propagate:
+    z:float
+    distance:
+
+    def step(self, ray: Ray):
+        x, y, dx, dy, _one, opl = ray.x, ray.y, ray.dx, ray.dy, ray._one, ray.opl
+        
+
 
 
 @jdc.pytree_dataclass
@@ -95,6 +108,29 @@ class Descanner:
         return Ray
 
 
+@jdc.pytree_dataclass
+class ODE:
+    z: float
+    z_end: float
+    phi_lambda: callable
+    E_lambda: callable
+
+    def step(self, ray: Ray) -> Ray:
+        in_state = jnp.array([ray.x, ray.y, ray.dx, ray.dy, ray.pathlength])
+
+        z_start = self.z
+        z_end = self.z_end
+
+        u0 = self.phi_lambda(ray.x, ray.y, z_start)
+
+        out_state = solve_ode(in_state, z_start, z_end, self.phi_lambda, self.E_lambda, u0)
+
+        x, y, dx, dy, opl = out_state
+
+        new_ray = ray_matrix(x=x, y=y, dx=dx, dy=dy, z=z_end, pathlength = opl)
+
+        return new_ray
+        
 @jdc.pytree_dataclass
 class Deflector:
     z: float

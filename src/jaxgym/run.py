@@ -11,12 +11,15 @@ def run_to_end(ray, components):
 
     return ray
 
+
 def run_to_component(ray, component):
     distance = (component.z - ray.z).squeeze()
     ray = propagate(distance, ray)
     ray = component.step(ray)
     return ray
 
+
+@jax.jit
 def solve_model(ray, model):
 
     model_ray_jacobians = []

@@ -65,7 +65,7 @@ def solve_model_fourdstem_wrapper(model: list,
 
     return transfer_matrices, total_transfer_matrix, detector_to_scan_grid
 
-
+@profile
 def project_frame_backward(model: list, 
                            det_coords: np.ndarray,
                            det_frame: np.ndarray,
