@@ -2,7 +2,7 @@ import pytest
 import jax
 import numpy as np
 from jaxgym.components import ScanGrid, Detector, Descanner
-from jaxgym.ray import Ray, ray_matrix
+from jaxgym.ray import Ray, 
 
 jax.config.update('jax_platform_name', 'cpu')
 
@@ -142,7 +142,7 @@ def test_detector_pixels_to_metres(pixel_coords, rotation, expected_xy):
 )
 def test_descanner(offset_xy, input_ray_xy, expected_output_xy):
 
-    input_ray = ray_matrix(
+    input_ray = (
         x=input_ray_xy[0],
         y=input_ray_xy[1],
         dx=0.0,

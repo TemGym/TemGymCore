@@ -3,7 +3,7 @@ import numpy as np
 import jax.numpy as jnp
 from jaxgym import stemoverfocus as stem
 import jaxgym.components as comp
-from jaxgym.ray import Ray, ray_matrix
+from jaxgym.ray import Ray, 
 import pytest
 from jax.scipy.interpolate import RegularGridInterpolator
 

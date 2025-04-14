@@ -5,8 +5,8 @@ import jax.numpy as jnp
 
 def run_to_end(ray, components):
     for component in components:
-        distance = (component.z - ray.z).squeeze()
-        ray = propagate(distance, ray)
+        # distance = (component.z - ray.z).squeeze()
+        # ray = propagate(distance, ray)
         ray = component.step(ray)
 
     return ray
@@ -17,6 +17,16 @@ def run_to_component(ray, component):
     ray = propagate(distance, ray)
     ray = component.step(ray)
     return ray
+
+
+def calculate_derivatives(ray, model, order):
+    derivs = []
+    current_func = run_to_end
+    for _ in range(order):
+        current_func = jax.jacfwd(current_func, argnums=0)
+        deriv_val = current_func(ray, model)
+        derivs.append(deriv_val)
+    return derivs
 
 
 @jax.jit

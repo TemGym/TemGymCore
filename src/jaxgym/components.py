@@ -5,7 +5,7 @@ from typing import (
     Tuple
 )
 
-from .ray import Ray, propagate, ray_matrix
+from .ray import Ray, propagate
 from .coordinate_transforms import apply_transformation, pixels_to_metres_transform
 from . import (
     Degrees, Coords_XY, Scale_YX, Coords_YX, Pixels_YX, Shape_YX
@@ -32,21 +32,9 @@ class Lens:
         new_dy = -y / f + dy
 
         pathlength = ray.pathlength - (x ** 2 + y ** 2) / (2 * f)
+        one = ray._one * 1.0
 
-        Ray = ray_matrix(x, y, new_dx, new_dy,
-                        ray.z,
-                        pathlength)
-        return Ray
-
-
-class Propagate:
-    z:float
-    distance:
-
-    def step(self, ray: Ray):
-        x, y, dx, dy, _one, opl = ray.x, ray.y, ray.dx, ray.dy, ray._one, ray.opl
-        
-
+        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=ray.z)
 
 
 @jdc.pytree_dataclass
@@ -66,10 +54,10 @@ class ThickLens:
         pathlength = ray.pathlength - (x ** 2 + y ** 2) / (2 * f)
 
         new_z = ray.z - (self.z_po - self.z_pi)
-        Ray = ray_matrix(x, y, new_dx, new_dy,
-                        new_z,
-                        pathlength)
-        return Ray
+
+        one = ray._one * 1.0
+
+        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=new_z)
 
     @property
     def z(self):
@@ -100,12 +88,9 @@ class Descanner:
         new_dx = dx + x * descan_error_dxx + y * descan_error_dxy
         new_dy = dy + y * descan_error_dyy + x * descan_error_dyx
 
-        pathlength = ray.pathlength - (offset_x * x) - (offset_y * y)
+        one =  offset_x * x + offset_y * y
 
-        Ray = ray_matrix(new_x, new_y, new_dx, new_dy,
-                         ray.z,
-                         pathlength)
-        return Ray
+        return Ray(x=new_x, y=new_y, dx=new_dx, dy=new_dy, _one=one, pathlength=ray.pathlength, z=ray.z)
 
 
 @jdc.pytree_dataclass
@@ -121,15 +106,13 @@ class ODE:
         z_start = self.z
         z_end = self.z_end
 
-        u0 = self.phi_lambda(ray.x, ray.y, z_start)
+        u0 = 1.0
 
-        out_state = solve_ode(in_state, z_start, z_end, self.phi_lambda, self.E_lambda, u0)
+        out_state, out_z = solve_ode(in_state, z_start, z_end, self.phi_lambda, self.E_lambda, u0)
 
         x, y, dx, dy, opl = out_state
 
-        new_ray = ray_matrix(x=x, y=y, dx=dx, dy=dy, z=z_end, pathlength = opl)
-
-        return new_ray
+        return Ray(x=x, y=y, dx=dx, dy=dy, _one=ray._one, pathlength=opl, z=out_z)
         
 @jdc.pytree_dataclass
 class Deflector:
@@ -145,10 +128,7 @@ class Deflector:
 
         pathlength = ray.pathlength + dx * x + dy * y
 
-        Ray = ray_matrix(x, y, new_dx, new_dy,
-                        ray.z,
-                        pathlength)
-        return Ray
+        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
 
 @jdc.pytree_dataclass
 class Rotator:
@@ -168,10 +148,7 @@ class Rotator:
 
         pathlength = ray.pathlength
 
-        Ray = ray_matrix(new_x, new_y, new_dx, new_dy,
-                        ray.z,
-                        pathlength)
-        return Ray
+        return Ray(x=new_x, y=new_y, dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
 
 @jdc.pytree_dataclass
 class DoubleDeflector:
@@ -285,32 +262,6 @@ class ScanGrid:
     
     
 @jdc.pytree_dataclass
-class Aperture:
-    z: float
-    radius: float
-    x: float = 0.
-    y: float = 0.
-
-    def step(self, ray: Ray):
-
-        pos_x, pos_y, pos_dx, pos_dy = ray.x, ray.y, ray.dx, ray.dy
-        distance = jnp.sqrt(
-            (pos_x - self.x) ** 2 + (pos_y - self.y) ** 2
-        )
-        # This code evaluates to 1 if the ray is blocked already,
-        # even if the new ray is inside the aperture,
-        # evaluates to 1 if the ray was not blocked before and is now,
-        # and evaluates to 0 if the ray was not blocked before and is NOT now.
-        blocked = jnp.where(distance > self.radius, 1, ray.blocked)
-
-        Ray = ray_matrix(pos_x, pos_y, pos_dx, pos_dy,
-                        ray.z, ray.amplitude,
-                        ray.pathlength, ray.wavelength,
-                        blocked)
-        return Ray
-
-
-@jdc.pytree_dataclass
 class Biprism:
     z: float
     offset: float = 0.
@@ -356,11 +307,7 @@ class Biprism:
             xdeflection_mag * deflection * pos_x + ydeflection_mag * deflection * pos_y
         )
 
-        Ray = ray_matrix(pos_x.squeeze(), pos_y.squeeze(), new_dx, new_dy,
-                        ray.z, ray.amplitude,
-                        pathlength, ray.wavelength,
-                        ray.blocked)
-        return Ray
+        return Ray(x=pos_x.squeeze(), y=pos_y.squeeze(), dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
 
 
 @jdc.pytree_dataclass

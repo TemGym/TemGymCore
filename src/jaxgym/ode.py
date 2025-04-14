@@ -123,15 +123,15 @@ def odedopri(f,  x0,  y0,  x1,  tol,  hmax,  hmin,  maxiter, args=()):
 
     return x, y
 
-@partial(jax.jit, static_argnums=(3, 4))
+@partial(jax.jit, static_argnums=(3, 4, 5))
 def solve_ode(y0, z0, z1, phi_lambda, E_lambda, u0):
 
     # Set up the ODE solver.
-    Adjoint = diffrax.ForwardMode()
     term = diffrax.ODETerm(electron_equation_of_motion)
-    solver = diffrax.Tsit5()  # Tsit5 solver.
-    stepsize_controller = diffrax.PIDController(rtol=1e-8, atol=1e-10)
-
+    solver = diffrax.Dopri8()  # Tsit5 solver.
+    stepsize_controller = diffrax.PIDController(rtol=1e-15, atol=1e-15, dtmax=10000, dtmin=1e-15)
+    Adjoint = diffrax.ForwardMode()
+    
     sol = diffrax.diffeqsolve(
         term,
         solver,
@@ -139,13 +139,12 @@ def solve_ode(y0, z0, z1, phi_lambda, E_lambda, u0):
         t1=z1,
         y0=y0,
         dt0=None,
-        max_steps=400,
         stepsize_controller=stepsize_controller,
         args=(phi_lambda, E_lambda, u0),
         adjoint=Adjoint,
     )
 
-    return sol.ys[-1]
+    return sol.ys[0], sol.ts[0]
 
 def electron_equation_of_motion(z, x, args):
     #z
@@ -160,7 +159,7 @@ def electron_equation_of_motion(z, x, args):
     dy = x[3]
     ddx = (-0.5 / u) * v * (Ex - x[2]*Ez)
     ddy = (-0.5 / u) * v * (Ey - x[3]*Ez)
-    dopl = jnp.sqrt(u/u0) * jnp.sqrt(v)
+    dopl = (u/u0) ** (1/2) * (v) ** (1/2)
 
     return jnp.array([dx, dy, ddx, ddy, dopl])
 
