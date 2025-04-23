@@ -21,7 +21,7 @@ def order_indices(max_order, n_vars):
     return np.array(sorted(unique_multi_indices, key=lambda x: (sum(x), tuple(-i for i in reversed(x)))))
 
 
-def polynomial_dict(derivatives, selected_variables, multi_indices):
+def poly_dict(derivatives, selected_variables, multi_indices):
     polynomial_dict = {}
 
     # Loop through the selected variables we want to form a polynomial from.

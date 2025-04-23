@@ -2,6 +2,9 @@
 from .ray import propagate
 import jax
 import jax.numpy as jnp
+from .ray import Ray
+from functools import partial
+
 
 def run_to_end(ray, components):
     for component in components:

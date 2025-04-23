@@ -20,13 +20,19 @@ class Ray:
 
 
 def propagate(distance, ray):
+    N = jnp.sqrt(1 + ray.dx ** 2 + ray.dy ** 2)
+    L = ray.dx / N
+    M = ray.dy / N
+
+    opl = N * distance
+
     new_ray = Ray(
-        x=ray.x + distance * ray.dx,
-        y=ray.y + distance * ray.dy,
+        x=ray.x + L / N * distance,
+        y=ray.y + M / N * distance,
         dx=ray.dx,
         dy=ray.dy,
         _one=1.0 * ray._one,
         z=ray.z * ray._one + distance,
-        pathlength=ray.pathlength + distance,
+        pathlength=ray.pathlength + opl,
     )
     return new_ray
