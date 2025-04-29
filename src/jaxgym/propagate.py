@@ -10,8 +10,8 @@ def ray_coords_at_plane(
     semi_conv: float, 
     pt_src: Coords_XY, 
     detector_coords: Coords_XY,
-    total_transfer_matrix: NDArray, 
-    det_transfer_matrix_to_specific_plane: NDArray,
+    total_transfer_matrix: np.ndarray, 
+    det_transfer_matrix_to_specific_plane: np.ndarray,
     xp
 ):
     """

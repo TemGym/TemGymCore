@@ -3,14 +3,20 @@ from .ray import propagate
 import jax
 import jax.numpy as jnp
 from .ray import Ray
+import jaxgym.components as comp
 from functools import partial
 
 
 def run_to_end(ray, components):
     for component in components:
-        # distance = (component.z - ray.z).squeeze()
-        # ray = propagate(distance, ray)
-        ray = component.step(ray)
+    #if the component is an ODE component, then just run the step
+    #function of the component, otherwise run the propagation function first
+        if isinstance(component, comp.ODE):
+            ray = component.step(ray)
+        else:
+            distance = (component.z - ray.z).squeeze()
+            ray = propagate(distance, ray)
+            ray = component.step(ray)
 
     return ray
 

@@ -95,3 +95,5 @@ def obtain_first_order_electrostatic_lens_properties(z_init, phi_lambda_axial, p
 def first_order_electrostatic_lens_equation_of_motion(z, x, U, U_, U__):
     # Create first order linear lens equation:
     return np.array([x[1], ((-1*(U_(z))/(2*U(z))*x[1] - U__(z)/(4*(U(z)))*x[0]))])
+
+

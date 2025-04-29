@@ -186,3 +186,5 @@ def electron_equation_of_motion_DA(z, x, args):
     dopl = (u/u0) ** (1/2) * (v) ** (1/2)
 
     return np.array([dx, dy, ddx, ddy, dopl])
+
+
