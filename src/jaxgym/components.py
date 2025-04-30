@@ -109,7 +109,7 @@ class ODE:
         z_start = self.z
         z_end = self.z_end
 
-        u0 = float(self.phi_lambda(0.0, 0.0, z_start))
+        u0 = self.phi_lambda(0.0, 0.0, z_start).astype(jnp.float64)
 
         out_state, out_z = solve_ode(in_state, z_start, z_end, self.phi_lambda, self.E_lambda, u0)
 

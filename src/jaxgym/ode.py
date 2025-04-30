@@ -131,7 +131,7 @@ def odedopri(f,  x0,  y0,  x1,  tol,  hmax,  hmin,  maxiter, args=()):
 
    return x, y
 
-@partial(jax.jit, static_argnums=(3, 4, 5))
+@partial(jax.jit, static_argnums=(3, 4))
 def solve_ode(y0, z0, z1, phi_lambda, E_lambda, u0):
 
     # Set up the ODE solver.

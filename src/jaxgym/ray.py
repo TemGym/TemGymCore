@@ -23,8 +23,9 @@ def propagate(distance, ray):
     N = jnp.sqrt(1 + ray.dx ** 2 + ray.dy ** 2)
     L = ray.dx / N
     M = ray.dy / N
+    
 
-    opl = N * distance
+    opl = distance*N
 
     new_ray = Ray(
         x=ray.x + L / N * distance,
