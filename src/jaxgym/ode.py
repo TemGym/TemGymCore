@@ -137,7 +137,7 @@ def solve_ode(y0, z0, z1, phi_lambda, E_lambda, u0):
     # Set up the ODE solver.
     term = diffrax.ODETerm(electron_equation_of_motion)
     solver = diffrax.Dopri8()  # Tsit5 solver.
-    stepsize_controller = diffrax.PIDController(rtol=1e-15, atol=1e-15, dtmax=10000, dtmin=1e-15)
+    stepsize_controller = diffrax.PIDController(rtol=1e-10, atol=1e-10, dtmax=10000000, dtmin=1e-10)
     Adjoint = diffrax.ForwardMode()
     
     sol = diffrax.diffeqsolve(
@@ -149,7 +149,7 @@ def solve_ode(y0, z0, z1, phi_lambda, E_lambda, u0):
         dt0=None,
         stepsize_controller=stepsize_controller,
         args=(phi_lambda, E_lambda, u0),
-        adjoint=Adjoint,
+        # adjoint=Adjoint,
     )
 
     return sol.ys[0], sol.ts[0]

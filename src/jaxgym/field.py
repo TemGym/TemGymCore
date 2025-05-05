@@ -16,7 +16,8 @@ def schiske_lens_expansion_xyz(X, Y, Z, phi_0, a, k):
     
     #Expand round lens field to include 5th order spherical aberrations
     phi_expansion_symbolic = phi - ((X**2+Y**2)/4)*phi_double_prime + (
-        ((X**2+Y**2)**2)/64)*phi_quadruple_prime
+        ((X**2+Y**2)**2)/64)*phi_quadruple_prime - (
+        ((X**2+Y**2)**3)/2304)*phi_sextuple_prime
 
     # Define the Efield
     Ex = -1*phi_expansion_symbolic.diff(X)
