@@ -26,8 +26,6 @@ def poly_dict(derivatives, selected_variables, multi_indices):
 
     # Loop through the selected variables we want to form a polynomial from.
     for var in selected_variables:
-        # Make an empty list in the dictionary for this variable
-        polynomial_dict[var] = []
 
         # Loop through the multi-indices of the partial derivatives
         for multi_idx in multi_indices:
@@ -41,7 +39,10 @@ def poly_dict(derivatives, selected_variables, multi_indices):
 
             # Get the nonzero indices of this multi-index
             nonzero_indices = jnp.flatnonzero(multi_idx)
-
+            # If there are no nonzero indices, skip this multi-index
+            if len(nonzero_indices) == 0:
+                continue
+            
             # Loop through nonzero multi-indices
             for idx in nonzero_indices:
                 
@@ -52,22 +53,32 @@ def poly_dict(derivatives, selected_variables, multi_indices):
                 # Make repeated calls to the partials dataclass
                 # to get the value of the partial derivative
                 for _ in range(num_partials_of_var):
-                    partial = getattr(partials_dataclass, selected_variables[idx])
-                    if isinstance(partial, Ray):
-                        partials_dataclass = partial
+                    partials = getattr(partials_dataclass, selected_variables[idx])
+                    if isinstance(partials, Ray):
+                        partials_dataclass = partials
                     else:
                         continue
             
-            if np.abs(partial) < 1e-15:
-                # If the partial is too small, skip it
-                continue
+            # before iterating, make sure `partials` is iterable
+            try:
+                iter(partials)
+            except TypeError:
+                partials = [partials]
 
-            # Add the final taylor coeff to the multi-index dictionary 
-            taylor_coeff_factor = 1 / np.prod(factorial(multi_idx))
-            polynomial_dict[var].append(multi_idx.tolist() + [float(partial) * taylor_coeff_factor])
+            for i, partial in enumerate(partials):
+                if np.abs(partial) < 1e-15:
+                    # If the partial is too small, skip it
+                    continue
+
+                # Add the final taylor coeff to the multi-index dictionary 
+                taylor_coeff_factor = 1 / np.prod(factorial(multi_idx))
+                if i not in polynomial_dict:
+                    # create a new entry for this output‐index, with sub‐lists for each variable
+                    polynomial_dict[i] = {v: [] for v in selected_variables}
+                    
+                polynomial_dict[i][var].append(multi_idx.tolist() + [float(partial) * taylor_coeff_factor])
 
     return polynomial_dict
-
 
 def poly_dict_to_sympy_expr(multi_index_array, var_list, sym_vars=None):
     """

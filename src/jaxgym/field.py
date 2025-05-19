@@ -2,6 +2,33 @@ import sympy as sp
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy import interpolate
+import jax
+
+from sympy.printing.numpy import NumPyPrinter, S
+class CustomNumpyPrinter(NumPyPrinter):
+    def _print_Piecewise(self, expr):
+        "Piecewise function printer"
+        from sympy.logic.boolalg import ITE, simplify_logic
+        def print_cond(cond):
+            """ Problem having an ITE in the cond. """
+            if cond.has(ITE):
+                return self._print(simplify_logic(cond))
+            else:
+                return self._print(cond)
+        ### Modifications 
+        exprs = [f'atleast_1d(asarray({self._print(arg.expr)})).astype(jnp.float64)' for arg in expr.args]
+        exprs = '({})'.format(','.join(exprs))
+        conds = [f'atleast_1d(asarray({print_cond(arg.cond)}))' for arg in expr.args]
+        conds = '({})'.format(','.join(conds))
+        ###
+        # If [default_value, True] is a (expr, cond) sequence in a Piecewise object
+        #     it will behave the same as passing the 'default' kwarg to select()
+        #     *as long as* it is the last element in expr.args.
+        # If this is not the case, it may be triggered prematurely.
+        return '{}({}, {}, default={})'.format(
+            self._module_format(self._module + '.select'), conds, exprs,
+            self._print(S.NaN))
+
 
 def schiske_lens_expansion_xyz(X, Y, Z, phi_0, a, k):
 
@@ -98,3 +125,19 @@ def first_order_electrostatic_lens_equation_of_motion(z, x, U, U_, U__):
     return np.array([x[1], ((-1*(U_(z))/(2*U(z))*x[1] - U__(z)/(4*(U(z)))*x[0]))])
 
 
+def make_potential_and_efield_non_rel(phi, x, y, z):
+    
+    phi_hat = phi
+    
+    #Get E field function. Notice there is no negative sign, as the way hawkes uses phi_hat, there is no minus before it (Equation 3.22).
+    dphi_hat_wires_electron_dx = -phi_hat.diff(x)
+    dphi_hat_wires_electron_dy = -phi_hat.diff(y)
+    dphi_hat_wires_electron_dz = -phi_hat.diff(z)
+    
+    phi_hat_wires_electron_lambda = sp.lambdify([x, y, z], phi_hat, 'jax')
+    phi_hat_wires_electron_lambda_nb = jax.jit(phi_hat_wires_electron_lambda)
+    
+    dphi_hat_wires_electron_lambda = sp.lambdify([x, y, z], [dphi_hat_wires_electron_dx, dphi_hat_wires_electron_dy, dphi_hat_wires_electron_dz], 'jax')
+    dphi_hat_wires_electron_lambda_nb = jax.jit(dphi_hat_wires_electron_lambda)
+    
+    return phi_hat_wires_electron_lambda_nb, dphi_hat_wires_electron_lambda_nb
