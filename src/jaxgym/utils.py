@@ -99,6 +99,14 @@ def _rotate_with_deg_to_rad(degrees: 'Degrees'):
     return _rotate(jnp.pi / 180 * degrees)
 
 
+def custom_jacobian_matrix(ray_jac):
+    return jnp.array([[ray_jac.x.x, ray_jac.x.y, ray_jac.x.dx, ray_jac.x.dy, ray_jac.x._one],
+                      [ray_jac.y.x, ray_jac.y.y, ray_jac.y.dx, ray_jac.y.dy, ray_jac.y._one],
+                      [ray_jac.dx.x, ray_jac.dx.y, ray_jac.dx.dx, ray_jac.dx.dy, ray_jac.dx._one],
+                      [ray_jac.dy.x, ray_jac.dy.y, ray_jac.dy.dx, ray_jac.dy.dy, ray_jac.dy._one],
+                      [ray_jac._one.x, ray_jac._one.y, ray_jac._one.dx, ray_jac._one.dy, ray_jac._one._one]])
+
+
 @jax.jit
 def multi_cumsum_inplace(values, partitions, start):
     def body_fun(i, carry):

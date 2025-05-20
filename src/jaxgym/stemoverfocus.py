@@ -8,11 +8,14 @@ from .propagate import (ray_coords_at_plane,
                         propagate_rays,
                         accumulate_transfer_matrices)
 
+import jax.numpy as jnp
+
 import tqdm.auto as tqdm
 from functools import partial
 import numba
 
 from . import Coords_XY
+import jax
 
 @jax.jit
 def solve_model_fourdstem_wrapper(model: list, 
@@ -26,12 +29,17 @@ def solve_model_fourdstem_wrapper(model: list,
 
     scan_x, scan_y = scan_pos_m[0], scan_pos_m[1]
 
-    # Prepare input ray position for this scan point.
-    input_ray_positions = jnp.array([scan_x, scan_y, 0.0, 0.0, 1.0])
-
+    # # Prepare input ray position for this scan point.
+    # input_ray_positions = jnp.array([scan_x, scan_y, 0.0, 0.0, 1.0])
+    
     ray = Ray(
+        x=scan_x,
+        y=scan_y,
+        dx=0.0,
+        dy=0.0,
+        _one=1.0,
         z=PointSource.z,
-        matrix=input_ray_positions,
+        # matrix=input_ray_positions,
         pathlength=jnp.zeros(1),
     )
 
@@ -113,20 +121,51 @@ def project_frame_forward(model: list,
         semi_conv, scan_pos, det_coords, total_transfer_matrix, detector_to_scan
     )
 
-    # Select rays that have a slope less than semi_conv 
-    scan_rays_x = scan_rays_x[mask]
-    scan_rays_y = scan_rays_y[mask]
-    det_rays_x = det_coords[mask, 0]
-    det_rays_y = det_coords[mask, 1]
+    # ensure det_coords lives on the device
+    det_coords = jnp.array(det_coords)
 
-    scan_pts = np.stack([scan_rays_y, scan_rays_x], axis=-1)
+    # ensure mask is a JAX array of booleans
+    mask = jnp.asarray(mask, dtype=bool)
 
-    # Interpolate the sample intensity at the scan coordinates.
-    sample_vals = sample_interpolant(scan_pts)
+    # build the “scan” points for interpolation
+    scan_pts = jnp.stack([scan_rays_y, scan_rays_x], axis=-1)   # (n_rays, 2)
 
+    # interpolate and add 1, then zero‐out invalid rays
+    sample_vals = sample_interpolant(scan_pts) + 1.0            # (n_rays,)
+    sample_vals = jnp.where(mask, sample_vals, 0.0)
+
+    # compute detector pixel indices for all rays
+    det_rays_x = det_coords[:, 0]
+    det_rays_y = det_coords[:, 1]
     det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
 
     return det_pixels_y, det_pixels_x, sample_vals
+
+
+def compute_fourdstem_dataset_vmap(model: list,
+                                fourdstem_array: jnp.ndarray,
+                                sample_interpolant: callable) -> jnp.ndarray:
+    
+    Detector  = model[-1]
+    ScanGrid  = model[1]
+    scan_coords = ScanGrid.coords        # shape (n_scan, 2)
+    det_coords  = Detector.coords        # shape (n_rays, 2)
+
+    # VMAP your forward‐projection over all scan positions:
+    # each call returns (det_y, det_x, sample_vals) of shape (n_rays,)
+    det_y, det_x, vals = jax.vmap(
+        lambda sp: project_frame_forward(model, det_coords, sample_interpolant, sp),
+        in_axes=0, out_axes=0
+    )(scan_coords)
+    # det_y, det_x, vals all have shape (n_scan, n_rays)
+
+    # build a (n_scan,1)-shaped index to broadcast into the first axis
+    scan_idx = jnp.arange(scan_coords.shape[0])[:, None]  # (n_scan,1)
+
+    # scatter each (scan_idx, det_y, det_x) := vals
+    fourdstem_array = fourdstem_array.at[scan_idx, det_y, det_x].set(vals)
+
+    return fourdstem_array
 
 
 def compute_fourdstem_dataset(model: list,
@@ -141,10 +180,10 @@ def compute_fourdstem_dataset(model: list,
     for idx in tqdm.trange(fourdstem_array.shape[0], desc='Scan Y', leave=True):
         scan_pos = scan_coords[idx]
         det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(model, det_coords, sample_interpolant, scan_pos)
-
         fourdstem_array[idx, det_pixels_y, det_pixels_x] = sample_vals
 
     return fourdstem_array
+
 
 
 def compute_scan_grid_rays_and_intensities(model: list,

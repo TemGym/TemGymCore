@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from .ray import Ray
 import jaxgym.components as comp
 from functools import partial
-
+from .utils import custom_jacobian_matrix
 
 def run_to_end(ray, components):
     for component in components:
@@ -45,6 +45,8 @@ def solve_model(ray, model):
 
     #Run the step function of the first component at the starting plane
     component_jacobian = jax.jacobian(model[0].step)(ray)
+    component_jacobian = custom_jacobian_matrix(component_jacobian)
+
     model_ray_jacobians.append(component_jacobian)
 
     for i in range(1, len(model)):
@@ -61,6 +63,7 @@ def solve_model(ray, model):
         # Get the jacobian of the ray propagation
         # from the previous component to the current component
         propagate_jacobian = jax.jacobian(propagate, argnums=1)(distance, ray)
+        propagate_jacobian = custom_jacobian_matrix(propagate_jacobian)
         model_ray_jacobians.append(propagate_jacobian)
 
         # Propagate the ray
@@ -68,20 +71,13 @@ def solve_model(ray, model):
 
         # Get the jacobian of the step function of the current component
         component_jacobian = jax.jacobian(model[i].step)(ray)
+        component_jacobian = custom_jacobian_matrix(component_jacobian)
+        
         model_ray_jacobians.append(component_jacobian)
 
         #Step the ray
         ray = model[i].step(ray)
 
-    # Edit the jacobian matrices to include shifts calculated 
-    # from the optical path length derivative - not the best solution for now but it works.
-    ABCDs = [] #ABCD matrices at each component
+    ABCDs = jnp.array(model_ray_jacobians) #ABCD matrices at each component
 
-    for ray_jacobian in model_ray_jacobians:
-        shift_vector = ray_jacobian.pathlength.matrix # This is the shift vector for each ray, dopl_out/dr_in
-        ABCD = ray_jacobian.matrix.matrix # This is the ABCD matrix for each ray, dr_out/dr_in
-        ABCD = ABCD.at[:, -1].set(shift_vector[0, :])
-        ABCD = ABCD.at[-1, -1].set(1.0) # Add the final one to bottom right corner of the matrix.
-        ABCDs.append(ABCD)
-
-    return jnp.array(ABCDs)
+    return ABCDs

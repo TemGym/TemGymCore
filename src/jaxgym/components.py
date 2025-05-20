@@ -83,15 +83,15 @@ class Descanner:
         descan_error_xx = 1.0 + descan_error_xx
         descan_error_yy = 1.0 + descan_error_yy
 
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
 
-        new_x = x * descan_error_xx + descan_error_xy * y + offset_x
-        new_y = y * descan_error_yy + descan_error_yx * x + offset_y
+        new_x = x * descan_error_xx + descan_error_xy * y + offset_x * _one
+        new_y = y * descan_error_yy + descan_error_yx * x + offset_y * _one
 
         new_dx = dx + x * descan_error_dxx + y * descan_error_dxy
         new_dy = dy + y * descan_error_dyy + x * descan_error_dyx
 
-        one =  offset_x * x + offset_y * y
+        one = _one
 
         return Ray(x=new_x, y=new_y, dx=new_dx, dy=new_dy, _one=one, pathlength=ray.pathlength, z=ray.z)
 

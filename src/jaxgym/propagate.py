@@ -12,7 +12,7 @@ def ray_coords_at_plane(
     detector_coords: Coords_XY,
     total_transfer_matrix: np.ndarray, 
     det_transfer_matrix_to_specific_plane: np.ndarray,
-    xp
+    xp: jnp.ndarray = jnp
 ):
     """
     For all rays from a point source within a given semi-convergence angle, that hit the detector pixels,
@@ -34,15 +34,12 @@ def ray_coords_at_plane(
                                with the detector.
     """
     
-    # Find input slopes and mask (assumes find_input_slopes has been adapted similarly to handle xp)
     input_slopes, mask = find_input_slopes(semi_conv, pt_src, detector_coords, total_transfer_matrix)
     
-    # Propagate rays (assumes propagate_rays has been adapted similarly to handle xp)
     coords = propagate_rays(pt_src, input_slopes, total_transfer_matrix)
 
     xs, ys, dxs, dys = coords
 
-    # Create homogeneous coordinate array using xp equivalents
     detector_rays = xp.stack([xs, ys, dxs, dys, xp.ones_like(xs)])
     specified_plane = xp.dot(det_transfer_matrix_to_specific_plane, detector_rays)
 
@@ -85,24 +82,24 @@ def propagate_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
     input_slopes_x, input_slopes_y = input_slopes_xy
 
     # Make the input rays we can run through one last time in the model to find positions at sample and detector
-    rays_at_source_with_semi_conv = np.vstack([
-        np.full(input_slopes_x.shape[0], input_pos_x),
-        np.full(input_slopes_y.shape[0], input_pos_y),
+    rays_at_source_with_semi_conv = jnp.vstack([
+        jnp.full(input_slopes_x.shape[0], input_pos_x),
+        jnp.full(input_slopes_y.shape[0], input_pos_y),
         input_slopes_x,
         input_slopes_y,
-        np.ones_like(input_slopes_x)
+        jnp.ones_like(input_slopes_x)
     ])
 
     # Propagate the point source coordinates through the forward ABCD matrices
     coord_list = [rays_at_source_with_semi_conv]
-    end_coords = np.dot(transfer_matrix, coord_list[-1])
+    end_coords = jnp.dot(transfer_matrix, coord_list[-1])
         
     xs = end_coords[0, :]
     ys = end_coords[1, :]
     dxs = end_coords[2, :]
     dys = end_coords[3, :]
 
-    coords = np.array([xs, ys, dxs, dys])
+    coords = jnp.array([xs, ys, dxs, dys])
     
     return coords
 
@@ -152,7 +149,7 @@ def find_input_slopes(
     F = (theta_x_in**2 + theta_y_in**2) - semi_conv**2
     mask = F <= 0
 
-    input_slopes_xy = np.stack([theta_x_in, theta_y_in])
+    input_slopes_xy = jnp.stack([theta_x_in, theta_y_in])
 
     return input_slopes_xy, mask
 

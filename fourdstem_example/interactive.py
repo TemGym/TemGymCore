@@ -78,8 +78,8 @@ class ShiftedSumUDF(UDF):
 
 
 if __name__ == "__main__":
-    ctx = lt.Context.make_with("inline")  # no parallelisation, good for debugging
-    # ctx = lt.Context.make_with("threads", cpus=8)  # uses threads, might be efficient on data in memory
+    #ctx = lt.Context.make_with("inline")  # no parallelisation, good for debugging
+    ctx = lt.Context.make_with("threads", cpus=32)  # uses threads, might be efficient on data in memory
     # ctx = lt.Context.make_with(cpus=8)  # uses Dask+processes, cannot efficiently use data already in memory
 
     ds_path = "fourdstem_example/fourdstem_array.npy"
