@@ -128,42 +128,42 @@ def project_frame_forward(model: list,
         semi_conv, scan_pos, det_coords, total_transfer_matrix, detector_to_scan
     )
 
-    # # ensure det_coords lives on the device
-    # #det_coords = jnp.array(det_coords)
+    # ensure det_coords lives on the device
+    #det_coords = jnp.array(det_coords)
 
-    # # ensure mask is a JAX array of booleans
-    # #mask = jnp.asarray(mask, dtype=bool)
+    # ensure mask is a JAX array of booleans
+    mask = jnp.asarray(mask, dtype=bool)
 
     # scan_rays_x = scan_rays_x[mask]
     # scan_rays_y = scan_rays_y[mask]
-    # # build the “scan” points for interpolation
-    # scan_pts = jnp.stack([scan_rays_y, scan_rays_x], axis=-1)   # (n_rays, 2)
+    # build the “scan” points for interpolation
+    scan_pts = jnp.stack([scan_rays_y, scan_rays_x], axis=-1)   # (n_rays, 2)
 
-    # # interpolate and add 1, then zero‐out invalid rays
-    # sample_vals = sample_interpolant(scan_pts) + 1.0            # (n_rays,)
-    # #sample_vals = jnp.where(mask, sample_vals, 0.0)
+    # interpolate and add 1, then zero‐out invalid rays
+    sample_vals = sample_interpolant(scan_pts) + 1.0            # (n_rays,)
+    sample_vals = jnp.where(mask, sample_vals, 0.0)
 
-    # # compute detector pixel indices for all rays
-    # det_rays_x = det_coords[:, 0]
-    # det_rays_y = det_coords[:, 1]
+    # compute detector pixel indices for all rays
+    det_rays_x = det_coords[:, 0]
+    det_rays_y = det_coords[:, 1]
 
     # det_rays_x = det_rays_x[mask]
     # det_rays_y = det_rays_y[mask]
 
-    # det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
+    det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
 
     # Select rays that have a slope less than semi_conv 
-    scan_rays_x = scan_rays_x[mask]
-    scan_rays_y = scan_rays_y[mask]
-    det_rays_x = det_coords[mask, 0]
-    det_rays_y = det_coords[mask, 1]
+    # scan_rays_x = scan_rays_x[mask]
+    # scan_rays_y = scan_rays_y[mask]
+    # det_rays_x = det_coords[mask, 0]
+    # det_rays_y = det_coords[mask, 1]
 
-    scan_pts = np.stack([scan_rays_y, scan_rays_x], axis=-1)
+    # scan_pts = np.stack([scan_rays_y, scan_rays_x], axis=-1)
 
-    # Interpolate the sample intensity at the scan coordinates.
-    sample_vals = sample_interpolant(scan_pts)
+    # # Interpolate the sample intensity at the scan coordinates.
+    # sample_vals = sample_interpolant(scan_pts)
 
-    det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
+    # det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
 
     return det_pixels_y, det_pixels_x, sample_vals
 

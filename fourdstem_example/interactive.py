@@ -7,10 +7,26 @@ import jax.numpy as jnp
 from libertem.udf import UDF
 import json
 import jax
-import line_profiler
+from numba import njit
 import matplotlib.pyplot as plt
 jax.config.update('jax_platform_name', 'cpu')
 
+@njit
+def mask_via_for(px_y, px_x, values, buffer):
+    """
+    Numba-jitted loop to accumulate `values` into `buffer` at (px_y, px_x),
+    skipping out-of-bounds indices.
+    """
+    buf0, buf1, buf2 = buffer.shape
+    n = px_y.shape[0]
+    for i in range(n):
+        py = px_y[i]
+        px = px_x[i]
+        if 0 <= py < buf1 and 0 <= px < buf2:
+            buffer[0, py, px] += values[i]
+    return buffer
+
+    
 class ShiftedSumUDF(UDF):
     def get_task_data(self):
         # Ran once per-partition and re-used
@@ -65,16 +81,18 @@ class ShiftedSumUDF(UDF):
         model = self.task_data.model
         px_y, px_x, values = project_frame_backward(model, det_coords, frame, scan_pos)
 
-        # Mask out indices that are out of bounds 
-        valid_mask = (px_y >= 0) & (px_y < self.results.shifted_sum.shape[1]) & \
-                     (px_x >= 0) & (px_x < self.results.shifted_sum.shape[2])
-        
-        px_y = px_y[valid_mask]
-        px_x = px_x[valid_mask]
-        values = values[valid_mask]
+        mask_via_for(np.array(px_y), np.array(px_x), np.array(values), self.results.shifted_sum)
 
-        # the zero here is because our output buffer is of type "single"
-        np.add.at(self.results.shifted_sum[0], (px_y, px_x), values)
+        # # Mask out indices that are out of bounds 
+        # valid_mask = (px_y >= 0) & (px_y < self.results.shifted_sum.shape[1]) & \
+        #              (px_x >= 0) & (px_x < self.results.shifted_sum.shape[2])
+        
+        # px_y = px_y[valid_mask]
+        # px_x = px_x[valid_mask]
+        # values = values[valid_mask]
+
+        # # the zero here is because our output buffer is of type "single"
+        # np.add.at(self.results.shifted_sum[0], (px_y, px_x), values)
 
     def merge(self, dest, src):
         dest.shifted_sum += src.shifted_sum
@@ -82,7 +100,7 @@ class ShiftedSumUDF(UDF):
 
 if __name__ == "__main__":
     ctx = lt.Context.make_with("inline")  # no parallelisation, good for debugging
-    #ctx = lt.Context.make_with("threads", cpus=2)  # uses threads, might be efficient on data in memory
+    #ctx = lt.Context.make_with("threads", cpus=64)  # uses threads, might be efficient on data in memory
     # ctx = lt.Context.make_with(cpus=8)  # uses Dask+processes, cannot efficiently use data already in memory
 
     ds_path = "/home/dl277493/JaxTemGym/fourdstem_example/fourdstem_array.npy"
@@ -112,9 +130,10 @@ if __name__ == "__main__":
         'descan_error': descan_error,
         'flip_y': False,
     }
+
     udf = ShiftedSumUDF(model_parameters=model_parameters)
     roi = np.zeros(ds.shape.nav, dtype=bool)
-    roi[::16] = True  # roi for less frames
+    roi[:] = True  # roi for less frames
     results = ctx.run_udf(ds, udf, progress=True, roi=roi)
     shifted_sum: np.ndarray = results["shifted_sum"].data
 

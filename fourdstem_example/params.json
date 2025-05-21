@@ -1,6 +1,6 @@
 {
-  "semi_conv": 0.02,
-  "defocus": 0.1,
+  "semi_conv": 0.04,
+  "defocus": 0.01,
   "camera_length": 1.0,
   "scan_shape": [
     103,
