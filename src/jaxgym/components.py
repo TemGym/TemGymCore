@@ -85,8 +85,8 @@ class Descanner:
 
         x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
 
-        new_x = x * descan_error_xx + descan_error_xy * y + offset_x * _one
-        new_y = y * descan_error_yy + descan_error_yx * x + offset_y * _one
+        new_x = x * descan_error_xx + descan_error_xy * y - offset_x * _one
+        new_y = y * descan_error_yy + descan_error_yx * x - offset_y * _one
 
         new_dx = dx + x * descan_error_dxx + y * descan_error_dxy
         new_dy = dy + y * descan_error_dyy + x * descan_error_dyx

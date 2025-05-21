@@ -7,6 +7,8 @@ import jax.numpy as jnp
 from libertem.udf import UDF
 import json
 import jax
+import line_profiler
+import matplotlib.pyplot as plt
 jax.config.update('jax_platform_name', 'cpu')
 
 class ShiftedSumUDF(UDF):
@@ -54,6 +56,7 @@ class ShiftedSumUDF(UDF):
             ),
         }
     
+    # @line_profiler.profile
     def process_frame(self, frame: np.ndarray):
         scan_pos_flat = self.meta.coordinates[0][0]
 
@@ -78,13 +81,13 @@ class ShiftedSumUDF(UDF):
 
 
 if __name__ == "__main__":
-    #ctx = lt.Context.make_with("inline")  # no parallelisation, good for debugging
-    ctx = lt.Context.make_with("threads", cpus=32)  # uses threads, might be efficient on data in memory
+    ctx = lt.Context.make_with("inline")  # no parallelisation, good for debugging
+    #ctx = lt.Context.make_with("threads", cpus=2)  # uses threads, might be efficient on data in memory
     # ctx = lt.Context.make_with(cpus=8)  # uses Dask+processes, cannot efficiently use data already in memory
 
-    ds_path = "fourdstem_example/fourdstem_array.npy"
+    ds_path = "/home/dl277493/JaxTemGym/fourdstem_example/fourdstem_array.npy"
     ds = ctx.load("npy", ds_path)
-    params_dict = json.load(open('fourdstem_example/params.json'))
+    params_dict = json.load(open('/home/dl277493/JaxTemGym/fourdstem_example/params.json'))
     semi_conv = params_dict['semi_conv']
     defocus = params_dict['defocus']
     camera_length = params_dict['camera_length']
@@ -110,7 +113,16 @@ if __name__ == "__main__":
         'flip_y': False,
     }
     udf = ShiftedSumUDF(model_parameters=model_parameters)
-    # roi = np.zeros(ds.shape.nav, dtype=bool)
-    # roi[::2, ::2] = True  # roi for 1/4 of the frames
-    results = ctx.run_udf(ds, udf, progress=True) #roi=roi)
+    roi = np.zeros(ds.shape.nav, dtype=bool)
+    roi[::16] = True  # roi for less frames
+    results = ctx.run_udf(ds, udf, progress=True, roi=roi)
     shifted_sum: np.ndarray = results["shifted_sum"].data
+
+    plt.figure()
+    plt.imshow(np.abs(shifted_sum[0]), cmap='gray')
+    plt.colorbar()
+    plt.title("Shifted Sum")
+
+    #save the plot
+    plt.savefig("shifted_sum.png")
+    plt.close()
