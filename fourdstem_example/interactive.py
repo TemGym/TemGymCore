@@ -54,8 +54,6 @@ class ShiftedSumUDF(UDF):
         }
     
     def get_result_buffers(self):
-        # Defines the outputs, the true shape will be (1, scan_y, scan_x)
-        # for technical reasons so need to be careful when indexing into it
         dtype = np.result_type(
             self.meta.input_dtype,
             np.float32,
@@ -69,7 +67,6 @@ class ShiftedSumUDF(UDF):
             ),
         }
     
-    # @line_profiler.profile
     def process_frame(self, frame: np.ndarray):
         scan_pos_flat = self.meta.coordinates[0][0]
 

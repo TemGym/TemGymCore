@@ -94,10 +94,10 @@ def project_frame_backward(model: list,
 
     det_flat = det_frame.flatten()
 
-    # substitute -1 wherever mask is False - remember that these values must be removed later!
-    scan_rays_x = jnp.where(semi_conv_mask, scan_rays_x, -1)
-    scan_rays_y = jnp.where(semi_conv_mask, scan_rays_y, -1)
-    det_values = jnp.where(semi_conv_mask, det_flat, -1)
+    # substitute -1 wherever mask is False
+    scan_rays_x = jnp.where(semi_conv_mask, scan_rays_x, -1.0)
+    scan_rays_y = jnp.where(semi_conv_mask, scan_rays_y, -1.0)
+    det_values = jnp.where(semi_conv_mask, det_flat, -1.0)
 
     # Convert the ray coordinates to pixel indices.
     scan_y_px, scan_x_px = ScanGrid.metres_to_pixels([scan_rays_x, scan_rays_y])
@@ -126,7 +126,7 @@ def project_frame_forward(model: list,
     # ensure mask is a JAX array of booleans
     mask = jnp.asarray(mask, dtype=bool)
 
-    scan_pts = jnp.stack([scan_rays_y, scan_rays_x], axis=-1)
+    scan_pts = jnp.stack([scan_rays_y, scan_rays_x], axis=-1)   # (n_rays, 2)
 
     # interpolate and add 1 to avoid zero artefacts in the point image, then zero‐out invalid rays
     sample_vals = sample_interpolant(scan_pts) + 1.0
@@ -136,7 +136,8 @@ def project_frame_forward(model: list,
     det_rays_x = det_coords[:, 0]
     det_rays_y = det_coords[:, 1]
 
-    # det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
+
+    det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
 
     return det_pixels_y, det_pixels_x, sample_vals
 
@@ -155,11 +156,11 @@ def compute_fourdstem_dataset_vmap(model: list,
         in_axes=0, out_axes=0
     )(scan_coords)
 
-    # build a (n_scan,1)-shaped index to broadcast into the first axis
-    scan_idx = jnp.arange(scan_coords.shape[0])[:, None]  # (n_scan,1)
+    scan_idx = jnp.arange(scan_coords.shape[0])[:, None]
 
-    # scatter each (scan_idx, det_y, det_x) := vals
-    fourdstem_array = fourdstem_array.at[scan_idx, det_y, det_x].set(vals)
+    fourdstem_array = fourdstem_array.at[
+        scan_idx, det_y, det_x
+    ].set(vals)
 
     return fourdstem_array
 
@@ -177,8 +178,7 @@ def compute_fourdstem_dataset(model: list,
         scan_pos = scan_coords[idx]
         det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(model, det_coords, sample_interpolant, scan_pos)
         fourdstem_array = fourdstem_array.at[idx, det_pixels_y, det_pixels_x].set(sample_vals)
-        #fourdstem_array[idx, det_pixels_y, det_pixels_x] = sample_vals
-        break
+
     return fourdstem_array
 
 
