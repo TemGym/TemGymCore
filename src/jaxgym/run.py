@@ -21,6 +21,19 @@ def run_to_end(ray, components):
     return ray
 
 
+def run_to_end_with_history(ray, components):
+    rays = [ray]
+    for component in components:
+        if isinstance(component, comp.ODE):
+            ray = component.step(ray)
+        else:
+            distance = (component.z - ray.z).squeeze()
+            ray = propagate(distance, ray)
+            ray = component.step(ray)
+        rays.append(ray)
+    return rays
+
+
 def run_to_component(ray, component):
     distance = (component.z - ray.z).squeeze()
     ray = propagate(distance, ray)
