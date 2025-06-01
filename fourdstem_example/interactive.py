@@ -8,15 +8,12 @@ from libertem.udf import UDF
 import json
 import jax
 from numba import njit
+import line_profiler
 import matplotlib.pyplot as plt
 jax.config.update('jax_platform_name', 'cpu')
 
 @njit
 def mask_via_for(px_y, px_x, values, buffer):
-    """
-    Numba-jitted loop to accumulate `values` into `buffer` at (px_y, px_x),
-    skipping out-of-bounds indices.
-    """
     buf0, buf1, buf2 = buffer.shape
     n = px_y.shape[0]
     for i in range(n):
@@ -82,17 +79,6 @@ class ShiftedSumUDF(UDF):
         px_y, px_x, values = project_frame_backward(model, det_coords, frame, scan_pos)
 
         mask_via_for(np.array(px_y), np.array(px_x), np.array(values), self.results.shifted_sum)
-
-        # # Mask out indices that are out of bounds 
-        # valid_mask = (px_y >= 0) & (px_y < self.results.shifted_sum.shape[1]) & \
-        #              (px_x >= 0) & (px_x < self.results.shifted_sum.shape[2])
-        
-        # px_y = px_y[valid_mask]
-        # px_x = px_x[valid_mask]
-        # values = values[valid_mask]
-
-        # # the zero here is because our output buffer is of type "single"
-        # np.add.at(self.results.shifted_sum[0], (px_y, px_x), values)
 
     def merge(self, dest, src):
         dest.shifted_sum += src.shifted_sum
