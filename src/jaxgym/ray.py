@@ -1,12 +1,19 @@
+<<<<<<< HEAD
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 from numpy.typing import NDArray
 from typing import Tuple
+=======
+import jax
+import jax.numpy as jnp
+from dataclasses import dataclass, field
+from typing import Any
+
+>>>>>>> b3ec7e5425e12426db15ef5fa5170c7fe89036ab
 from . import (
     PositiveFloat,
     Degrees,
 )
-
 
 @jdc.pytree_dataclass
 class Ray:
@@ -37,7 +44,6 @@ class Ray:
 #         pathlength=ray.pathlength + opl,
 #     )
 #     return new_ray
-
 
 def propagate(distance, ray):
     new_ray = Ray(
