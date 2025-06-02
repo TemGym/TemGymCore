@@ -1,4 +1,5 @@
-
+from pathlib import Path
+rootdir = Path(__file__).parent
 import numpy as np
 import libertem.api as lt
 from jaxgym.stemoverfocus import project_frame_backward
@@ -8,13 +9,13 @@ from libertem.udf import UDF
 import json
 import jax
 from numba import njit
-import line_profiler
 import matplotlib.pyplot as plt
 jax.config.update('jax_platform_name', 'cpu')
 
+
 @njit
 def mask_via_for(px_y, px_x, values, buffer):
-    buf0, buf1, buf2 = buffer.shape
+    _, buf1, buf2 = buffer.shape
     n = px_y.shape[0]
     for i in range(n):
         py = px_y[i]
@@ -86,9 +87,9 @@ if __name__ == "__main__":
     #ctx = lt.Context.make_with("threads", cpus=64)  # uses threads, might be efficient on data in memory
     # ctx = lt.Context.make_with(cpus=8)  # uses Dask+processes, cannot efficiently use data already in memory
 
-    ds_path = "/home/dl277493/JaxTemGym/fourdstem_example/fourdstem_array.npy"
+    ds_path = rootdir / "fourdstem_array.npy"
     ds = ctx.load("npy", ds_path)
-    params_dict = json.load(open('/home/dl277493/JaxTemGym/fourdstem_example/params.json'))
+    params_dict = json.load(open(rootdir / 'params.json'))
     semi_conv = params_dict['semi_conv']
     defocus = params_dict['defocus']
     camera_length = params_dict['camera_length']
@@ -126,5 +127,5 @@ if __name__ == "__main__":
     plt.title("Shifted Sum")
 
     #save the plot
-    plt.savefig("shifted_sum.png")
+    plt.savefig(rootdir / "shifted_sum.png")
     plt.close()
