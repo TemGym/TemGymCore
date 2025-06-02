@@ -1,3 +1,4 @@
+import jax
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 from jax.numpy import ndarray as NDArray
@@ -19,7 +20,7 @@ from .coordinate_transforms import apply_transformation, pixels_to_metres_transf
 
 Radians: TypeAlias = jnp.float64  # type: ignore
 EPS = 1e-12
-
+random_key = jax.random.PRNGKey(0)
 
 @jdc.pytree_dataclass
 class Lens:
@@ -37,7 +38,15 @@ class Lens:
         pathlength = ray.pathlength - (x ** 2 + y ** 2) / (2 * f)
         one = ray._one * 1.0
 
-        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=ray.z)
+        return Ray(x=x, 
+                   y=y, 
+                   dx=new_dx, 
+                   dy=new_dy, 
+                   _one=one, 
+                   pathlength=pathlength, 
+                   wavelength=ray.wavelength,
+                   z=ray.z,
+                   keys=ray.keys)
     
 
 @jdc.pytree_dataclass
@@ -60,7 +69,15 @@ class ThickLens:
 
         one = ray._one * 1.0
 
-        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=new_z)
+        return Ray(x=x, 
+                   y=y, 
+                   dx=new_dx, 
+                   dy=new_dy, 
+                   _one=one, 
+                   pathlength=pathlength, 
+                   z=new_z,
+                   wavelength=ray.wavelength,
+                   keys=ray.keys)
 
     @property
     def z(self):
@@ -93,7 +110,15 @@ class Descanner:
 
         one = _one
 
-        return Ray(x=new_x, y=new_y, dx=new_dx, dy=new_dy, _one=one, pathlength=ray.pathlength, z=ray.z)
+        return Ray(x=new_x, 
+                   y=new_y, 
+                   dx=new_dx, 
+                   dy=new_dy, 
+                   _one=one, 
+                   pathlength=ray.pathlength, 
+                   z=ray.z,
+                   wavelength=ray.wavelength,
+                   keys=ray.keys)
 
 
 @jdc.pytree_dataclass
@@ -115,8 +140,16 @@ class ODE:
 
         x, y, dx, dy, opl = out_state
 
-        return Ray(x=x, y=y, dx=dx, dy=dy, _one=ray._one, pathlength=opl, z=out_z)
-        
+        return Ray(x=x, 
+                   y=y, 
+                   dx=dx, 
+                   dy=dy, 
+                   _one=ray._one, 
+                   pathlength=opl, 
+                   z=out_z,
+                   wavelength=ray.wavelength,
+                   keys=ray.keys)
+    
 
 @jdc.pytree_dataclass
 class Deflector:
@@ -132,7 +165,61 @@ class Deflector:
 
         pathlength = ray.pathlength + dx * x + dy * y
 
-        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
+        return Ray(x=x, 
+                   y=y, 
+                   dx=new_dx, 
+                   dy=new_dy, 
+                   _one=ray._one, 
+                   pathlength=pathlength, 
+                   z=ray.z,
+                   wavelength=ray.wavelength,
+                   keys=ray.keys)
+
+@jdc.pytree_dataclass
+class CrossedDiffractionGrating:
+    z: float
+    spacing: float
+    max_order: int
+
+    def step(self, ray: Ray):
+
+        # Split the incoming key into two subkeys for x- and y-order sampling
+        key_x, key_y = jax.random.split(ray.keys, 2)
+
+        # sample one order per ray
+        m_x = jax.random.randint(key_x, (), -self.max_order, self.max_order + 1)
+        m_y = jax.random.randint(key_y, (), -self.max_order, self.max_order + 1)
+
+        # Incident cosines
+        inv = 1.0 / jnp.sqrt(1 + ray.dx**2 + ray.dy**2)
+        s_x, s_y = ray.dx * inv, ray.dy * inv
+
+        # New direction cosines
+        s_x_p = s_x + m_x * ray.wavelength / self.spacing
+        s_y_p = s_y + m_y * ray.wavelength / self.spacing
+
+        # Normalize and convert back to slopes
+        c_p = jnp.sqrt(1 - s_x_p**2 - s_y_p**2)
+        new_dx = s_x_p / c_p
+        new_dy = s_y_p / c_p
+
+        # New opl
+        opl = ray.wavelength * (
+            m_x * ray.x / self.spacing
+          + m_y * ray.y / self.spacing
+        )
+
+        return Ray(
+            x=ray.x, 
+            y=ray.y,
+            dx=new_dx, 
+            dy=new_dy,
+            _one=ray._one,
+            pathlength=ray.pathlength + opl,
+            wavelength=ray.wavelength,
+            z=ray.z,
+            keys=ray.keys
+        )
 
 
 @jdc.pytree_dataclass
@@ -153,7 +240,15 @@ class Rotator:
 
         pathlength = ray.pathlength
 
-        return Ray(x=new_x, y=new_y, dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
+        return Ray(x=new_x, 
+                   y=new_y, 
+                   dx=new_dx, 
+                   dy=new_dy, 
+                   _one=ray._one, 
+                   pathlength=pathlength, 
+                   z=ray.z,
+                   wavelength=ray.wavelength,
+                   keys=ray.keys)
 
 
 @jdc.pytree_dataclass
@@ -234,7 +329,15 @@ class Biprism:
             xdeflection_mag * deflection * pos_x + ydeflection_mag * deflection * pos_y
         )
 
-        return Ray(x=pos_x.squeeze(), y=pos_y.squeeze(), dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
+        return Ray(x=pos_x.squeeze(), 
+                   y=pos_y.squeeze(), 
+                   dx=new_dx, 
+                   dy=new_dy, 
+                   _one=ray._one, 
+                   pathlength=pathlength, 
+                   z=ray.z,
+                   wavelength=ray.wavelength,
+                   keys=ray.keys)
 
 
 # Base class for grid transforms
