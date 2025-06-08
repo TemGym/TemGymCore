@@ -11,16 +11,16 @@
     106
   ],
   "det_shape": [
-    96,
-    96
+    64,
+    64
   ],
   "scan_step": [
     0.0001,
     0.0001
   ],
   "det_px_size": [
-    0.004,
-    0.004
+    0.005,
+    0.005
   ],
   "scan_rotation": 0,
   "descan_error": [
