@@ -7,6 +7,9 @@ import jax.numpy as jnp
 import panel as pn
 import libertem.api as lt
 from libertem.udf import UDF
+from libertem_ui.figure import ApertureFigure
+from libertem_ui.windows.com import CoMImagingWindow
+from libertem_ui.windows.imaging import VirtualDetectorWindow, FrameImagingWindow
 
 from jaxgym.stemoverfocus import project_frame_backward
 import jaxgym.components as comp
@@ -41,7 +44,6 @@ class ShiftedSumUDF(UDF):
             scan_shape=self.meta.dataset_shape.nav.to_tuple(),
             scan_rotation=params_dict['scan_rotation'],
         )
-
         Descanner = comp.Descanner(
             z=jnp.array([params_dict['defocus']]),
             descan_error=params_dict['descan_error'],
@@ -53,8 +55,8 @@ class ShiftedSumUDF(UDF):
             z=jnp.array([params_dict['camera_length']]),
             det_shape=self.meta.dataset_shape.sig.to_tuple(),
             det_pixel_size=params_dict['det_px_size'],
+            flip_y=params_dict['flip_y'],
         )
-
         model = [PointSource, ScanGrid, Descanner, Detector]
         scan_coords = ScanGrid.coords
         detector_coords = Detector.coords
@@ -80,16 +82,25 @@ class ShiftedSumUDF(UDF):
     def process_frame(self, frame: np.ndarray):
         scan_pos_flat = np.ravel_multi_index(
             self.meta.coordinates.ravel(),
-            ds.shape.nav,
+            self.meta.dataset_shape.nav,
         )
         det_coords = self.task_data.detector_coords
         scan_pos = self.task_data.scan_coords[scan_pos_flat]
         model = self.task_data.model
+        # if self.params.get('shifts') is not None:
+        #     # correct descan error in the pixel coordinate system
+        #     frame = np.roll(frame, self.params.get('shifts'), axis=(0, 1))
         px_y, px_x, values = project_frame_backward(model, det_coords, frame, scan_pos)
         mask_via_for(np.array(px_y), np.array(px_x), np.array(values), self.results.shifted_sum)
 
     def merge(self, dest, src):
         dest.shifted_sum += src.shifted_sum
+
+
+
+# class ShiftedSumWindow(UIWindow):
+
+
 
 
 def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
@@ -141,7 +152,24 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
     )
     descan_error = model_params['descan_error']
 
-    from libertem_ui.figure import ApertureFigure
+    vi_window = VirtualDetectorWindow.using(ctx, ds)
+    frame_window = FrameImagingWindow.linked_to(vi_window)
+    com_window = CoMImagingWindow.linked_to(vi_window)
+
+    # point_fig = ApertureFigure.new(
+    #     np.zeros(ds.shape.nav, dtype=np.float32)
+    # )
+
+    # def point_analysis(*e):
+    #     sy, sx = ds.shape.sig
+    #     point_a = ctx.create_point_analysis(ds, sx // 2, sy // 2)
+    #     point_r = ctx.run(point_a)
+    #     point_fig.update(point_r.intensity.raw_data)
+
+    # point_run_btn = pn.widgets.Button(name="Run", button_type="success")
+    # point_run_btn.on_click(point_analysis)
+    # point_fig._toolbar.append(point_run_btn)
+
     result_fig = ApertureFigure.new(
         np.zeros(ds.shape.nav, dtype=np.float32)
     )
@@ -158,12 +186,18 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
             'flip_y': flip_y_bool.value,
         }
 
+    # px_shifts = model_params.get("px_shifts", None)
+    # if px_shifts is not None:
+    #     px_shifts = ShiftedSumUDF.aux_data(
+    #         px_shifts.astype(int), kind="nav", dtype=int, extra_shape=(2,)
+    #     )
+
     def run_analysis(*e):
         try:
             run_btn.disabled = True
-            udf = ShiftedSumUDF(model_parameters=get_model_parameters())
+            udf = ShiftedSumUDF(model_parameters=get_model_parameters(), shifts=None)
             roi = np.random.choice([False] * 1 + [True] * 1, size=ds.shape.nav).astype(bool)
-            for results in ctx.run_udf_iter(ds, udf, progress=True, roi=roi):
+            for results in ctx.run_udf_iter(ds, udf, progress=False, roi=roi):
                 shifted_sum = results.buffers[0]["shifted_sum"].data
                 result_fig.update(shifted_sum)
         finally:
@@ -173,24 +207,25 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
     run_btn.on_click(run_analysis)
     result_fig._toolbar.append(run_btn)
 
-    return pn.Row(
+    shifted_sum_window = pn.Row(
         pn.Column(
             semi_conv_slider,
             defocus_slider,
             camera_length_slider,
-            pn.Row(
-                scan_rotation_slider,
-                flip_y_bool,
-            ),
-            pn.Row(
-                scan_step_input,
-                det_px_size_input,
-            ),
+            scan_rotation_slider,
+            flip_y_bool,
+            scan_step_input,
+            det_px_size_input,
         ),
-        pn.Column(
-            result_fig.layout,
+        pn.layout.Tabs(
+            ("Frame Imaging", frame_window.layout()),
+            ("Virtual Imaging", vi_window.layout()),
+            ("CoM", com_window.layout()),
+            # ("SpotSim", result_fig.layout),
+            ("ShiftedSum", result_fig.layout),
         ),
     )
+    return shifted_sum_window
 
 
 if __name__ == "__main__":

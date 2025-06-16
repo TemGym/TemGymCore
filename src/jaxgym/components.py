@@ -266,6 +266,11 @@ class GridBase(abc.ABC):
     def centre(self) -> Coords_XY:
         ...
 
+    @property
+    @abc.abstractmethod
+    def flip(self) -> bool:
+        ...
+
     def get_coords(self) -> NDArray:
         shape = self.shape
         y_px = jnp.arange(shape[0])
@@ -283,13 +288,13 @@ class GridBase(abc.ABC):
     def get_metres_to_pixels_transform(self) -> NDArray:
         # Use the common transform using centre, pixel_size, shape and rotation.
         pixels_to_metres_mat = pixels_to_metres_transform(
-            self.centre, self.pixel_size, self.shape, False, self.rotation
+            self.centre, self.pixel_size, self.shape, self.flip, self.rotation
         )
         return jnp.linalg.inv(pixels_to_metres_mat)
 
     def get_pixels_to_metres_transform(self) -> NDArray:
         return pixels_to_metres_transform(
-            self.centre, self.pixel_size, self.shape, False, self.rotation
+            self.centre, self.pixel_size, self.shape, self.flip, self.rotation
         )
 
     def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
@@ -363,6 +368,10 @@ class ScanGrid(GridBase):
     def centre(self) -> Coords_XY:
         return self.scan_centre
 
+    @property
+    def flip(self) -> Coords_XY:
+        return False
+
 
 @jdc.pytree_dataclass
 class Detector(GridBase):
@@ -390,3 +399,7 @@ class Detector(GridBase):
     @property
     def centre(self) -> Coords_XY:
         return self.det_centre
+
+    @property
+    def flip(self) -> bool:
+        return self.flip_y

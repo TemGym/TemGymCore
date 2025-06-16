@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import jax.lax as lax
 from . import Degrees, Radians, Shape_YX, Coords_XY, Coords_YX, Scale_YX, Pixels_YX
 RadiansJNP = jnp.float64
 
@@ -81,10 +82,7 @@ def pixels_to_metres_transform(centre: Coords_XY,
         - A shift to center the pixel coordinates based on the shape.
     """
 
-    if flip_y:
-        flip_transform = _flip_y()
-    else:
-        flip_transform = _identity()
+    flip_transform = lax.cond(flip_y, _flip_y, _identity)
 
     metres_to_px_flip_y = _flip_y()
     shape = jnp.array(shape)

@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from functools import partial
 import diffrax
 import numpy as np
-from tqdm.autonotebook import trange, tqdm
+import tqdm.auto as tqdm
 
 @partial(jax.jit, static_argnums=(0,))
 def rk5_step(f, t, x, h):
@@ -71,7 +71,7 @@ def odedopri(f,  x0,  y0,  x1,  tol,  hmax,  hmin,  maxiter, args=()):
    y = y0
    h = hmax
 
-   pbar = trange(maxiter)
+   pbar = tqdm.trange(maxiter)
    for i in pbar:
       # Update progress bar description with the current value of x using the walrus operator.
       pbar.set_description(f"x: {x:=}")
