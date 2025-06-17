@@ -80,6 +80,9 @@ class ShiftedSumUDF(UDF):
         }
 
     def process_frame(self, frame: np.ndarray):
+        if self.params.get("shifts", None) is not None:
+            shifts = self.params.shifts
+            frame = np.roll(frame, -1 * shifts, axis=(0, 1))
         scan_pos_flat = np.ravel_multi_index(
             self.meta.coordinates.ravel(),
             self.meta.dataset_shape.nav,
@@ -186,16 +189,16 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
             'flip_y': flip_y_bool.value,
         }
 
-    # px_shifts = model_params.get("px_shifts", None)
-    # if px_shifts is not None:
-    #     px_shifts = ShiftedSumUDF.aux_data(
-    #         px_shifts.astype(int), kind="nav", dtype=int, extra_shape=(2,)
-    #     )
+    px_shifts = model_params.get("px_shifts", None)
+    if px_shifts is not None:
+        px_shifts = ShiftedSumUDF.aux_data(
+            px_shifts.astype(int), kind="nav", dtype=int, extra_shape=(2,)
+        )
 
     def run_analysis(*e):
         try:
             run_btn.disabled = True
-            udf = ShiftedSumUDF(model_parameters=get_model_parameters(), shifts=None)
+            udf = ShiftedSumUDF(model_parameters=get_model_parameters(), shifts=px_shifts)
             roi = np.random.choice([False] * 1 + [True] * 1, size=ds.shape.nav).astype(bool)
             for results in ctx.run_udf_iter(ds, udf, progress=False, roi=roi):
                 shifted_sum = results.buffers[0]["shifted_sum"].data
