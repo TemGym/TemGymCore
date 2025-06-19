@@ -1,6 +1,8 @@
 import jax.numpy as jnp
 import numpy as np
 import sympy as sp
+import os
+import jax
 
 from scipy.constants import h as h_planck, e, m_e
 from daceypy import array, DA
@@ -12,8 +14,7 @@ import jaxgym.components as comp
 from jaxgym.taylor import poly_dict, order_indices, poly_dict_to_sympy_expr
 from jaxgym.run import run_to_end, calculate_derivatives
 from jaxgym.ray import Ray
-import os
-import jax
+
 
 jax.config.update("jax_platform_name", "cpu")
 jax.config.update("jax_enable_x64", True)

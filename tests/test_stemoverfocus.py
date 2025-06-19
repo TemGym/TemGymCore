@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import jax.numpy as jnp
-from jaxgym import stemoverfocus as stem
+from microscope_calibration import stemoverfocus
 import jaxgym.components as comp
 from jaxgym.ray import Ray
 import pytest
@@ -10,8 +10,8 @@ from jax.scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import rotate
 from scipy.ndimage import zoom
 
-from jaxgym.stemoverfocus import solve_model_fourdstem_wrapper
-from jaxgym.propagate import find_input_slopes, accumulate_transfer_matrices
+from microscope_calibration.stemoverfocus import solve_model_fourdstem_wrapper
+from jaxgym.propagate import accumulate_transfer_matrices
 
 import matplotlib.pyplot as plt
 import sympy as sp

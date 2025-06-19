@@ -1,11 +1,10 @@
-import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxgym.components import ScanGrid, Detector, Descanner
+from microscope_calibration.components import ScanGrid, Detector, Descanner
 from jaxgym.ray import Ray
-from jaxgym.propagate import find_input_slopes
-from jaxgym.components import Detector
+from microscope_calibration.stemoverfocus import find_input_slopes
+from microscope_calibration.components import Detector
 
 jax.config.update('jax_platform_name', 'cpu')
 

@@ -1,7 +1,9 @@
 import pytest
 import jax
 import numpy as np
-from jaxgym.components import ScanGrid, Detector, Descanner
+
+from microscope_calibration.components import ScanGrid, Detector, Descanner
+
 from jaxgym.ray import Ray
 
 jax.config.update('jax_platform_name', 'cpu')
@@ -131,6 +133,7 @@ def test_detector_pixels_to_metres(pixel_coords, rotation, expected_xy):
     np.testing.assert_allclose(metres_coords_x, expected_xy[0], atol=1e-6)
     np.testing.assert_allclose(metres_coords_y, expected_xy[1], atol=1e-6)
 
+
 @pytest.mark.parametrize(
     "scan_pos_xy, input_ray_xy, expected_output_xy",
     [
@@ -163,6 +166,9 @@ def test_descanner_offset(scan_pos_xy, input_ray_xy, expected_output_xy):
 
     np.testing.assert_allclose(output_ray.x, expected_output_xy[0], atol=1e-6)
     np.testing.assert_allclose(output_ray.y, expected_output_xy[1], atol=1e-6)
+
+
+
 
     
 
