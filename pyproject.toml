@@ -32,6 +32,7 @@ requires-python = ">=3.7"
 dependencies = [
   'jax',
   'jax_dataclasses',
+  'diffrax',
   'numpy',
   'numba',
   'typing-extensions',

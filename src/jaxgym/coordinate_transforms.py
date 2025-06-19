@@ -1,5 +1,6 @@
 import jax.numpy as jnp
-from . import Degrees, Radians, Shape_YX, Coords_XY, Coords_YX, Scale_YX, Pixels_YX
+import jax.lax as lax
+from . import Degrees, Radians, Shape_YX, Coords_XY, Scale_YX
 RadiansJNP = jnp.float64
 
 
@@ -81,10 +82,7 @@ def pixels_to_metres_transform(centre: Coords_XY,
         - A shift to center the pixel coordinates based on the shape.
     """
 
-    if flip_y:
-        flip_transform = _flip_y()
-    else:
-        flip_transform = _identity()
+    flip_transform = lax.cond(flip_y, _flip_y, _identity)
 
     metres_to_px_flip_y = _flip_y()
     shape = jnp.array(shape)
@@ -96,87 +94,6 @@ def pixels_to_metres_transform(centre: Coords_XY,
     transform = flip_transform @ metres_to_px_flip_y @ rotation_transform @ centre_shift_transform @ scale_transform @ pixel_shift_transform
 
     return transform
-
-
-def _metres_to_pixels(ray_coords: Coords_XY, 
-                      centre: Coords_XY, 
-                      step: Scale_YX, 
-                      shape: Shape_YX,
-                      rotation: Degrees) -> Pixels_YX: 
-
-    """
-    Convert a coordinate point specified in metres to its corresponding
-    pixel indices. It does so by first obtaining a transformation matrix (from pixels to metres)
-    using the provided centre, scale (step), shape, and rotation parameters, then computing its
-    inverse to map metre coordinates back to pixel space. The resulting pixel values are rounded 
-    to the nearest integers.
-    Parameters:
-        ray_coords (Coords_XY - tuple of float): A tuple (x, y) representing the coordinate in metres
-                                        that needs to be converted.
-        centre (Coords_XY - tuple of float): A tuple (x, y) representing the centre of the transformation,
-                                    typically the midpoint of the pixel space.
-        step (Scale_YX - tuple of float): A tuple (y_step, x_step) representing the scale factor along the y and x axes.
-        shape (Shape_YX - tuple of int): A tuple (height, width) specifying the overall dimensions of the 
-                                pixel space.
-        rotation (Degrees - float): The rotation angle in degrees to be applied during the transformation.
-    Returns:
-        (Pixels_YX - tuple of int): A tuple (pixel_y, pixel_x) representing the converted pixel coordinates.
-    """
-
-    ray_coords_x, ray_coords_y = ray_coords
-
-    pixels_to_metres_transformation = pixels_to_metres_transform(centre, 
-                                                                 step, 
-                                                                 shape, 
-                                                                 False, 
-                                                                 rotation)
-    
-    metres_to_pixels_transformation = jnp.linalg.inv(pixels_to_metres_transformation)
-    
-    ray_pixels_y, ray_pixels_x = apply_transformation(ray_coords_y, ray_coords_x, metres_to_pixels_transformation) 
-    
-    ray_pixels_y = jnp.round(ray_pixels_y).astype(jnp.int32)       
-    ray_pixels_x = jnp.round(ray_pixels_x).astype(jnp.int32)   
-
-    return ray_pixels_y, ray_pixels_x
-
-
-def _pixels_to_metres(ray_pixels: Pixels_YX, 
-                     centre: Coords_XY, 
-                     step: Scale_YX, 
-                     shape: Shape_YX,
-                     rotation: Degrees) -> Coords_XY:
-    
-    """
-    Convert a coordinate point specified in pixels to its corresponding coordinate in metres.
-    This function obtains a transformation matrix that maps pixels to metres using the
-    provided centre, scale (step), shape, and rotation parameters. It then applies this transformation
-    on the input pixel coordinates, converting them into metre coordinates.
-    Parameters:
-        ray_pixels (Pixels_YX - tuple of float): A tuple (y, x) representing the coordinate in the pixel space
-                                        that needs to be converted.
-        centre (Coords_XY - tuple of float): A tuple (x, y) representing the centre of the transformation,
-                                    typically the midpoint of the pixel space.
-        step (Scale_YX - tuple of float): A tuple (y_step, x_step) representing the scale along the
-                                y and x axes in metre units.
-        shape (Shape_YX - tuple of int): A tuple (height, width) specifying the overall dimensions of the pixel space.
-        rotation (Degrees - float): The rotation angle in degrees to be applied during the transformation.
-    Returns:
-        (Coords_XY - tuple of float): A tuple (metre_x, metre_y) representing the converted coordinates in metres.
-    """
-
-    ray_pixels_y, ray_pixels_x = ray_pixels
-
-    pixels_to_metres_transformation = pixels_to_metres_transform(centre, 
-                                                                 step, 
-                                                                 shape, 
-                                                                 0, 
-                                                                 rotation)
-    
-
-    ray_coords_y, ray_coords_x = apply_transformation(ray_pixels_y, ray_pixels_x, pixels_to_metres_transformation) 
-
-    return ray_coords_x, ray_coords_y
 
 
 def apply_transformation(y, x, transformation):
