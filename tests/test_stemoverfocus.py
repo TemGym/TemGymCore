@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 import sympy as sp
 
 
-
 def make_params_dict(semi_conv, defocus, camera_length, scan_shape, det_shape, scan_step, det_px_size, scan_rotation, descan_error):
     return {
         'semi_conv': semi_conv,
@@ -74,8 +73,8 @@ def stem_model(test_params_dict):
 
     Descanner = comp.Descanner(z=jnp.array([params_dict['defocus']]), 
                                             descan_error=params_dict['descan_error'], 
-                                            offset_x=0., 
-                                            offset_y=0.)
+                                            scan_pos_x=0., 
+                                            scan_pos_y=0.)
 
     Detector = comp.Detector(z=jnp.array([params_dict['camera_length']]), 
                             det_shape=params_dict['det_shape'], 

@@ -38,3 +38,4 @@ dist/
 *nsys-rep
 *.npy
 examples/fourdstem_example/fourdstem_array.npy
+.ruff_cache/

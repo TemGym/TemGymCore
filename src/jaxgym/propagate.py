@@ -6,53 +6,6 @@ import numpy as np
 import jax.numpy as jnp
 
 
-def ray_coords_at_plane(
-    semi_conv: float, 
-    pt_src: Coords_XY, 
-    detector_coords: Coords_XY,
-    total_transfer_matrix: np.ndarray, 
-    det_transfer_matrix_to_specific_plane: np.ndarray,
-    xp: jnp.ndarray = jnp
-):
-    """
-    For all rays from a point source within a given semi-convergence angle, that hit the detector pixels,
-    find their positions at slopes any any specified plane in the system.
-
-    Parameters:
-        semi_conv (float): The maximum semiconvergence angle defining the range of input slopes.
-        pt_src (Coords_XY): The (x, y) coordinates of the source point.
-        detector_coords (Coords_XY): The (x, y) coordinates defining the detector pixel layout.
-        total_transfer_matrix (xp.ndarray): The overall transfer matrix used to propagate rays from the source to the detector.
-        det_transfer_matrix_to_specific_plane (xp.ndarray): The transfer matrix used to map detector coordinates 
-                                                            to a specific plane.
-        xp: Module, either numpy or jax.numpy.
-    Returns:
-        tuple:
-            specified_plane_x (xp.ndarray): The x-coordinates of the rays at the specific plane.
-            specified_plane_y (xp.ndarray): The y-coordinates of the rays at the specific plane.
-            mask (xp.ndarray): A boolean array indicating which input slopes resulted in valid ray intersections 
-                               with the detector.
-    """
-    
-    input_slopes, mask = find_input_slopes(semi_conv, pt_src, detector_coords, total_transfer_matrix)
-    
-    coords = propagate_rays(pt_src, input_slopes, total_transfer_matrix)
-
-    xs, ys, dxs, dys = coords
-
-    detector_rays = xp.stack([xs, ys, dxs, dys, xp.ones_like(xs)])
-    specified_plane = xp.dot(det_transfer_matrix_to_specific_plane, detector_rays)
-
-    specified_plane_x = specified_plane[0]
-    specified_plane_y = specified_plane[1]
-
-    return specified_plane_x, specified_plane_y, mask
-
-# Create partial function versions to choose between numpy and jax.numpy easily:
-ray_coords_at_plane_np = partial(ray_coords_at_plane, xp=np)
-ray_coords_at_plane_jnp = partial(ray_coords_at_plane, xp=jnp)
-
-
 def propagate_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
     """
     Propagate rays through an optical system using the provided transfer matrix.
@@ -102,56 +55,6 @@ def propagate_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
     coords = jnp.array([xs, ys, dxs, dys])
     
     return coords
-
-
-def find_input_slopes(
-    semi_conv: float,
-    pos: Coords_XY,
-    detector_coords: Coords_XY,
-    transformation_matrix: np.ndarray
-):
-    """
-    Given a set of detector pixel coordinates, a semi-convergence angle from a source, and a transformation matrix,
-    find the slopes and mask that tells us what slopes will hit the detector pixels from the point source.
-    """
-    pos_x, pos_y = pos
-
-    A_xx, A_xy, B_xx, B_xy = transformation_matrix[0, :4]  # Select first row excluding the last column
-    A_yx, A_yy, B_yx, B_yy = transformation_matrix[1, :4]  # Select second row excluding the last column
-
-    delta_x, delta_y = transformation_matrix[0, 4], transformation_matrix[1, 4]
-
-    x_out, y_out = detector_coords[:, 0], detector_coords[:, 1]
-
-    denom = B_xx * B_yy - B_xy * B_yx
-    theta_x_in = (
-        - A_xx * B_yy * pos_x
-        - A_xy * B_yy * pos_y
-        + A_yx * B_xy * pos_x
-        + A_yy * B_xy * pos_y
-        + B_xy * delta_y
-        - B_xy * y_out
-        - B_yy * delta_x
-        + B_yy * x_out
-    ) / denom
-
-    theta_y_in = (
-        + A_xx * B_yx * pos_x
-        + A_xy * B_yx * pos_y
-        - A_yx * B_xx * pos_x
-        - A_yy * B_xx * pos_y
-        - B_xx * delta_y
-        + B_xx * y_out
-        + B_yx * delta_x
-        - B_yx * x_out
-    ) / denom
-
-    F = (theta_x_in**2 + theta_y_in**2) - semi_conv**2
-    mask = F <= 0
-
-    input_slopes_xy = jnp.stack([theta_x_in, theta_y_in])
-
-    return input_slopes_xy, mask
 
 
 def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):

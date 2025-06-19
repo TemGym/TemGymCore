@@ -132,7 +132,7 @@ def test_detector_pixels_to_metres(pixel_coords, rotation, expected_xy):
     np.testing.assert_allclose(metres_coords_y, expected_xy[1], atol=1e-6)
 
 @pytest.mark.parametrize(
-    "offset_xy, input_ray_xy, expected_output_xy",
+    "scan_pos_xy, input_ray_xy, expected_output_xy",
     [
         ((0.0, 0.0), (1.0, 1.0), (1.0, 1.0)),
         ((1.0, 1.0), (2.0, 2.0), (3.0, 3.0)),
@@ -140,7 +140,7 @@ def test_detector_pixels_to_metres(pixel_coords, rotation, expected_xy):
         ((2.5, -2.5), (-3.5, 3.5), (-1.0, 1.0)),
     ],
 )
-def test_descanner(offset_xy, input_ray_xy, expected_output_xy):
+def test_descanner_offset(scan_pos_xy, input_ray_xy, expected_output_xy):
 
     input_ray = Ray(
         x=input_ray_xy[0],
@@ -154,8 +154,8 @@ def test_descanner(offset_xy, input_ray_xy, expected_output_xy):
 
     descanner = Descanner(
         z=0.0,
-        offset_x=offset_xy[0],
-        offset_y=offset_xy[1],
+        scan_pos_x=scan_pos_xy[0],
+        scan_pos_y=scan_pos_xy[1],
         descan_error=[0,0,0,0,0,0,0,0]
     )
 

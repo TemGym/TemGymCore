@@ -1,7 +1,86 @@
+import abc
+from jax.numpy import ndarray as NDArray
 import jax.numpy as jnp
 import jax.lax as lax
-from . import Degrees, Radians, Shape_YX, Coords_XY, Scale_YX
+from . import Degrees, Radians, Shape_YX, Coords_XY, Scale_YX, Pixels_YX
 RadiansJNP = jnp.float64
+
+
+class GridBase(abc.ABC):
+    metres_to_pixels_mat: jnp.ndarray
+    pixels_to_metres_mat: jnp.ndarray
+
+    def __post_init__(self):
+        object.__setattr__(self, "metres_to_pixels_mat", self.get_metres_to_pixels_transform())
+        object.__setattr__(self, "pixels_to_metres_mat", self.get_pixels_to_metres_transform())
+
+    @property
+    @abc.abstractmethod
+    def pixel_size(self) -> Scale_YX:
+        ...
+
+    @property
+    @abc.abstractmethod
+    def shape(self) -> Shape_YX:
+        ...
+
+    @property
+    @abc.abstractmethod
+    def rotation(self) -> Degrees:
+        ...
+
+    @property
+    @abc.abstractmethod
+    def centre(self) -> Coords_XY:
+        ...
+
+    @property
+    @abc.abstractmethod
+    def flip(self) -> bool:
+        ...
+
+    def get_coords(self) -> NDArray:
+        shape = self.shape
+        y_px = jnp.arange(shape[0])
+        x_px = jnp.arange(shape[1])
+        yy_px, xx_px = jnp.meshgrid(y_px, x_px, indexing='ij')
+        yy_px = yy_px.ravel()
+        xx_px = xx_px.ravel()
+        coords_x, coords_y = self.pixels_to_metres((yy_px, xx_px))
+        coords_xy = jnp.stack((coords_x, coords_y), axis=-1).reshape(-1, 2)
+        return coords_xy
+
+    def step(self, ray):
+        return ray
+
+    def get_metres_to_pixels_transform(self) -> NDArray:
+        # Use the common transform using centre, pixel_size, shape and rotation.
+        pixels_to_metres_mat = pixels_to_metres_transform(
+            self.centre, self.pixel_size, self.shape, self.flip, self.rotation
+        )
+        return jnp.linalg.inv(pixels_to_metres_mat)
+
+    def get_pixels_to_metres_transform(self) -> NDArray:
+        return pixels_to_metres_transform(
+            self.centre, self.pixel_size, self.shape, self.flip, self.rotation
+        )
+
+    def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
+        coords_x, coords_y = coords
+        pixels_y, pixels_x = apply_transformation(coords_y, coords_x, self.metres_to_pixels_mat)
+        pixels_y = jnp.round(pixels_y).astype(jnp.int32)
+        pixels_x = jnp.round(pixels_x).astype(jnp.int32)
+        return pixels_y, pixels_x
+
+    def pixels_to_metres(self, pixels: Pixels_YX) -> Coords_XY:
+        pixels_y, pixels_x = pixels
+        metres_y, metres_x = apply_transformation(pixels_y, pixels_x, self.pixels_to_metres_mat)
+        return metres_x, metres_y
+
+    @property
+    def coords(self) -> NDArray:
+        return self.get_coords()
+
 
 
 def _rotate_with_deg_to_rad(degrees: 'Degrees'):
