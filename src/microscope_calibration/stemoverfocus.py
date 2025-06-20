@@ -295,28 +295,28 @@ def do_shifted_sum(
     return shifted_sum_image
 
 
-# def compute_scan_grid_rays_and_intensities(
-#     model: list, fourdstem_array: np.ndarray
-# ) -> np.ndarray:
-#     ScanGrid = model[1]
-#     Detector = model[-1]
-#     det_coords = Detector.coords
-#     scan_coords = ScanGrid.coords
+def compute_scan_grid_rays_and_intensities(
+    model: list, fourdstem_array: np.ndarray
+) -> np.ndarray:
+    ScanGrid = model[1]
+    Detector = model[-1]
+    det_coords = Detector.coords
+    scan_coords = ScanGrid.coords
 
-#     sample_px_ys = []
-#     sample_px_xs = []
-#     detector_intensities = []
+    sample_px_ys = []
+    sample_px_xs = []
+    detector_intensities = []
 
-#     for idx in tqdm.trange(fourdstem_array.shape[0], desc="Scan Y"):
-#         scan_pos = scan_coords[idx]
+    for idx in tqdm.trange(fourdstem_array.shape[0], desc="Scan Y"):
+        scan_pos = scan_coords[idx]
 
-#         # Compute the backward projection for this scan position.
-#         sample_px_y, sample_px_x, detector_intensity = project_frame_backward(
-#             model, det_coords, fourdstem_array[idx], scan_pos
-#         )
-#         sample_px_ys.append(sample_px_y)
-#         sample_px_xs.append(sample_px_x)
-#         detector_intensities.append(detector_intensity)
+        # Compute the backward projection for this scan position.
+        sample_px_y, sample_px_x, detector_intensity = project_frame_backward(
+            model, det_coords, fourdstem_array[idx], scan_pos
+        )
+        sample_px_ys.append(sample_px_y)
+        sample_px_xs.append(sample_px_x)
+        detector_intensities.append(detector_intensity)
 
-#     return sample_px_ys, sample_px_xs, detector_intensities
+    return sample_px_ys, sample_px_xs, detector_intensities
 
