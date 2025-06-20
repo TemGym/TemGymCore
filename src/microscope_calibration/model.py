@@ -2,7 +2,7 @@ from typing_extensions import TypedDict, NamedTuple
 from numpy.typing import NDArray
 import jax.numpy as jnp
 from microscope_calibration import components as comp
-from jaxgym import CoordsXY
+from jaxgym import Coords_XY
 
 
 class ModelParameters(TypedDict):
@@ -26,7 +26,7 @@ class Model(NamedTuple):
 
 
 def create_stem_model(
-    params_dict: ModelParameters, scan_pos_xy: CoordsXY = (0.0, 0.0)
+    params_dict: ModelParameters, scan_pos_xy: Coords_XY = (0.0, 0.0)
 ) -> Model:
     PointSource = comp.PointSource(z=jnp.zeros((1)), semi_conv=params_dict["semi_conv"])
 
