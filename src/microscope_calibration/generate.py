@@ -54,8 +54,8 @@ def project_frame_forward(
 def compute_fourdstem_dataset_vmap(
     model: Model, fourdstem_array: jnp.ndarray, sample_interpolant: callable
 ) -> jnp.ndarray:
-    Detector = model[-1]
-    ScanGrid = model[1]
+    Detector = model.detector
+    ScanGrid = model.scan_grid
     scan_coords = ScanGrid.coords  # shape (n_scan, 2)
     det_coords = Detector.coords  # shape (n_rays, 2)
 
@@ -77,10 +77,10 @@ def compute_fourdstem_dataset_vmap(
 
 
 def compute_fourdstem_dataset(
-    model: list, fourdstem_array: np.ndarray, sample_interpolant: callable
+    model: Model, fourdstem_array: np.ndarray, sample_interpolant: callable
 ) -> np.ndarray:
-    Detector = model[-1]
-    ScanGrid = model[1]
+    Detector = model.detector
+    ScanGrid = model.scan_grid
     scan_coords = ScanGrid.coords
     det_coords = Detector.coords
 
