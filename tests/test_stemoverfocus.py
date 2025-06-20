@@ -1,19 +1,13 @@
 import pytest
 import numpy as np
 import jax.numpy as jnp
-from microscope_calibration import stemoverfocus
-import jaxgym.components as comp
-from jaxgym.ray import Ray
+
 import pytest
-from jax.scipy.interpolate import RegularGridInterpolator
 
-from scipy.ndimage import rotate
-from scipy.ndimage import zoom
-
-from microscope_calibration.stemoverfocus import solve_model_fourdstem_wrapper
+from microscope_calibration.stemoverfocus import solve_model_fourdstem_wrapper, find_input_slopes
 from jaxgym.propagate import accumulate_transfer_matrices
+from microscope_calibration import components as comp
 
-import matplotlib.pyplot as plt
 import sympy as sp
 
 
@@ -42,7 +36,7 @@ def test_params_dict():
         scan_step=(0.001, 0.001),
         det_px_size=(0.01, 0.01),
         scan_rotation=0.0,
-        descan_error = jnp.array([0., 0., 0., 0., 0., 0., 0., 0.])
+        descan_error = jnp.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
     )
 
 
@@ -141,7 +135,6 @@ def test_solve_model_fourdstem_wrapper(stem_model, test_params_dict):
     test_params = test_params_dict
 
     scan_pos = [-0.1, -0.1]
-
 
     transfer_matrices, total_transfer_matrix, _ = solve_model_fourdstem_wrapper(stem_model, scan_pos)
 
