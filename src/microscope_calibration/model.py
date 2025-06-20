@@ -2,7 +2,7 @@ from typing_extensions import TypedDict, NamedTuple
 from numpy.typing import NDArray
 import jax.numpy as jnp
 from microscope_calibration import components as comp
-
+from . import CoordsXY
 
 class ModelParameters(TypedDict):
     semi_conv: float
@@ -24,7 +24,8 @@ class Model(NamedTuple):
     detector: comp.Detector
 
 
-def create_stem_model(params_dict: ModelParameters) -> Model:
+def create_stem_model(params_dict: ModelParameters, 
+                      scan_pos_xy: CoordsXY = (0., 0.)) -> Model:
 
     PointSource = comp.PointSource(z=jnp.zeros((1)), semi_conv=params_dict['semi_conv'])
 
@@ -35,8 +36,8 @@ def create_stem_model(params_dict: ModelParameters) -> Model:
 
     Descanner = comp.Descanner(z=jnp.array([params_dict['defocus']]),
                                             descan_error=params_dict['descan_error'],
-                                            scan_pos_x=0.,
-                                            scan_pos_y=0.)
+                                            scan_pos_x=scan_pos_xy[0],
+                                            scan_pos_y=scan_pos_xy[1])
 
     Detector = comp.Detector(z=jnp.array([params_dict['camera_length'] + params_dict['defocus']]),
                             det_shape=params_dict['det_shape'],
