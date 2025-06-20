@@ -6,6 +6,7 @@ from jaxgym.ray import Ray
 from microscope_calibration.stemoverfocus import find_input_slopes
 from microscope_calibration.components import Detector
 from jaxgym.propagate import propagate_rays
+import sympy as sp
 
 jax.config.update('jax_platform_name', 'cpu')
 
@@ -37,10 +38,6 @@ def test_find_input_slopes():
     np.testing.assert_allclose(input_slopes_xy[1], 0.0, atol=1e-5)
 
 def test_propagate_free_space():
-    import numpy as np
-    import jax.numpy as jnp
-    from jaxgym.propagate import propagate_rays
-
     # Define a point source position and random ray angle
     x0, y0 = 1.0, -2.0
     angle = np.pi / 4
@@ -71,10 +68,7 @@ def test_propagate_free_space():
 
 
 def test_propagate_random_matrix_with_sympy():
-    import numpy as np
-    import jax.numpy as jnp
-    import sympy as sp
-    from jaxgym.propagate import propagate_rays
+
 
     # Create a reproducible random 5x5 matrix with integer entries
     rng = np.random.RandomState(2)
