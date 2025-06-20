@@ -11,10 +11,13 @@ from jaxgym.utils import custom_jacobian_matrix
 rs = np.random.RandomState(42)
 # Generate 5 random test cases: (x0, y0, dx0, dy0, z0, pl0, d)
 random_tests = [
-    (*rs.uniform(-10, 10, size=6),   # x0, y0, dx0, dy0, z0, pl0
-     rs.uniform(0.0, 20.0))         # d
+    (
+        *rs.uniform(-10, 10, size=6),  # x0, y0, dx0, dy0, z0, pl0
+        rs.uniform(0.0, 20.0),
+    )  # d
     for _ in range(5)
 ]
+
 
 @pytest.mark.parametrize("x0, y0, dx0, dy0, z0, pl0, d", random_tests)
 def test_propagate_basic(x0, y0, dx0, dy0, z0, pl0, d):
@@ -62,7 +65,6 @@ def test_propagate_dir_cosine_basic():
 
 
 def test_propagate_jacobian_matrix():
-    
     # Fixed ray and distance for free-space propagation
     ray = Ray(x=0.5, y=-0.5, dx=0.1, dy=-0.2, z=1.0, pathlength=0.0)
     d = 2.3
@@ -72,17 +74,13 @@ def test_propagate_jacobian_matrix():
     J = custom_jacobian_matrix(jac)
 
     # Expected homogeneous 5x5 propagation matrix
-    T = np.array([
-        [1.0, 0.0, d,   0.0, 0.0],
-        [0.0, 1.0, 0.0, d,   0.0],
-        [0.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0],
-    ])
+    T = np.array(
+        [
+            [1.0, 0.0, d, 0.0, 0.0],
+            [0.0, 1.0, 0.0, d, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
     np.testing.assert_allclose(J, T, atol=1e-6)
-
-
-
-
-
-

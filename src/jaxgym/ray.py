@@ -1,6 +1,7 @@
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
+
 @jdc.pytree_dataclass
 class Ray:
     x: float
@@ -11,15 +12,16 @@ class Ray:
     pathlength: float
     _one: float = 1.0
 
+
 def propagate_dir_cosine(distance, ray):
     # This method implements propagation using direction cosines
     # and should be accurate to higher angles, but needs modification
     # to work with the rest of jaxgym transfer matrices
-    N = jnp.sqrt(1 + ray.dx ** 2 + ray.dy ** 2)
+    N = jnp.sqrt(1 + ray.dx**2 + ray.dy**2)
     L = ray.dx / N
     M = ray.dy / N
-    
-    opl = distance*N
+
+    opl = distance * N
 
     new_ray = Ray(
         x=ray.x + L / N * distance,
@@ -31,6 +33,7 @@ def propagate_dir_cosine(distance, ray):
         pathlength=ray.pathlength + opl,
     )
     return new_ray
+
 
 def propagate(distance, ray):
     new_ray = Ray(

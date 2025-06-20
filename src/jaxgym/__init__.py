@@ -14,12 +14,10 @@ Coords_YX: TypeAlias = tuple[NDArray[np.floating], NDArray[np.floating]]
 Pixels_YX: TypeAlias = tuple[NDArray[np.integer], NDArray[np.integer]]
 
 
-BackendT = Literal['cpu', 'gpu']
+BackendT = Literal["cpu", "gpu"]
 
 
-class UsageError(Exception):
-    ...
+class UsageError(Exception): ...
 
 
-class InvalidModelError(Exception):
-    ...
+class InvalidModelError(Exception): ...

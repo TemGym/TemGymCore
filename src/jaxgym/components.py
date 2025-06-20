@@ -1,15 +1,11 @@
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 from jax.numpy import ndarray as NDArray
-from typing import (
-    Tuple
-)
+from typing import Tuple
 
 from .ray import Ray, propagate
 from .coordinate_transforms import apply_transformation, pixels_to_metres_transform
-from . import (
-    Degrees, Coords_XY, Scale_YX, Coords_YX, Pixels_YX, Shape_YX
-)
+from . import Degrees, Coords_XY, Scale_YX, Coords_YX, Pixels_YX, Shape_YX
 from typing_extensions import TypeAlias
 from .ode import solve_ode
 import abc
@@ -34,11 +30,13 @@ class Lens:
         new_dx = -x / f + dx
         new_dy = -y / f + dy
 
-        pathlength = ray.pathlength - (x ** 2 + y ** 2) / (2 * f)
+        pathlength = ray.pathlength - (x**2 + y**2) / (2 * f)
         one = ray._one * 1.0
 
-        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=ray.z)
-    
+        return Ray(
+            x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=ray.z
+        )
+
 
 @jdc.pytree_dataclass
 class ThickLens:
@@ -54,13 +52,15 @@ class ThickLens:
         new_dx = -x / f + dx
         new_dy = -y / f + dy
 
-        pathlength = ray.pathlength - (x ** 2 + y ** 2) / (2 * f)
+        pathlength = ray.pathlength - (x**2 + y**2) / (2 * f)
 
         new_z = ray.z - (self.z_po - self.z_pi)
 
         one = ray._one * 1.0
 
-        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=new_z)
+        return Ray(
+            x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=new_z
+        )
 
     @property
     def z(self):
@@ -82,12 +82,14 @@ class ODE:
 
         u0 = self.phi_lambda(0.0, 0.0, z_start).astype(jnp.float64)
 
-        out_state, out_z = solve_ode(in_state, z_start, z_end, self.phi_lambda, self.E_lambda, u0)
+        out_state, out_z = solve_ode(
+            in_state, z_start, z_end, self.phi_lambda, self.E_lambda, u0
+        )
 
         x, y, dx, dy, opl = out_state
 
         return Ray(x=x, y=y, dx=dx, dy=dy, _one=ray._one, pathlength=opl, z=out_z)
-        
+
 
 @jdc.pytree_dataclass
 class Deflector:
@@ -96,14 +98,21 @@ class Deflector:
     def_y: float
 
     def step(self, ray: Ray):
-
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
         new_dx = dx + self.def_x
         new_dy = dy + self.def_y
 
         pathlength = ray.pathlength + dx * x + dy * y
 
-        return Ray(x=x, y=y, dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
+        return Ray(
+            x=x,
+            y=y,
+            dx=new_dx,
+            dy=new_dy,
+            _one=ray._one,
+            pathlength=pathlength,
+            z=ray.z,
+        )
 
 
 @jdc.pytree_dataclass
@@ -112,7 +121,6 @@ class Rotator:
     angle: Degrees
 
     def step(self, ray: Ray):
-            
         angle = jnp.deg2rad(self.angle)
 
         # Rotate the ray's position
@@ -124,7 +132,15 @@ class Rotator:
 
         pathlength = ray.pathlength
 
-        return Ray(x=new_x, y=new_y, dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
+        return Ray(
+            x=new_x,
+            y=new_y,
+            dx=new_dx,
+            dy=new_dy,
+            _one=ray._one,
+            pathlength=pathlength,
+            z=ray.z,
+        )
 
 
 @jdc.pytree_dataclass
@@ -144,23 +160,23 @@ class DoubleDeflector:
 
 @jdc.pytree_dataclass
 class InputPlane:
-    z: float   
+    z: float
 
     def step(self, ray: Ray):
         return ray
-    
+
 
 @jdc.pytree_dataclass
 class Biprism:
     z: float
-    offset: float = 0.
-    rotation: Degrees = 0.
-    deflection: float = 0.
+    offset: float = 0.0
+    rotation: Degrees = 0.0
+    deflection: float = 0.0
 
     def step(
-        self, ray: Ray,
+        self,
+        ray: Ray,
     ) -> Ray:
-
         pos_x, pos_y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
 
         deflection = self.deflection
@@ -169,7 +185,7 @@ class Biprism:
 
         rays_v = jnp.array([pos_x, pos_y]).T
 
-        biprism_loc_v = jnp.array([offset*jnp.cos(rot), offset*jnp.sin(rot)])
+        biprism_loc_v = jnp.array([offset * jnp.cos(rot), offset * jnp.sin(rot)])
 
         biprism_v = jnp.array([-jnp.sin(rot), jnp.cos(rot)])
         biprism_v /= jnp.linalg.norm(biprism_v)
@@ -180,7 +196,7 @@ class Biprism:
         projection = jnp.outer(dot_product, biprism_v)
 
         rejection = rays_v_centred - projection
-        rejection = rejection/jnp.linalg.norm(rejection, axis=1, keepdims=True)
+        rejection = rejection / jnp.linalg.norm(rejection, axis=1, keepdims=True)
 
         # If the ray position is located at [zero, zero], rejection_norm returns a nan,
         # so we convert it to a zero, zero.
@@ -196,11 +212,18 @@ class Biprism:
             xdeflection_mag * deflection * pos_x + ydeflection_mag * deflection * pos_y
         )
 
-        return Ray(x=pos_x.squeeze(), y=pos_y.squeeze(), dx=new_dx, dy=new_dy, _one=ray._one, pathlength=pathlength, z=ray.z)
+        return Ray(
+            x=pos_x.squeeze(),
+            y=pos_y.squeeze(),
+            dx=new_dx,
+            dy=new_dy,
+            _one=ray._one,
+            pathlength=pathlength,
+            z=ray.z,
+        )
 
 
 # Base class for grid transforms
-
 
 
 # @jdc.pytree_dataclass

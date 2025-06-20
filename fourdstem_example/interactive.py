@@ -8,6 +8,7 @@ from libertem_ui.windows.com import CoMImagingWindow
 from libertem_ui.windows.imaging import VirtualDetectorWindow, FrameImagingWindow
 from microscope_calibration.udf import ShiftedSumUDF
 
+
 def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
     semi_conv_slider = pn.widgets.FloatSlider(
         name="Semiconv (mrad)",
@@ -39,7 +40,7 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
         value=model_params["scan_rotation"],
         start=-180,
         end=180,
-        step=1.,
+        step=1.0,
     )
     scan_step_input = pn.widgets.FloatInput(
         name="Scan step (mm)",
@@ -55,7 +56,7 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
         end=0.3,
         step=0.01,
     )
-    descan_error = model_params['descan_error']
+    descan_error = model_params["descan_error"]
 
     vi_window = VirtualDetectorWindow.using(ctx, ds)
     frame_window = FrameImagingWindow.linked_to(vi_window)
@@ -75,20 +76,18 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
     # point_run_btn.on_click(point_analysis)
     # point_fig._toolbar.append(point_run_btn)
 
-    result_fig = ApertureFigure.new(
-        np.zeros(ds.shape.nav, dtype=np.float32)
-    )
+    result_fig = ApertureFigure.new(np.zeros(ds.shape.nav, dtype=np.float32))
 
     def get_model_parameters():
         return {
-            'semi_conv': semi_conv_slider.value / 1000,
-            'defocus': defocus_slider.value,  # Distance from the crossover to the sample
-            'camera_length': camera_length_slider.value,  # distance from crossover to the detector
-            'scan_step': (scan_step_input.value / 1000,) * 2,  # YX!
-            'det_px_size': (det_px_size_input.value / 1000,) * 2,  # YX!
-            'scan_rotation': scan_rotation_slider.value,
-            'descan_error': descan_error,
-            'flip_y': flip_y_bool.value,
+            "semi_conv": semi_conv_slider.value / 1000,
+            "defocus": defocus_slider.value,  # Distance from the crossover to the sample
+            "camera_length": camera_length_slider.value,  # distance from crossover to the detector
+            "scan_step": (scan_step_input.value / 1000,) * 2,  # YX!
+            "det_px_size": (det_px_size_input.value / 1000,) * 2,  # YX!
+            "scan_rotation": scan_rotation_slider.value,
+            "descan_error": descan_error,
+            "flip_y": flip_y_bool.value,
         }
 
     px_shifts = model_params.get("px_shifts", None)
@@ -100,8 +99,12 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
     def run_analysis(*e):
         try:
             run_btn.disabled = True
-            udf = ShiftedSumUDF(model_parameters=get_model_parameters(), shifts=px_shifts)
-            roi = np.random.choice([False] * 1 + [True] * 1, size=ds.shape.nav).astype(bool)
+            udf = ShiftedSumUDF(
+                model_parameters=get_model_parameters(), shifts=px_shifts
+            )
+            roi = np.random.choice([False] * 1 + [True] * 1, size=ds.shape.nav).astype(
+                bool
+            )
             for results in ctx.run_udf_iter(ds, udf, progress=False, roi=roi):
                 shifted_sum = results.buffers[0]["shifted_sum"].data
                 result_fig.update(shifted_sum)
@@ -135,8 +138,8 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
 
 if __name__ == "__main__":
     import jax
-    jax.config.update('jax_platform_name', 'cpu')
 
+    jax.config.update("jax_platform_name", "cpu")
 
     rootdir = Path(__file__).parent
     ctx = lt.Context.make_with("inline")  # no parallelisation, good for debugging
@@ -145,35 +148,36 @@ if __name__ == "__main__":
     # uses Dask+processes, cannot efficiently use data already in memory
     # ctx = lt.Context.make_with(cpus=8)
 
-    params_dict = json.load(open(rootdir / 'params.json'))
-    semi_conv = params_dict['semi_conv']
-    defocus = params_dict['defocus']
-    camera_length = params_dict['camera_length']
-    scan_step = params_dict['scan_step']  # YX
-    det_px_size = params_dict['det_px_size']  # YX
-    scan_rotation = params_dict['scan_rotation']
-    descan_error = params_dict['descan_error']
-    flip_y = params_dict['flip_y']
+    params_dict = json.load(open(rootdir / "params.json"))
+    semi_conv = params_dict["semi_conv"]
+    defocus = params_dict["defocus"]
+    camera_length = params_dict["camera_length"]
+    scan_step = params_dict["scan_step"]  # YX
+    det_px_size = params_dict["det_px_size"]  # YX
+    scan_rotation = params_dict["scan_rotation"]
+    descan_error = params_dict["descan_error"]
+    flip_y = params_dict["flip_y"]
 
     ds_path = rootdir / "fourdstem_array.npy"
     ds = ctx.load("npy", ds_path, num_partitions=4)
 
     # ds = ctx.load("memory", data=fourdstem_array)  # dataset with in-memory data, not from file
     model_parameters = {
-        'semi_conv': semi_conv,
-        'defocus': defocus,  # Distance from the crossover to the sample
-        'camera_length': camera_length,  # distance from crossover to the detector
-        'scan_step': scan_step,  # YX!
-        'det_px_size': det_px_size,  # YX!
-        'scan_rotation': scan_rotation,
-        'descan_error': descan_error,
-        'flip_y': False,
+        "semi_conv": semi_conv,
+        "defocus": defocus,  # Distance from the crossover to the sample
+        "camera_length": camera_length,  # distance from crossover to the detector
+        "scan_step": scan_step,  # YX!
+        "det_px_size": det_px_size,  # YX!
+        "scan_rotation": scan_rotation,
+        "descan_error": descan_error,
+        "flip_y": False,
     }
 
-    interactive_window(
-        ctx, ds, model_parameters
-    ).show(
-        port=34677, address="grexp1396app", websocket_origin="grexp1396app:34677", open=False
+    interactive_window(ctx, ds, model_parameters).show(
+        port=34677,
+        address="grexp1396app",
+        websocket_origin="grexp1396app:34677",
+        open=False,
     )
 
     # udf = ShiftedSumUDF(model_parameters=model_parameters)

@@ -9,6 +9,7 @@ from jaxgym.transfer import transfer_rays, accumulate_transfer_matrices
 import sympy as sp
 import pytest
 
+
 def test_propagate_free_space():
     # Define a point source position and random ray angle
     x0, y0 = 1.0, -2.0
@@ -20,13 +21,15 @@ def test_propagate_free_space():
     d = 5.0
 
     # Free-space transfer matrix: only propagation distance d
-    transfer_matrix = jnp.array([
-        [1.0, 0.0, d,   0.0, 0.0],
-        [0.0, 1.0, 0.0, d,   0.0],
-        [0.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0],
-    ])
+    transfer_matrix = jnp.array(
+        [
+            [1.0, 0.0, d, 0.0, 0.0],
+            [0.0, 1.0, 0.0, d, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
 
     coords = transfer_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
 
@@ -40,7 +43,6 @@ def test_propagate_free_space():
 
 
 def test_propagate_random_matrix():
-
     # Create a reproducible random 5x5 matrix with integer entries
     rng = np.random.RandomState(2)
     T_vals = rng.randint(-5, 5, size=(5, 5))
@@ -66,6 +68,7 @@ def test_propagate_random_matrix():
     np.testing.assert_allclose(coords[2, 0], dx_exp, atol=1e-6)
     np.testing.assert_allclose(coords[3, 0], dy_exp, atol=1e-6)
 
+
 def test_identity_propagation():
     import numpy as np
     import jax.numpy as jnp
@@ -89,7 +92,6 @@ def test_identity_propagation():
     np.testing.assert_allclose(coords[3], dy_vals)
 
 
-
 # parametrised propagation distances (including zero and negatives)
 @pytest.mark.parametrize("d", [-10.0, -3.0, -0.0, 0.0, 1.5, 5.0, 12.3])
 def test_distance_propagation_parametrised(d):
@@ -98,17 +100,19 @@ def test_distance_propagation_parametrised(d):
     slopes_x = jnp.array([dx0])
     slopes_y = jnp.array([dy0])
     # free‐space propagation by d
-    T = jnp.array([
-        [1.0, 0.0, d,   0.0, 0.0],
-        [0.0, 1.0, 0.0, d,   0.0],
-        [0.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0],
-    ])
+    T = jnp.array(
+        [
+            [1.0, 0.0, d, 0.0, 0.0],
+            [0.0, 1.0, 0.0, d, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
     coords = transfer_rays((x0, y0), (slopes_x, slopes_y), T)
     x_exp = x0 + d * dx0
     y_exp = y0 + d * dy0
-    
+
     np.testing.assert_allclose(coords[0, 0], x_exp, atol=1e-6)
     np.testing.assert_allclose(coords[1, 0], y_exp, atol=1e-6)
     # slopes should remain unchanged
@@ -117,7 +121,6 @@ def test_distance_propagation_parametrised(d):
 
 
 def test_accumulate_transfer_matrices():
-
     # Define three simple homogeneous matrices
     A = np.eye(5)
     B = np.eye(5) * 2
@@ -137,17 +140,18 @@ def test_accumulate_transfer_matrices():
 
 
 def test_shear_and_scaling():
-
     # Shear x by alpha * y and scale y by k
     alpha = 2.0
     k = 0.5
-    transfer_matrix = jnp.array([
-        [1.0, alpha, 0.0, 0.0, 0.0],
-        [0.0, k,     0.0, 0.0, 0.0],
-        [0.0, 0.0,   1.0, 0.0, 0.0],
-        [0.0, 0.0,   0.0, 1.0, 0.0],
-        [0.0, 0.0,   0.0, 0.0, 1.0],
-    ])
+    transfer_matrix = jnp.array(
+        [
+            [1.0, alpha, 0.0, 0.0, 0.0],
+            [0.0, k, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
     x0, y0 = 1.0, 2.0
     dx0, dy0 = 0.1, 0.2
     slopes_x = jnp.array([dx0])
@@ -160,5 +164,3 @@ def test_shear_and_scaling():
     np.testing.assert_allclose(coords[1, 0], y_exp, atol=1e-6)
     np.testing.assert_allclose(coords[2, 0], dx0, atol=1e-6)
     np.testing.assert_allclose(coords[3, 0], dy0, atol=1e-6)
-
-

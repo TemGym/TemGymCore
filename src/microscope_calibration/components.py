@@ -74,11 +74,45 @@ class Descanner:
         x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
 
         # Apply the negative of the input scan position to all rays equally, i.e descan the beam
-        new_x = x + (sp_x * descan_error_xx + sp_y * descan_error_xy + descan_error_offset_x - sp_x) * _one
-        new_y = y + (sp_y * descan_error_yy + sp_y * descan_error_yx + descan_error_offset_y - sp_y) * _one
+        new_x = (
+            x
+            + (
+                sp_x * descan_error_xx
+                + sp_y * descan_error_xy
+                + descan_error_offset_x
+                - sp_x
+            )
+            * _one
+        )
+        new_y = (
+            y
+            + (
+                sp_y * descan_error_yy
+                + sp_y * descan_error_yx
+                + descan_error_offset_y
+                - sp_y
+            )
+            * _one
+        )
 
-        new_dx = dx + (sp_x * descan_error_dxx + sp_y * descan_error_dxy + descan_error_offset_dx) * _one
-        new_dy = dy + (sp_y * descan_error_dyy + sp_y * descan_error_dyx + descan_error_offset_dy) * _one
+        new_dx = (
+            dx
+            + (
+                sp_x * descan_error_dxx
+                + sp_y * descan_error_dxy
+                + descan_error_offset_dx
+            )
+            * _one
+        )
+        new_dy = (
+            dy
+            + (
+                sp_y * descan_error_dyy
+                + sp_y * descan_error_dyx
+                + descan_error_offset_dy
+            )
+            * _one
+        )
 
         one = _one
 

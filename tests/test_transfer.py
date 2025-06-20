@@ -20,13 +20,15 @@ def test_transfer_free_space():
     d = 5.0
 
     # Free-space transfer matrix: only transfer distance d
-    transfer_matrix = jnp.array([
-        [1.0, 0.0, d,   0.0, 0.0],
-        [0.0, 1.0, 0.0, d,   0.0],
-        [0.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0],
-    ])
+    transfer_matrix = jnp.array(
+        [
+            [1.0, 0.0, d, 0.0, 0.0],
+            [0.0, 1.0, 0.0, d, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
 
     coords = transfer_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
 
@@ -40,7 +42,6 @@ def test_transfer_free_space():
 
 
 def test_transfer_random_matrix():
-
     # Create a reproducible random 5x5 matrix with integer entries
     rng = np.random.RandomState(2)
     T_vals = rng.randint(-5, 5, size=(5, 5))
@@ -65,6 +66,7 @@ def test_transfer_random_matrix():
     np.testing.assert_allclose(coords[1, 0], y_exp, atol=1e-6)
     np.testing.assert_allclose(coords[2, 0], dx_exp, atol=1e-6)
     np.testing.assert_allclose(coords[3, 0], dy_exp, atol=1e-6)
+
 
 def test_identity_transfer():
     # Batch of rays from same source through identity matrix
@@ -94,21 +96,23 @@ def test_empty_input():
     coords = transfer_rays((1.0, 2.0), (slopes_x, slopes_y), T)
     assert coords.shape == (4, 0)
 
+
 # add more exotic transfer tests for different distances and zero as a parametrisation
 def test_negative_distance_transfer():
-
     x0, y0 = 1.0, 2.0
     dx0, dy0 = 0.1, -0.2
     slopes_x = jnp.array([dx0])
     slopes_y = jnp.array([dy0])
     d = -3.0
-    transfer_matrix = jnp.array([
-        [1.0, 0.0, d,   0.0, 0.0],
-        [0.0, 1.0, 0.0, d,   0.0],
-        [0.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0],
-    ])
+    transfer_matrix = jnp.array(
+        [
+            [1.0, 0.0, d, 0.0, 0.0],
+            [0.0, 1.0, 0.0, d, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
 
     coords = transfer_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
     x_exp = x0 + d * dx0
@@ -118,7 +122,6 @@ def test_negative_distance_transfer():
 
 
 def test_accumulate_transfer_matrices():
-
     # Define three simple homogeneous matrices
     A = np.eye(5)
     B = np.eye(5) * 2
@@ -138,17 +141,18 @@ def test_accumulate_transfer_matrices():
 
 
 def test_shear_and_scaling():
-
     # Shear x by alpha * y and scale y by k
     alpha = 2.0
     k = 0.5
-    transfer_matrix = jnp.array([
-        [1.0, alpha, 0.0, 0.0, 0.0],
-        [0.0, k,     0.0, 0.0, 0.0],
-        [0.0, 0.0,   1.0, 0.0, 0.0],
-        [0.0, 0.0,   0.0, 1.0, 0.0],
-        [0.0, 0.0,   0.0, 0.0, 1.0],
-    ])
+    transfer_matrix = jnp.array(
+        [
+            [1.0, alpha, 0.0, 0.0, 0.0],
+            [0.0, k, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
     x0, y0 = 1.0, 2.0
     dx0, dy0 = 0.1, 0.2
     slopes_x = jnp.array([dx0])
@@ -161,5 +165,3 @@ def test_shear_and_scaling():
     np.testing.assert_allclose(coords[1, 0], y_exp, atol=1e-6)
     np.testing.assert_allclose(coords[2, 0], dx0, atol=1e-6)
     np.testing.assert_allclose(coords[3, 0], dy0, atol=1e-6)
-
-

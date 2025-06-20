@@ -2,10 +2,15 @@ import numpy as np
 import jax
 from jaxgym import Coords_XY
 from .model import Model
-from .stemoverfocus import ray_coords_at_plane, solve_model_fourdstem_wrapper, project_frame_backward
+from .stemoverfocus import (
+    ray_coords_at_plane,
+    solve_model_fourdstem_wrapper,
+    project_frame_backward,
+)
 import jax.numpy as jnp
 import tqdm
 import numba
+
 
 def project_frame_forward(
     model: list,
@@ -34,7 +39,7 @@ def project_frame_forward(
     scan_pts = jnp.stack([scan_rays_y, scan_rays_x], axis=-1)  # (n_rays, 2)
 
     # interpolate and add 1 to avoid zero artefacts in the point image, then zero‐out invalid rays
-    sample_vals = sample_interpolant(scan_pts)# + 1.0
+    sample_vals = sample_interpolant(scan_pts)  # + 1.0
     sample_vals = jnp.where(mask, sample_vals, 0.0)
 
     # compute detector pixel indices for all rays
@@ -64,7 +69,9 @@ def compute_fourdstem_dataset_vmap(
 
     fourdstem_array = fourdstem_array.at[scan_idx, det_y, det_x].set(vals)
 
-    fourdstem_array = fourdstem_array.reshape(ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape)
+    fourdstem_array = fourdstem_array.reshape(
+        ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape
+    )
 
     return fourdstem_array
 
@@ -86,7 +93,9 @@ def compute_fourdstem_dataset(
             sample_vals
         )
 
-        fourdstem_array = fourdstem_array.reshape(ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape)
+        fourdstem_array = fourdstem_array.reshape(
+            ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape
+        )
 
     return fourdstem_array
 

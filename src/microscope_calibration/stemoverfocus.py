@@ -17,7 +17,7 @@ def find_input_slopes(
     semi_conv: float,
     pos: Coords_XY,
     detector_coords: Coords_XY,
-    transformation_matrix: np.ndarray
+    transformation_matrix: np.ndarray,
 ):
     """
     Given a set of detector pixel coordinates, a semi-convergence angle from a source, and a transformation matrix,
@@ -25,8 +25,12 @@ def find_input_slopes(
     """
     pos_x, pos_y = pos
 
-    A_xx, A_xy, B_xx, B_xy = transformation_matrix[0, :4]  # Select first row excluding the last column
-    A_yx, A_yy, B_yx, B_yy = transformation_matrix[1, :4]  # Select second row excluding the last column
+    A_xx, A_xy, B_xx, B_xy = transformation_matrix[
+        0, :4
+    ]  # Select first row excluding the last column
+    A_yx, A_yy, B_yx, B_yy = transformation_matrix[
+        1, :4
+    ]  # Select second row excluding the last column
 
     delta_x, delta_y = transformation_matrix[0, 4], transformation_matrix[1, 4]
 
@@ -34,7 +38,7 @@ def find_input_slopes(
 
     denom = B_xx * B_yy - B_xy * B_yx
     theta_x_in = (
-        - A_xx * B_yy * pos_x
+        -A_xx * B_yy * pos_x
         - A_xy * B_yy * pos_y
         + A_yx * B_xy * pos_x
         + A_yy * B_xy * pos_y
@@ -45,7 +49,7 @@ def find_input_slopes(
     ) / denom
 
     theta_y_in = (
-        + A_xx * B_yx * pos_x
+        +A_xx * B_yx * pos_x
         + A_xy * B_yx * pos_y
         - A_yx * B_xx * pos_x
         - A_yy * B_xx * pos_y
@@ -64,12 +68,12 @@ def find_input_slopes(
 
 
 def ray_coords_at_plane(
-    semi_conv: float, 
-    pt_src: Coords_XY, 
+    semi_conv: float,
+    pt_src: Coords_XY,
     detector_coords: Coords_XY,
-    total_transfer_matrix: np.ndarray, 
+    total_transfer_matrix: np.ndarray,
     det_transfer_matrix_to_specific_plane: np.ndarray,
-    xp: jnp.ndarray = jnp
+    xp: jnp.ndarray = jnp,
 ):
     """
     For all rays from a point source within a given semi-convergence angle, that hit the detector pixels,
@@ -80,19 +84,21 @@ def ray_coords_at_plane(
         pt_src (Coords_XY): The (x, y) coordinates of the source point.
         detector_coords (Coords_XY): The (x, y) coordinates defining the detector pixel layout.
         total_transfer_matrix (xp.ndarray): The overall transfer matrix used to propagate rays from the source to the detector.
-        det_transfer_matrix_to_specific_plane (xp.ndarray): The transfer matrix used to map detector coordinates 
+        det_transfer_matrix_to_specific_plane (xp.ndarray): The transfer matrix used to map detector coordinates
                                                             to a specific plane.
         xp: Module, either numpy or jax.numpy.
     Returns:
         tuple:
             specified_plane_x (xp.ndarray): The x-coordinates of the rays at the specific plane.
             specified_plane_y (xp.ndarray): The y-coordinates of the rays at the specific plane.
-            mask (xp.ndarray): A boolean array indicating which input slopes resulted in valid ray intersections 
+            mask (xp.ndarray): A boolean array indicating which input slopes resulted in valid ray intersections
                                with the detector.
     """
-    
-    input_slopes, mask = find_input_slopes(semi_conv, pt_src, detector_coords, total_transfer_matrix)
-    
+
+    input_slopes, mask = find_input_slopes(
+        semi_conv, pt_src, detector_coords, total_transfer_matrix
+    )
+
     coords = transfer_rays(pt_src, input_slopes, total_transfer_matrix)
 
     xs, ys, dxs, dys = coords
@@ -145,7 +151,7 @@ def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
     total_transfer_matrix = accumulate_transfer_matrices(
         transfer_matrices, PointSource_idx, Detector_idx
     )
-    
+
     scan_grid_to_detector = accumulate_transfer_matrices(
         transfer_matrices, ScanGrid_idx, Detector_idx
     )
@@ -165,10 +171,7 @@ def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
 
 @jax.jit
 def project_frame_backward(
-    model: list, 
-    det_coords: np.ndarray, 
-    det_frame: np.ndarray, 
-    scan_pos: Coords_XY
+    model: list, det_coords: np.ndarray, det_frame: np.ndarray, scan_pos: Coords_XY
 ) -> np.ndarray:
     PointSource = model[0]
     ScanGrid = model[1]
