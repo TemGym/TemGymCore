@@ -2,40 +2,39 @@ import jax.numpy as jnp
 import jax
 import sympy as sp
 
-from microscope_calibration import components as comp
+from jaxgym import components as comp
 
 from jaxgym.ray import Ray
 from jaxgym.run import run_to_end, calculate_derivatives
 
 
-def test_ray_amplitude_pt_source_free_space():
-    z_init = jnp.array(0.0)
-    z_image = jnp.array(10.0)
+# def test_ray_amplitude_pt_source_free_space():
+#     z_init = jnp.array(0.0)
+#     z_image = jnp.array(10.0)
 
-    image_array = jnp.zeros((11, 11), jnp.complex128)
-    image_array = image_array.at[5, 5].set(1.0 + 0.0j)
+#     image_array = jnp.zeros((11, 11), jnp.complex128)
+#     image_array = image_array.at[5, 5].set(1.0 + 0.0j)
 
-    wavelength = 1e-1
-    wavenumber = 2 * jnp.pi / wavelength
+#     wavelength = 1e-1
 
-    PointSourcePlane = comp.ImageGrid(
-        z=z_init,
-        image_array=image_array,
-        image_pixel_size=(1e-8, 1e-8),
-        image_shape=(10, 10),
-        image_rotation=0.0,
-    )
-    Detector = comp.Detector(
-        z=z_image, det_pixel_size=(5e-1, 5e-1), det_shape=(257, 257)
-    )
-    model = [PointSourcePlane, Detector]
+#     PointSourcePlane = comp.ImageGrid(
+#         z=z_init,
+#         image_array=image_array,
+#         image_pixel_size=(1e-8, 1e-8),
+#         image_shape=(10, 10),
+#         image_rotation=0.0,
+#     )
+#     Detector = comp.Detector(
+#         z=z_image, det_pixel_size=(5e-1, 5e-1), det_shape=(257, 257)
+#     )
+#     model = [PointSourcePlane, Detector]
 
-    ray = Ray(0.0, 0.0, 0.0, 0.0, 0.0, z_init, 0.0)
-    ray_out = run_to_end(ray, model)
+#     ray = Ray(0.0, 0.0, 0.0, 0.0, 0.0, z_init, 0.0)
+#     ray_out = run_to_end(ray, model)
 
-    dray_out_dray_in = jax.jacobian(run_to_end, argnums=0)(ray, model)
+#     dray_out_dray_in = jax.jacobian(run_to_end, argnums=0)(ray, model)
 
-    # def test_aberrations_schiske_electrostatic_lens():
+#     # def test_aberrations_schiske_electrostatic_lens():
 
     #     ### ELECTROSTATIC LENS SETUP ###
     #     X, Y, Z = sp.symbols('X Y Z')

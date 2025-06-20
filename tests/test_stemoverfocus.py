@@ -24,6 +24,23 @@ from jax.scipy.interpolate import RegularGridInterpolator
 
 
 @pytest.fixture
+def test_params_basic_dict():
+    return ModelParameters(
+        semi_conv=0.001,
+        defocus=0.001,
+        camera_length=0.5,
+        scan_shape=(11, 11),
+        det_shape=(11, 11),
+        scan_step=(0.001, 0.001),
+        det_px_size=(0.01, 0.01),
+        scan_rotation=0.0,
+        descan_error=jnp.array(
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        ),
+    )
+
+
+@pytest.fixture
 def test_params_same_det_and_scan_grid():
     return ModelParameters(
         semi_conv=1e-12,
@@ -40,70 +57,10 @@ def test_params_same_det_and_scan_grid():
     )
 
 
-@pytest.fixture
-def test_sample_interpolant(test_params_same_det_and_scan_grid):
-    model_params = test_params_same_det_and_scan_grid
-
-    scan_pixels = model_params["scan_shape"]
-
-    sample_image = np.zeros((scan_pixels), dtype=np.uint8)
-    sample_image[0, 0] = 1.0
-    sample_image[0, -1] = 1.0
-    sample_image[-1, 0] = 1.0
-    sample_image[-1, -1] = 1.0
-    sample_image[scan_pixels[0]//2, scan_pixels[1]//2] = 1.0
-
-    scan_step = model_params["scan_step"]
-
-    # Downsample the sample_image by a factor of 2
-    downsample_factor = 1.0
-    sample_image = zoom(sample_image, downsample_factor)
-
-    # This is something we can never access in the reverse model,
-    # but we can use it to make rotation of an image on the detector possible in the forward model
-    sample_rotation = model_params["scan_rotation"]
-
-    sample_image = np.array(sample_image, dtype=np.complex64)
-    sample_px_size = scan_step
-    sample_rotated = rotate(sample_image, sample_rotation, reshape=True, cval=1.0)
-    sample_rotated_edge_length_x = sample_rotated.shape[1] * sample_px_size[0]
-    sample_rotated_edge_length_y = sample_rotated.shape[0] * sample_px_size[1]
-
-    # Set up grid coordinates corresponding to the physical centers of the pixels.
-    # Note: We use the rotated image’s physical edge lengths (sample_rotated_edge_length_x/y)
-    # to generate coordinates that match each pixel center.
-    sample_coords_x = np.linspace(
-        -sample_rotated_edge_length_x / 2,
-        +sample_rotated_edge_length_x / 2,
-        sample_rotated.shape[1],
-    )
-
-    sample_coords_y = np.linspace(
-        -sample_rotated_edge_length_y / 2,
-        +sample_rotated_edge_length_y / 2,
-        sample_rotated.shape[0],
-    )
-
-    # Flip the y-axis of the sample_rotated image because regular grid interpolator from jax cannot
-    # handle a positive to negative grid coordinate
-    sample_rotated_flipped = np.flipud(sample_rotated)
-
-    # Build the RegularGridInterpolator
-    sample_interpolant = RegularGridInterpolator(
-        (sample_coords_y, sample_coords_x),
-        sample_rotated_flipped,
-        method="nearest",
-        bounds_error=False,
-        fill_value=0.0,
-    )
-
-    return sample_interpolant
-
-
 # Fixture that creates a STEM model with [PointSource, ScanGrid, Descanner, Detector]
 @pytest.fixture
-def stem_model(test_params_same_det_and_scan_grid):
-    params_dict = test_params_same_det_and_scan_grid
+def stem_model_basic(test_params_basic_dict):
+    params_dict = test_params_basic_dict
     model = create_stem_model(params_dict)
 
     return model
@@ -264,10 +221,10 @@ def test_ray_coords_at_plane_many_coords_at_source():
     np.testing.assert_allclose(y_plane, expected_y, atol=1e-6)
 
 
-def test_solve_model_fourdstem_wrapper(stem_model, test_params_dict):
+def test_solve_model_fourdstem_wrapper(stem_model_basic, test_params_basic_dict):
     # Test that the transfer matrices returned by the fourdstem wrapper match the manually constructed ones
-
-    test_params = test_params_dict
+    stem_model = stem_model_basic
+    test_params = test_params_basic_dict
 
     scan_pos = [-0.1, -0.1]
 
@@ -312,17 +269,18 @@ def test_solve_model_fourdstem_wrapper(stem_model, test_params_dict):
 def test_same_z_components():
     # Test that if one places components at the same z position, and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
-    semi_conv = 0.001
-    ps = comp.PointSource(z=1.0, semi_conv=semi_conv)
-    sg = comp.ScanGrid(
-        z=jnp.array([1.0]), scan_step=(0.1, 0.1), scan_shape=(2, 2), scan_rotation=0.0
+    model_params = ModelParameters(
+        semi_conv=0.001,
+        defocus=0.0,
+        camera_length=0.0,
+        scan_shape=(2, 2),
+        det_shape=(2, 2),
+        scan_step=(0.1, 0.1),
+        det_px_size=(0.1, 0.1),
+        scan_rotation=0.0,
+        descan_error=jnp.zeros(12),
     )
-    ds = comp.Descanner(
-        z=jnp.array([1.0]), descan_error=jnp.zeros(12), scan_pos_x=0.0, scan_pos_y=0.0
-    )
-    dt = comp.Detector(z=jnp.array([1.0]), det_shape=(2, 2), det_pixel_size=(0.1, 0.1))
-    model = [ps, sg, ds, dt]
-
+    model = create_stem_model(model_params)
     tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
 
     assert len(tmats) == 7
@@ -333,16 +291,19 @@ def test_same_z_components():
 def test_out_of_order_z():
     # Test that if one places components at out of order z positions, and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
-    semi_conv = 0.001
-    ps = comp.PointSource(z=3.0, semi_conv=semi_conv)
-    sg = comp.ScanGrid(
-        z=jnp.array([2.0]), scan_step=(0.1, 0.1), scan_shape=(2, 2), scan_rotation=0.0
+    model_params = ModelParameters(
+        semi_conv=0.001,
+        defocus=0.1,
+        camera_length=-0.5,
+        scan_shape=(2, 2),
+        det_shape=(2, 2),
+        scan_step=(0.1, 0.1),
+        det_px_size=(0.1, 0.1),
+        scan_rotation=0.0,
+        descan_error=jnp.zeros(12),
     )
-    ds = comp.Descanner(
-        z=jnp.array([1.0]), descan_error=jnp.zeros(12), scan_pos_x=0.0, scan_pos_y=0.0
-    )
-    dt = comp.Detector(z=jnp.array([0.0]), det_shape=(2, 2), det_pixel_size=(0.1, 0.1))
-    model = [ps, sg, ds, dt]
+    model = create_stem_model(model_params)
+    tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
 
     tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
 
@@ -351,39 +312,52 @@ def test_out_of_order_z():
     assert inv_tm.shape == (5, 5)
 
 
-def test_project_frame_forward_and_backward(
-    stem_model, test_sample_interpolant
-):
-    import matplotlib.pyplot as plt
+def test_project_frame_forward_and_backward():
 
-    sample_interpolant = test_sample_interpolant
+    test_image = np.zeros((7, 9), dtype=np.uint8)
+    test_image[0, 0] = 1
+    test_image[0, -1] = 2
+    test_image[-1, -1] = 3
+    test_image[-1, 0] = 4
 
-    PointSource, ScanGrid, Descanner, Detector = stem_model
-
-    fourdstem_array = jnp.zeros(
-        (ScanGrid.scan_shape[0] * ScanGrid.scan_shape[1], *Detector.det_shape),
-        dtype=jnp.complex64,
+    params_dict = ModelParameters(
+        semi_conv=0.000001,
+        defocus=.001,
+        camera_length=0.1,
+        scan_shape=(7, 9),
+        det_shape=(64, 64),
+        scan_step=(0.001, 0.001),
+        det_px_size=(0.001, 0.001),
+        scan_rotation=0.0,
+        descan_error=jnp.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
     )
 
-    fourdstem_array = compute_fourdstem_dataset(
-        stem_model, fourdstem_array, sample_interpolant
-    )
+    stem_model = model = create_stem_model(params_dict)
+    PointSource, ScanGrid, Descanner, Detector = model
 
-    sample_px_ys, sample_px_xs, detector_intensities = (
-        compute_scan_grid_rays_and_intensities(stem_model, fourdstem_array)
+    fourdstem_array = np.zeros((ScanGrid.scan_shape[0],
+                                ScanGrid.scan_shape[1], *Detector.det_shape), dtype=np.float32)
+
+    cy, cx = np.asarray(Detector.det_shape) // 2
+    fourdstem_array[0, 0, cy, cx] = 1.
+    fourdstem_array[0, -1, cy, cx] = 2.
+    fourdstem_array[-1, -1, cy, cx] = 3.
+    fourdstem_array[-1, 0, cy, cx] = 4.
+    fourdstem_array = fourdstem_array.reshape(-1, *Detector.det_shape)
+
+    sample_px_ys, sample_px_xs, detector_intensities = compute_scan_grid_rays_and_intensities(
+        stem_model, fourdstem_array
     )
 
     sample_px_ys = np.array(sample_px_ys, dtype=np.int32).flatten()
     sample_px_xs = np.array(sample_px_xs, dtype=np.int32).flatten()
     detector_intensities = np.array(detector_intensities, dtype=np.float32).flatten()
-    shifted_sum_image = np.zeros(ScanGrid.scan_shape, dtype=np.float32)
 
-    shifted_sum_image = do_shifted_sum(
-        shifted_sum_image, sample_px_ys, sample_px_xs, detector_intensities
-    )
+    shifted_sum_image = np.zeros(model.scan_grid.scan_shape, dtype=np.float32)
 
-    import matplotlib.pyplot as plt
+    shifted_sum_image = do_shifted_sum(shifted_sum_image,
+                                       sample_px_ys,
+                                       sample_px_xs,
+                                       detector_intensities)
 
-    plt.figure(figsize=(10, 5))
-    plt.imshow(shifted_sum_image, cmap="gray", origin="lower")
-    plt.savefig("shifted_sum_image.png")
+    np.testing.assert_allclose(shifted_sum_image, test_image, atol=1e-6)
