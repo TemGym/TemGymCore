@@ -2,16 +2,15 @@ import jax
 import jax.numpy as jnp
 from scipy.constants import e, m_e, h
 import numpy as np
-from jaxgym.utils import (
-    compute_scan_grid_rays_and_intensities, 
+import tqdm
+import numba
+
+from . import Coords_XY
+from microscope_calibration.stemoverfocus import (
     project_frame_backward, 
     solve_model_fourdstem_wrapper, 
     ray_coords_at_plane
 )
-from jaxgym.ray import Ray, Coords_XY
-from microscope_calibration import stemoverfocus
-import tqdm
-import numba
 
 RadiansJNP = jnp.float64
 
