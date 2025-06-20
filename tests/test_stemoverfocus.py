@@ -3,7 +3,7 @@ import numpy as np
 import jax.numpy as jnp
 import sympy as sp
 
-from jaxgym.propagate import accumulate_transfer_matrices
+from jaxgym.transfer import accumulate_transfer_matrices
 
 from microscope_calibration.stemoverfocus import (
     solve_model_fourdstem_wrapper, 
@@ -14,11 +14,10 @@ from microscope_calibration.stemoverfocus import (
     do_shifted_sum
 )
 from microscope_calibration import components as comp
-from microscope_calibration.parameters import ModelParameters
+from microscope_calibration.model import ModelParameters, create_stem_model
 
 from scipy.ndimage import rotate
 from scipy.ndimage import zoom
-
 from jax.scipy.interpolate import RegularGridInterpolator
 
 @pytest.fixture
@@ -97,27 +96,7 @@ def test_sample_interpolant(test_image, test_params_dict):
 @pytest.fixture
 def stem_model(test_params_dict):
     params_dict = test_params_dict
-
-    #Create ray input z plane
-    crossover_z = jnp.zeros((1))
-
-    PointSource = comp.PointSource(z=crossover_z, semi_conv=params_dict['semi_conv'])
-
-    ScanGrid = comp.ScanGrid(z=jnp.array([params_dict['defocus']]), 
-                            scan_step=params_dict['scan_step'], 
-                            scan_shape=params_dict['scan_shape'], 
-                            scan_rotation=params_dict['scan_rotation'])
-
-    Descanner = comp.Descanner(z=jnp.array([params_dict['defocus']]), 
-                                            descan_error=params_dict['descan_error'], 
-                                            scan_pos_x=0., 
-                                            scan_pos_y=0.)
-
-    Detector = comp.Detector(z=jnp.array([params_dict['camera_length'] + params_dict['defocus']]), 
-                            det_shape=params_dict['det_shape'], 
-                            det_pixel_size=params_dict['det_px_size'])
-
-    model = [PointSource, ScanGrid, Descanner, Detector]
+    model = create_stem_model(params_dict)
 
     return model
 
@@ -340,6 +319,3 @@ def test_project_frame_forward_and_backward(stem_model, test_sample_interpolant,
     plt.figure(figsize=(10, 5))
     plt.imshow(shifted_sum_image, cmap='gray', origin='lower')
     plt.savefig('shifted_sum_image.png')
-
-    
-

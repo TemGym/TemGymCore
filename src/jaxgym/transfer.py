@@ -6,7 +6,7 @@ import numpy as np
 import jax.numpy as jnp
 
 
-def propagate_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
+def transfer_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
     """
     Propagate rays through an optical system using the provided transfer matrix.
     This function takes an initial point source position (x, y) and their corresponding slopes, constructs a ray vector, 

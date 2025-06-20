@@ -5,11 +5,9 @@ from microscope_calibration.components import ScanGrid, Detector, Descanner
 from jaxgym.ray import Ray
 from microscope_calibration.stemoverfocus import find_input_slopes
 from microscope_calibration.components import Detector
-from jaxgym.propagate import propagate_rays, accumulate_transfer_matrices
+from jaxgym.transfer import transfer_rays, accumulate_transfer_matrices
 import sympy as sp
-
-jax.config.update('jax_platform_name', 'cpu')
-
+import pytest
 
 def test_propagate_free_space():
     # Define a point source position and random ray angle
@@ -30,7 +28,7 @@ def test_propagate_free_space():
         [0.0, 0.0, 0.0, 0.0, 1.0],
     ])
 
-    coords = propagate_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
+    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
 
     # Expected: x = x0 + d*dx0, y = y0 + d*dy0, slopes unchanged
     x_exp = x0 + d * dx0
@@ -60,7 +58,7 @@ def test_propagate_random_matrix():
     result_np = T_vals.dot(vec)
     x_exp, y_exp, dx_exp, dy_exp = result_np[:4]
 
-    coords = propagate_rays((x0, y0), (slopes_x, slopes_y), T)
+    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), T)
 
     # Verify against symbolic result
     np.testing.assert_allclose(coords[0, 0], x_exp, atol=1e-6)
@@ -71,7 +69,7 @@ def test_propagate_random_matrix():
 def test_identity_propagation():
     import numpy as np
     import jax.numpy as jnp
-    from jaxgym.propagate import propagate_rays
+    from jaxgym.transfer import transfer_rays
 
     # Batch of rays from same source through identity matrix
     x0, y0 = 0.5, -0.5
@@ -82,7 +80,7 @@ def test_identity_propagation():
     slopes_y = jnp.array(dy_vals)
     T = jnp.eye(5)
 
-    coords = propagate_rays((x0, y0), (slopes_x, slopes_y), T)
+    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), T)
 
     assert coords.shape == (4, N)
     np.testing.assert_allclose(coords[0], x0)
@@ -91,39 +89,31 @@ def test_identity_propagation():
     np.testing.assert_allclose(coords[3], dy_vals)
 
 
-def test_empty_input():
-    import jax.numpy as jnp
-    from jaxgym.propagate import propagate_rays
 
-    # No rays
-    slopes_x = jnp.array([], dtype=float)
-    slopes_y = jnp.array([], dtype=float)
-    T = jnp.eye(5)
-
-    coords = propagate_rays((1.0, 2.0), (slopes_x, slopes_y), T)
-    assert coords.shape == (4, 0)
-
-
-def test_negative_distance_propagation():
-
+# parametrised propagation distances (including zero and negatives)
+@pytest.mark.parametrize("d", [-10.0, -3.0, -0.0, 0.0, 1.5, 5.0, 12.3])
+def test_distance_propagation_parametrised(d):
     x0, y0 = 1.0, 2.0
     dx0, dy0 = 0.1, -0.2
     slopes_x = jnp.array([dx0])
     slopes_y = jnp.array([dy0])
-    d = -3.0
-    transfer_matrix = jnp.array([
+    # free‐space propagation by d
+    T = jnp.array([
         [1.0, 0.0, d,   0.0, 0.0],
         [0.0, 1.0, 0.0, d,   0.0],
         [0.0, 0.0, 1.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, 1.0, 0.0],
         [0.0, 0.0, 0.0, 0.0, 1.0],
     ])
-
-    coords = propagate_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
+    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), T)
     x_exp = x0 + d * dx0
     y_exp = y0 + d * dy0
+    
     np.testing.assert_allclose(coords[0, 0], x_exp, atol=1e-6)
     np.testing.assert_allclose(coords[1, 0], y_exp, atol=1e-6)
+    # slopes should remain unchanged
+    np.testing.assert_allclose(coords[2, 0], dx0, atol=1e-6)
+    np.testing.assert_allclose(coords[3, 0], dy0, atol=1e-6)
 
 
 def test_accumulate_transfer_matrices():
@@ -163,7 +153,7 @@ def test_shear_and_scaling():
     slopes_x = jnp.array([dx0])
     slopes_y = jnp.array([dy0])
 
-    coords = propagate_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
+    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
     x_exp = x0 + alpha * y0
     y_exp = k * y0
     np.testing.assert_allclose(coords[0, 0], x_exp, atol=1e-6)

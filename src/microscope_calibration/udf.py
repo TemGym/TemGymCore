@@ -3,7 +3,7 @@ import numpy as np
 import jax.numpy as jnp
 from libertem.udf import UDF
 
-from .parameters import ModelParameters
+from .model import ModelParameters
 from .stemoverfocus import project_frame_backward
 from . import components as comp
 
