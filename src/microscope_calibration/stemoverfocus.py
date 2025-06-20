@@ -1,8 +1,6 @@
 import numpy as np
-import numba
 import jax
 import jax.numpy as jnp
-import tqdm.auto as tqdm
 
 from jaxgym.ray import Ray
 from jaxgym.run import solve_model
@@ -171,10 +169,10 @@ def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
 
 @jax.jit
 def project_frame_backward(
-    model: list, det_coords: np.ndarray, det_frame: np.ndarray, scan_pos: Coords_XY
+    model: Model, det_coords: np.ndarray, det_frame: np.ndarray, scan_pos: Coords_XY
 ) -> np.ndarray:
-    PointSource = model[0]
-    ScanGrid = model[1]
+    PointSource = model.point_source
+    ScanGrid = model.scan_grid
     semi_conv = PointSource.semi_conv
 
     # Return all the transfer matrices necessary for us to propagate rays through the system
