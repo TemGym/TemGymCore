@@ -7,13 +7,15 @@ from jaxgym.transfer import accumulate_transfer_matrices
 
 from microscope_calibration.stemoverfocus import (
     solve_model_fourdstem_wrapper,
-    compute_fourdstem_dataset,
     find_input_slopes,
     ray_coords_at_plane,
+)
+from microscope_calibration import components as comp
+from microscope_calibration.generate import (
+    compute_fourdstem_dataset,
     compute_scan_grid_rays_and_intensities,
     do_shifted_sum,
 )
-from microscope_calibration import components as comp
 from microscope_calibration.model import ModelParameters, create_stem_model
 
 from scipy.ndimage import rotate
@@ -22,13 +24,13 @@ from jax.scipy.interpolate import RegularGridInterpolator
 
 
 @pytest.fixture
-def test_params_dict():
+def test_params_same_det_and_scan_grid():
     return ModelParameters(
-        semi_conv=0.0001,
+        semi_conv=1e-12,
         defocus=0.001,
         camera_length=0.1,
-        scan_shape=(10, 10),
-        det_shape=(100, 100),
+        scan_shape=(11, 11),
+        det_shape=(11, 11),
         scan_step=(0.001, 0.001),
         det_px_size=(0.001, 0.001),
         scan_rotation=0.0,
@@ -39,20 +41,17 @@ def test_params_dict():
 
 
 @pytest.fixture
-def test_image():
-    img = np.zeros((10, 10), dtype=np.uint8)
-    img[0, 0] = 1.0
-    img[0, -1] = 1.0
-    img[-1, 0] = 1.0
-    img[-1, -1] = 1.0
-    img[4, 4] = 1.0
-    return img
+def test_sample_interpolant(test_params_same_det_and_scan_grid):
+    model_params = test_params_same_det_and_scan_grid
 
+    scan_pixels = model_params["scan_shape"]
 
-@pytest.fixture
-def test_sample_interpolant(test_image, test_params_dict):
-    sample_image = test_image
-    model_params = test_params_dict
+    sample_image = np.zeros((scan_pixels), dtype=np.uint8)
+    sample_image[0, 0] = 1.0
+    sample_image[0, -1] = 1.0
+    sample_image[-1, 0] = 1.0
+    sample_image[-1, -1] = 1.0
+    sample_image[scan_pixels[0]//2, scan_pixels[1]//2] = 1.0
 
     scan_step = model_params["scan_step"]
 
@@ -103,8 +102,8 @@ def test_sample_interpolant(test_image, test_params_dict):
 
 # Fixture that creates a STEM model with [PointSource, ScanGrid, Descanner, Detector]
 @pytest.fixture
-def stem_model(test_params_dict):
-    params_dict = test_params_dict
+def stem_model(test_params_same_det_and_scan_grid):
+    params_dict = test_params_same_det_and_scan_grid
     model = create_stem_model(params_dict)
 
     return model
@@ -353,16 +352,11 @@ def test_out_of_order_z():
 
 
 def test_project_frame_forward_and_backward(
-    stem_model, test_sample_interpolant, test_image
+    stem_model, test_sample_interpolant
 ):
     import matplotlib.pyplot as plt
 
     sample_interpolant = test_sample_interpolant
-
-    img = test_image
-    plt.figure()
-    plt.imshow(img, cmap="gray")
-    plt.savefig("sample_interpolant.png")
 
     PointSource, ScanGrid, Descanner, Detector = stem_model
 

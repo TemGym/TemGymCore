@@ -93,10 +93,6 @@ def compute_fourdstem_dataset(
             sample_vals
         )
 
-        fourdstem_array = fourdstem_array.reshape(
-            ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape
-        )
-
     return fourdstem_array
 
 
