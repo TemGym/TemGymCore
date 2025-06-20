@@ -1,14 +1,11 @@
 import pytest
 import numpy as np
 import jax.numpy as jnp
-
-import pytest
-
-from microscope_calibration.stemoverfocus import solve_model_fourdstem_wrapper, find_input_slopes
-from jaxgym.propagate import accumulate_transfer_matrices
-from microscope_calibration import components as comp
-
 import sympy as sp
+
+from jaxgym.propagate import accumulate_transfer_matrices
+from microscope_calibration.stemoverfocus import solve_model_fourdstem_wrapper, find_input_slopes, ray_coords_at_plane
+from microscope_calibration import components as comp
 
 
 def make_params_dict(semi_conv, defocus, camera_length, scan_shape, det_shape, scan_step, det_px_size, scan_rotation, descan_error):
@@ -70,7 +67,7 @@ def stem_model(test_params_dict):
                                             scan_pos_x=0., 
                                             scan_pos_y=0.)
 
-    Detector = comp.Detector(z=jnp.array([params_dict['camera_length']]), 
+    Detector = comp.Detector(z=jnp.array([params_dict['camera_length'] + params_dict['defocus']]), 
                             det_shape=params_dict['det_shape'], 
                             det_pixel_size=params_dict['det_px_size'])
 
@@ -79,17 +76,51 @@ def stem_model(test_params_dict):
     return model
 
 
-def test_find_input_slopes_that_hit_detpx_from_pt_src():
+def test_find_input_slopes_single_on_axis_pixel():
+    # Test that for a single pixel on the optical axis and not descan error, the back calculted input slope
+    # is zero
+    pos = jnp.array([-0.0053, 0.00515])
+    shift = -pos
+    camera_length = 1.0
+    transfer_matrix = jnp.array([
+        [ 1.0,  0.0,  camera_length,  0.0, shift[0]],
+        [ 0.0,  1.0,  0.0,  camera_length, shift[1]],
+        [ 0.0,  0.0,  1.0,  0.0,  0.0],
+        [ 0.0,  0.0,  0.0,  1.0,  0.0],
+        [ 0.0,  0.0,  0.0,  0.0,  1.0],
+    ])
+
+    #Set up the parameters for the simulation
+    semi_conv = 0.001
+    det_shape = (1, 1)
+    det_px_size= (0.0, 0.0)
+
+    detector = comp.Detector(z=1.0, det_shape=det_shape, det_pixel_size=det_px_size, flip_y=False)
+    detector_coords = detector.coords
+
+    input_slopes_xy, mask = find_input_slopes(semi_conv, pos, detector_coords, transfer_matrix)
+
+    np.testing.assert_allclose(input_slopes_xy[0], 0.0, atol=1e-5)
+    np.testing.assert_allclose(input_slopes_xy[1], 0.0, atol=1e-5)
+
+
+def test_find_input_slopes_sympy():
+
+    # Test using sympy matries that the inversion of the linear function to back calculate the input slopes
+    # works correctly.
+
     detector_coords = np.array([[0, 0]])
     pos = np.array([-0.024, 0.075])
 
-    A_xx, A_xy, A_yx, A_yy = np.array([1, 0, 0.5, 0])
-    B_xx, B_xy, B_yx, B_yy = np.array([0, 1, 0, 0.5])
+    # proper convention: first row is [Axx, Axy, Bxx, Bxy, Δx]
+    #                 second row is [Ayx, Ayy, Byx, Byy, Δy]
+    A_xx, A_xy, B_xx, B_xy = 1, 0, 0.5, 0
+    A_yx, A_yy, B_yx, B_yy= 0, 1, 0, 0.5
     delta_x, delta_y = pos
 
     transfer_matrix = np.eye(5)
-    transfer_matrix[0, :] = A_xx, A_xy, A_yx, A_yy, delta_x
-    transfer_matrix[1, :] = B_xx, B_xy, B_yx, B_yy, delta_y
+    transfer_matrix[0, :] = A_xx, A_xy, B_xx, B_xy, delta_x
+    transfer_matrix[1, :] = A_yx, A_yy, B_yx, B_yy, delta_y
     transfer_matrix[2, :] = 0, 0, 1, 0, 0
     transfer_matrix[3, :] = 0, 0, 0, 1, 0
     transfer_matrix[4, :] = 0, 0, 0, 0, 1
@@ -131,7 +162,40 @@ def test_find_input_slopes_that_hit_detpx_from_pt_src():
     np.testing.assert_allclose(input_slopes[1], np.array([x4_solution]), rtol=1e-5)
 
 
+def test_ray_coords_at_plane_many_coords_at_source():
+    # Test many detector coordinates all map back to the same source point
+
+    det_fwd = np.array([
+        [1.0, 0.0, 1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0],
+    ])
+    det_back = np.linalg.inv(det_fwd)
+
+    semi_conv = 0.02
+    pt_src = jnp.array([1.0, 2.0])
+
+    # Generate a grid of 20x20 = 400 detector coordinates
+    xs = np.linspace(-1e-3, 1e-3, 20)
+    ys = np.linspace(-1e-3, 1e-3, 20)
+    detector_coords = jnp.array([[x, y] for x in xs for y in ys])
+
+    x_plane, y_plane, mask = ray_coords_at_plane(
+        semi_conv, pt_src, detector_coords, det_fwd, det_back
+    )
+
+    expected_x = np.full(detector_coords.shape[0], pt_src[0])
+    expected_y = np.full(detector_coords.shape[0], pt_src[1])
+    np.testing.assert_allclose(x_plane, expected_x, atol=1e-6)
+    np.testing.assert_allclose(y_plane, expected_y, atol=1e-6)
+
+
 def test_solve_model_fourdstem_wrapper(stem_model, test_params_dict):
+
+    # Test that the transfer matrices returned by the fourdstem wrapper match the manually constructed ones
+
     test_params = test_params_dict
 
     scan_pos = [-0.1, -0.1]
@@ -148,8 +212,8 @@ def test_solve_model_fourdstem_wrapper(stem_model, test_params_dict):
     descan_tm[0, -1] = -scan_pos[0]
     descan_tm[1, -1] = -scan_pos[1]
     prop_descan_to_det_tm = np.eye(5)
-    prop_descan_to_det_tm[0, 2] = test_params['camera_length'] - test_params['defocus']
-    prop_descan_to_det_tm[1, 3] = test_params['camera_length'] - test_params['defocus']
+    prop_descan_to_det_tm[0, 2] = test_params['camera_length'] # - test_params['defocus']
+    prop_descan_to_det_tm[1, 3] = test_params['camera_length'] # - test_params['defocus']
     detector_tm = np.eye(5)
 
     manual_transfer_matrices = [point_source_tm, 
@@ -163,4 +227,40 @@ def test_solve_model_fourdstem_wrapper(stem_model, test_params_dict):
     total_manual_tm = accumulate_transfer_matrices(manual_transfer_matrices, 0, 3)
 
     np.testing.assert_allclose(total_transfer_matrix, total_manual_tm, rtol=1e-5)
-    np.testing.assert_allclose(transfer_matrices, np.array(manual_transfer_matrices), rtol=1e-5)
+    np.testing.assert_allclose(transfer_matrices, manual_transfer_matrices, rtol=1e-5)
+
+
+def test_wrapper_same_z_components():
+    # Test that if one places components at the same z position, and try to run a ray through it, 
+    # it does not raise an error and returns the expected number of transfer matrices.
+    semi_conv = 0.001
+    ps = comp.PointSource(z=1.0, semi_conv=semi_conv)
+    sg = comp.ScanGrid(z=jnp.array([1.0]), scan_step=(0.1,0.1), scan_shape=(2,2), scan_rotation=0.0)
+    ds = comp.Descanner(z=jnp.array([1.0]), descan_error=jnp.zeros(12), scan_pos_x=0.0, scan_pos_y=0.0)
+    dt = comp.Detector(z=jnp.array([1.0]), det_shape=(2,2), det_pixel_size=(0.1,0.1))
+    model = [ps, sg, ds, dt]
+
+    tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0,0.0])
+
+    assert len(tmats) == 7
+    assert total_tm.shape == (5,5)
+    assert inv_tm.shape == (5,5)
+
+
+def test_wrapper_out_of_order_z():
+    # Test that if one places components at out of order z positions, and try to run a ray through it, 
+    # it does not raise an error and returns the expected number of transfer matrices.
+    semi_conv = 0.001
+    ps = comp.PointSource(z=3.0, semi_conv=semi_conv)
+    sg = comp.ScanGrid(z=jnp.array([2.0]), scan_step=(0.1,0.1), scan_shape=(2,2), scan_rotation=0.0)
+    ds = comp.Descanner(z=jnp.array([1.0]), descan_error=jnp.zeros(12), scan_pos_x=0.0, scan_pos_y=0.0)
+    dt = comp.Detector(z=jnp.array([0.0]), det_shape=(2,2), det_pixel_size=(0.1,0.1))
+    model = [ps, sg, ds, dt]
+
+    tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0,0.0])
+
+    assert len(tmats) == 7
+    assert total_tm.shape == (5,5)
+    assert inv_tm.shape == (5,5)
+
+
