@@ -171,7 +171,7 @@ def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
 def project_frame_backward(
     model: Model, det_coords: np.ndarray, det_frame: np.ndarray, scan_pos: Coords_XY
 ) -> np.ndarray:
-    PointSource = model.point_source
+    PointSource = model.source
     ScanGrid = model.scan_grid
     semi_conv = PointSource.semi_conv
 

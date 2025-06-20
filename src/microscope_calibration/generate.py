@@ -13,13 +13,13 @@ import numba
 
 
 def project_frame_forward(
-    model: list,
+    model: Model,
     det_coords: np.ndarray,
     sample_interpolant: callable,
     scan_pos: Coords_XY,
 ) -> np.ndarray:
-    PointSource = model[0]
-    Detector = model[3]
+    PointSource = model.source
+    Detector = model.detector
     semi_conv = PointSource.semi_conv
 
     # Return all the transfer matrices necessary for us to propagate rays through the system
@@ -119,10 +119,10 @@ def do_shifted_sum(
 
 
 def compute_scan_grid_rays_and_intensities(
-    model: list, fourdstem_array: np.ndarray
+    model: Model, fourdstem_array: np.ndarray
 ) -> np.ndarray:
-    ScanGrid = model[1]
-    Detector = model[-1]
+    ScanGrid = model.scan_grid
+    Detector = model.detector
     det_coords = Detector.coords
     scan_coords = ScanGrid.coords
 
