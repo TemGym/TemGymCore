@@ -7,9 +7,10 @@ from libertem_ui.figure import ApertureFigure
 from libertem_ui.windows.com import CoMImagingWindow
 from libertem_ui.windows.imaging import VirtualDetectorWindow, FrameImagingWindow
 from microscope_calibration.udf import ShiftedSumUDF
+from microscope_calibration.model import ModelParameters
 
 
-def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
+def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParameters):
     semi_conv_slider = pn.widgets.FloatSlider(
         name="Semiconv (mrad)",
         value=model_params["semi_conv"] * 1000,
@@ -61,20 +62,6 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params):
     vi_window = VirtualDetectorWindow.using(ctx, ds)
     frame_window = FrameImagingWindow.linked_to(vi_window)
     com_window = CoMImagingWindow.linked_to(vi_window)
-
-    # point_fig = ApertureFigure.new(
-    #     np.zeros(ds.shape.nav, dtype=np.float32)
-    # )
-
-    # def point_analysis(*e):
-    #     sy, sx = ds.shape.sig
-    #     point_a = ctx.create_point_analysis(ds, sx // 2, sy // 2)
-    #     point_r = ctx.run(point_a)
-    #     point_fig.update(point_r.intensity.raw_data)
-
-    # point_run_btn = pn.widgets.Button(name="Run", button_type="success")
-    # point_run_btn.on_click(point_analysis)
-    # point_fig._toolbar.append(point_run_btn)
 
     result_fig = ApertureFigure.new(np.zeros(ds.shape.nav, dtype=np.float32))
 
@@ -143,10 +130,6 @@ if __name__ == "__main__":
 
     rootdir = Path(__file__).parent
     ctx = lt.Context.make_with("inline")  # no parallelisation, good for debugging
-    # uses threads, might be efficient on data in memory
-    # ctx = lt.Context.make_with("threads", cpus=64)
-    # uses Dask+processes, cannot efficiently use data already in memory
-    # ctx = lt.Context.make_with(cpus=8)
 
     params_dict = json.load(open(rootdir / "params.json"))
     semi_conv = params_dict["semi_conv"]
@@ -161,8 +144,7 @@ if __name__ == "__main__":
     ds_path = rootdir / "fourdstem_array.npy"
     ds = ctx.load("npy", ds_path, num_partitions=4)
 
-    # ds = ctx.load("memory", data=fourdstem_array)  # dataset with in-memory data, not from file
-    model_parameters = {
+    model_parameters = ModelParameters(**{
         "semi_conv": semi_conv,
         "defocus": defocus,  # Distance from the crossover to the sample
         "camera_length": camera_length,  # distance from crossover to the detector
@@ -171,25 +153,6 @@ if __name__ == "__main__":
         "scan_rotation": scan_rotation,
         "descan_error": descan_error,
         "flip_y": False,
-    }
+    })
 
-    interactive_window(ctx, ds, model_parameters).show(
-        port=34677,
-        address="grexp1396app",
-        websocket_origin="grexp1396app:34677",
-        open=False,
-    )
-
-    # udf = ShiftedSumUDF(model_parameters=model_parameters)
-    # # roi = np.zeros(ds.shape.nav, dtype=bool)
-    # roi = np.random.choice([False] * 2 + [True] * 1, size=ds.shape.nav).astype(bool)
-    # results = ctx.run_udf(ds, udf, progress=True, roi=roi)
-    # shifted_sum: np.ndarray = results["shifted_sum"].data
-
-    # import matplotlib.pyplot as plt
-    # plt.figure()
-    # plt.imshow(shifted_sum, cmap='gray')
-    # plt.colorbar()
-    # plt.title("Shifted Sum")
-    # plt.savefig(rootdir / "shifted_sum.png")
-    # plt.close()
+    interactive_window(ctx, ds, model_parameters).show()
