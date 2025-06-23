@@ -168,8 +168,8 @@ def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
 
 
 @jax.jit
-def project_frame_backward(
-    model: Model, det_coords: np.ndarray, det_frame: np.ndarray, scan_pos: Coords_XY
+def project_coordinates_backward(
+    model: Model, det_coords: np.ndarray, scan_pos: Coords_XY
 ) -> np.ndarray:
     PointSource = model.source
     ScanGrid = model.scan_grid
@@ -186,14 +186,7 @@ def project_frame_backward(
         semi_conv, scan_pos, det_coords, total_transfer_matrix, det_to_scan
     )
 
-    det_flat = det_frame.flatten()
-
-    # substitute -1 wherever mask is False
-    scan_rays_x = jnp.where(semi_conv_mask, scan_rays_x, -1.0)
-    scan_rays_y = jnp.where(semi_conv_mask, scan_rays_y, -1.0)
-    det_values = jnp.where(semi_conv_mask, det_flat, -1.0)
-
     # Convert the ray coordinates to pixel indices.
     scan_y_px, scan_x_px = ScanGrid.metres_to_pixels([scan_rays_x, scan_rays_y])
 
-    return scan_y_px, scan_x_px, det_values
+    return scan_y_px, scan_x_px, semi_conv_mask

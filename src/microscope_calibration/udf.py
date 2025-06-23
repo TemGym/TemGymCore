@@ -3,21 +3,24 @@ import numpy as np
 from libertem.udf import UDF
 
 from .model import ModelParameters, create_stem_model
-from .stemoverfocus import project_frame_backward
+from .stemoverfocus import project_coordinates_backward
 
 
 @njit
-def mask_via_for(px_y, px_x, values, buffer):
+def mask_via_for(px_y, px_x, mask, frame, buffer):
     ny, nx = buffer.shape
     n = px_y.shape[0]
     for i in range(n):
         py = px_y[i]
         px = px_x[i]
-        if 0 <= py < ny and 0 <= px < nx:
-            buffer[py, px] += values[i]
+        if mask[i]:
+            buffer[py, px] += frame[i]
 
 
 class ShiftedSumUDF(UDF):
+    def __init__(self, model_parameters: ModelParameters):
+        super().__init__(model_parameters=model_parameters)
+
     def get_task_data(self):
         # Ran once per-partition and re-used
         params_dict = ModelParameters(**self.params.model_parameters)
@@ -51,9 +54,9 @@ class ShiftedSumUDF(UDF):
         det_coords = self.task_data.detector_coords
         scan_pos = self.task_data.scan_coords[scan_pos_flat]
         model = self.task_data.model
-        px_y, px_x, values = project_frame_backward(list(model), det_coords, frame, scan_pos)
+        px_y, px_x, mask = project_coordinates_backward(model, det_coords, scan_pos)
         mask_via_for(
-            np.array(px_y), np.array(px_x), np.array(values), self.results.shifted_sum
+            np.array(px_y), np.array(px_x), np.array(mask), frame.ravel(), self.results.shifted_sum
         )
 
     def merge(self, dest, src):

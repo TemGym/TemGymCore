@@ -141,7 +141,7 @@ from jaxgym.run import run_to_end, calculate_derivatives
     #     np.testing.assert_allclose(float(Cs_aberint), float(Cs_daceypy), rtol=1e-5)
     #     np.testing.assert_allclose(float(Cs_aberint), float(Cs_jax), rtol=1e-5)
 
-    """ Print the coefficients of the polynomials in a readable format
+    # # Print the coefficients of the polynomials in a readable format
     # var = 'pathlength'
 
     # if var == 'x':
@@ -186,4 +186,3 @@ from jaxgym.run import run_to_end, calculate_derivatives
     # # Print the two blocks side by side
     # for left, right in zip(print_jax, print_daceypy):
     #     print(f"{left:<60} {right}")
-    """

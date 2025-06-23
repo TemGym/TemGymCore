@@ -5,7 +5,7 @@ from .model import Model
 from .stemoverfocus import (
     ray_coords_at_plane,
     solve_model_fourdstem_wrapper,
-    project_frame_backward,
+    project_coordinates_backward,
 )
 import jax.numpy as jnp
 import tqdm
@@ -130,11 +130,12 @@ def compute_scan_grid_rays_and_intensities(
         scan_pos = scan_coords[idx]
 
         # Compute the backward projection for this scan position.
-        sample_px_y, sample_px_x, detector_intensity = project_frame_backward(
-            model, det_coords, fourdstem_array[idx], scan_pos
+        sample_px_y, sample_px_x, mask = project_coordinates_backward(
+            model, det_coords, scan_pos
         )
         sample_px_ys.append(sample_px_y)
         sample_px_xs.append(sample_px_x)
+        raise NotImplementedError("Need to loop over mask here to get intensities")
         detector_intensities.append(detector_intensity)
 
     return sample_px_ys, sample_px_xs, detector_intensities
