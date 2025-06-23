@@ -66,7 +66,7 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
     result_fig = ApertureFigure.new(np.zeros(ds.shape.nav, dtype=np.float32))
 
     def get_model_parameters():
-        return {
+        return ModelParameters(**{
             "semi_conv": semi_conv_slider.value / 1000,
             "defocus": defocus_slider.value,  # Distance from the crossover to the sample
             "camera_length": camera_length_slider.value,  # distance from crossover to the detector
@@ -75,19 +75,15 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
             "scan_rotation": scan_rotation_slider.value,
             "descan_error": descan_error,
             "flip_y": flip_y_bool.value,
-        }
-
-    px_shifts = model_params.get("px_shifts", None)
-    if px_shifts is not None:
-        px_shifts = ShiftedSumUDF.aux_data(
-            px_shifts.astype(int), kind="nav", dtype=int, extra_shape=(2,)
-        )
+            "scan_shape": ds.shape.nav,
+            "det_shape": ds.shape.sig,
+        })
 
     def run_analysis(*e):
         try:
             run_btn.disabled = True
             udf = ShiftedSumUDF(
-                model_parameters=get_model_parameters(), shifts=px_shifts
+                model_parameters=get_model_parameters(),
             )
             roi = np.random.choice([False] * 1 + [True] * 1, size=ds.shape.nav).astype(
                 bool
@@ -116,7 +112,6 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
             ("Frame Imaging", frame_window.layout()),
             ("Virtual Imaging", vi_window.layout()),
             ("CoM", com_window.layout()),
-            # ("SpotSim", result_fig.layout),
             ("ShiftedSum", result_fig.layout),
         ),
     )

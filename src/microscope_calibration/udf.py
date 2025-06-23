@@ -44,9 +44,6 @@ class ShiftedSumUDF(UDF):
         }
 
     def process_frame(self, frame: np.ndarray):
-        if self.params.get("shifts", None) is not None:
-            shifts = self.params.shifts
-            frame = np.roll(frame, -1 * shifts, axis=(0, 1))
         scan_pos_flat = np.ravel_multi_index(
             self.meta.coordinates.ravel(),
             self.meta.dataset_shape.nav,
@@ -54,10 +51,7 @@ class ShiftedSumUDF(UDF):
         det_coords = self.task_data.detector_coords
         scan_pos = self.task_data.scan_coords[scan_pos_flat]
         model = self.task_data.model
-        # if self.params.get('shifts') is not None:
-        #     # correct descan error in the pixel coordinate system
-        #     frame = np.roll(frame, self.params.get('shifts'), axis=(0, 1))
-        px_y, px_x, values = project_frame_backward(model, det_coords, frame, scan_pos)
+        px_y, px_x, values = project_frame_backward(list(model), det_coords, frame, scan_pos)
         mask_via_for(
             np.array(px_y), np.array(px_x), np.array(values), self.results.shifted_sum
         )

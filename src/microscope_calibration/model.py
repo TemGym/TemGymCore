@@ -32,8 +32,8 @@ def create_stem_model(
 
     ScanGrid = comp.ScanGrid(
         z=jnp.array([params_dict["defocus"]]),
-        scan_step=params_dict["scan_step"],
-        scan_shape=params_dict["scan_shape"],
+        scan_step=tuple(params_dict["scan_step"]),
+        scan_shape=tuple(params_dict["scan_shape"]),
         scan_rotation=params_dict["scan_rotation"],
     )
 
@@ -46,8 +46,8 @@ def create_stem_model(
 
     Detector = comp.Detector(
         z=jnp.array([params_dict["camera_length"] + params_dict["defocus"]]),
-        det_shape=params_dict["det_shape"],
-        det_pixel_size=params_dict["det_px_size"],
+        det_shape=tuple(params_dict["det_shape"]),
+        det_pixel_size=tuple(params_dict["det_px_size"]),
     )
 
     return Model(PointSource, ScanGrid, Descanner, Detector)
