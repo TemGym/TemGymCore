@@ -3,18 +3,7 @@ import numpy as np
 from libertem.udf import UDF
 
 from .model import ModelParameters, create_stem_model
-from .stemoverfocus import project_coordinates_backward
-
-
-@njit
-def mask_via_for(px_y, px_x, mask, frame, buffer):
-    ny, nx = buffer.shape
-    n = px_y.shape[0]
-    for i in range(n):
-        py = px_y[i]
-        px = px_x[i]
-        if mask[i]:
-            buffer[py, px] += frame[i]
+from .stemoverfocus import project_coordinates_backward, inplace_sum
 
 
 class ShiftedSumUDF(UDF):
@@ -55,7 +44,7 @@ class ShiftedSumUDF(UDF):
         scan_pos = self.task_data.scan_coords[scan_pos_flat]
         model = self.task_data.model
         px_y, px_x, mask = project_coordinates_backward(model, det_coords, scan_pos)
-        mask_via_for(
+        inplace_sum(
             np.array(px_y), np.array(px_x), np.array(mask), frame.ravel(), self.results.shifted_sum
         )
 

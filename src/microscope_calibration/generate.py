@@ -6,6 +6,7 @@ from .stemoverfocus import (
     ray_coords_at_plane,
     solve_model_fourdstem_wrapper,
     project_coordinates_backward,
+    inplace_sum
 )
 import jax.numpy as jnp
 import tqdm
@@ -33,14 +34,11 @@ def project_frame_forward(
         semi_conv, scan_pos, det_coords, total_transfer_matrix, detector_to_scan
     )
 
-    # ensure mask is a JAX array of booleans
-    mask = jnp.asarray(mask, dtype=bool)
-
-    scan_pts = jnp.stack([scan_rays_y, scan_rays_x], axis=-1)  # (n_rays, 2)
+    mask = np.asarray(mask, dtype=bool)
 
     # interpolate and add 1 to avoid zero artefacts in the point image, then zero‐out invalid rays
-    sample_vals = sample_interpolant(scan_pts)  # + 1.0
-    sample_vals = jnp.where(mask, sample_vals, 0.0)
+    sample_vals = sample_interpolant((scan_rays_y, scan_rays_x))  # + 1.0
+    sample_vals = np.where(mask, sample_vals, 0.0)
 
     # compute detector pixel indices for all rays
     det_rays_x = det_coords[:, 0]
@@ -84,14 +82,15 @@ def compute_fourdstem_dataset(
     scan_coords = ScanGrid.coords
     det_coords = Detector.coords
 
-    for idx in tqdm.trange(fourdstem_array.shape[0], desc="Scan Y", leave=True):
-        scan_pos = scan_coords[idx]
-        det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(
-            model, det_coords, sample_interpolant, scan_pos
-        )
-        fourdstem_array = fourdstem_array.at[idx, det_pixels_y, det_pixels_x].set(
-            sample_vals
-        )
+    ny, nx = ScanGrid.scan_shape
+    for iy in tqdm.trange(ny, desc="Scan Y", leave=True):
+        for ix in tqdm.trange(nx, desc="Scan X", leave=False):
+            idx = iy * nx + ix
+            scan_pos = scan_coords[idx]
+            det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(
+                model, det_coords, sample_interpolant, scan_pos
+            )
+            fourdstem_array[iy, ix, det_pixels_y, det_pixels_x] = sample_vals
 
     return fourdstem_array
 
@@ -126,16 +125,17 @@ def compute_scan_grid_rays_and_intensities(
     sample_px_xs = []
     detector_intensities = []
 
-    for idx in tqdm.trange(fourdstem_array.shape[0], desc="Scan Y"):
-        scan_pos = scan_coords[idx]
+    for iy in tqdm.trange(fourdstem_array.shape[0], desc="Scan Y"):
+        for ix in tqdm.trange(fourdstem_array.shape[1], desc="Scan X", leave=False):
+            idx = iy * fourdstem_array.shape[1] + ix
+            scan_pos = scan_coords[idx]
 
-        # Compute the backward projection for this scan position.
-        sample_px_y, sample_px_x, mask = project_coordinates_backward(
-            model, det_coords, scan_pos
-        )
-        sample_px_ys.append(sample_px_y)
-        sample_px_xs.append(sample_px_x)
-        raise NotImplementedError("Need to loop over mask here to get intensities")
-        detector_intensities.append(detector_intensity)
+            # Compute the backward projection for this scan position.
+            sample_px_y, sample_px_x, mask = project_coordinates_backward(
+                model, det_coords, scan_pos
+            )
+            sample_px_ys.append(sample_px_y)
+            sample_px_xs.append(sample_px_x)
+            detector_intensities.append(fourdstem_array[iy, ix].ravel() * mask)
 
     return sample_px_ys, sample_px_xs, detector_intensities

@@ -164,7 +164,7 @@ def pixels_to_metres_transform(
 
     metres_to_px_flip_y = _flip_y()
     shape = jnp.array(shape)
-    pixel_shift_transform = _shift(-shape / 2)
+    pixel_shift_transform = _shift(-(shape - 1) / 2.)
     scale_transform = _scale(pixel_size)
     centre_shift_transform = _shift(centre)
     rotation_transform = _rotate_with_deg_to_rad(rotation)

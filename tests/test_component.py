@@ -8,6 +8,48 @@ from jax import jacobian
 from jaxgym.utils import custom_jacobian_matrix
 
 
+def test_scan_grid_zero_in_metres_coords_for_odd_length():
+    # For an odd number of pixels (scan_shape=(5,5) → 6 points each axis),
+    # the metres grid should include 0.0 exactly at the centre.
+    scan_grid = ScanGrid(
+        z=0.0,
+        scan_rotation=0.0,
+        scan_step=(0.1, 0.1),
+        scan_shape=(5, 7),
+        scan_centre=(0.0, 0.0),
+    )
+    xs, ys = [], []
+    sy, sx = scan_grid.scan_shape
+    for py in range(sy):
+        for px in range(sx):
+            mx, my = scan_grid.pixels_to_metres((py, px))
+            xs.append(mx)
+            ys.append(my)
+    assert any(np.isclose(v, 0.0) for v in xs), "Expected 0.0 in X coordinates for odd grid length"
+    assert any(np.isclose(v, 0.0) for v in ys), "Expected 0.0 in Y coordinates for odd grid length"
+
+
+def test_scan_grid_zero_not_in_metres_coords_for_even_length():
+    # For an even number of pixels (scan_shape=(4,4) → 5 points each axis),
+    # the metres grid should be centred around 0 but not include it exactly.
+    scan_grid = ScanGrid(
+        z=0.0,
+        scan_rotation=0.0,
+        scan_step=(0.1, 0.1),
+        scan_shape=(4, 6),
+        scan_centre=(0.0, 0.0),
+    )
+    xs, ys = [], []
+    sy, sx = scan_grid.scan_shape
+    for py in range(sy):
+        for px in range(sx):
+            mx, my = scan_grid.pixels_to_metres((py, px))
+            xs.append(mx)
+            ys.append(my)
+    assert not any(np.isclose(v, 0.0) for v in xs), "Did not expect 0.0 in X coordinates for even grid length"
+    assert not any(np.isclose(v, 0.0) for v in ys), "Did not expect 0.0 in Y coordinates for even grid length"
+
+
 # Test cases for ScanGrid:
 @pytest.mark.parametrize(
     "xy, rotation, expected_pixel_coords",
@@ -31,7 +73,7 @@ def test_scan_grid_metres_to_pixels(xy, rotation, expected_pixel_coords):
         z=0.0,
         scan_rotation=rotation,
         scan_step=(0.1, 0.1),
-        scan_shape=(10, 10),
+        scan_shape=(11, 11),
         scan_centre=(0.0, 0.0),
     )
     pixel_coords_y, pixel_coords_x = scan_grid.metres_to_pixels(xy)
@@ -62,7 +104,7 @@ def test_scan_grid_pixels_to_metres(pixel_coords, rotation, expected_xy):
         z=0.0,
         scan_rotation=rotation,
         scan_step=(0.1, 0.1),
-        scan_shape=(10, 10),
+        scan_shape=(11, 11),
         scan_centre=(0.0, 0.0),
     )
     metres_coords_x, metres_coords_y = scan_grid.pixels_to_metres(pixel_coords)
@@ -92,7 +134,7 @@ def test_detector_metres_to_pixels(xy, rotation, expected_pixel_coords):
     detector = Detector(
         z=0.0,
         det_pixel_size=(0.1, 0.1),
-        det_shape=(10, 10),
+        det_shape=(11, 11),
         det_centre=(0.0, 0.0),
         det_rotation=rotation,
         flip_y=False,
@@ -125,7 +167,7 @@ def test_detector_pixels_to_metres(pixel_coords, rotation, expected_xy):
         z=0.0,
         det_rotation=rotation,
         det_pixel_size=(0.1, 0.1),
-        det_shape=(10, 10),
+        det_shape=(11, 11),
         det_centre=(0.0, 0.0),
         flip_y=False,
     )

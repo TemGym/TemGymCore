@@ -1,6 +1,7 @@
 import numpy as np
 import jax
 import jax.numpy as jnp
+from numba import njit
 
 from jaxgym.ray import Ray
 from jaxgym.run import solve_model
@@ -9,6 +10,7 @@ from jaxgym import Coords_XY
 
 from . import components as comp
 from .model import Model
+import warnings
 
 
 def find_input_slopes(
@@ -18,8 +20,10 @@ def find_input_slopes(
     transformation_matrix: np.ndarray,
 ):
     """
-    Given a set of detector pixel coordinates, a semi-convergence angle from a source, and a transformation matrix,
-    find the slopes and mask that tells us what slopes will hit the detector pixels from the point source.
+    Given a set of detector pixel coordinates, a semi-convergence angle from a source,
+    and a transformation matrix,
+    find the slopes and mask that tells us what
+    slopes will hit the detector pixels from the point source.
     """
     pos_x, pos_y = pos
 
@@ -33,6 +37,11 @@ def find_input_slopes(
     delta_x, delta_y = transformation_matrix[0, 4], transformation_matrix[1, 4]
 
     x_out, y_out = detector_coords[:, 0], detector_coords[:, 1]
+
+    if len(detector_coords) == 1:
+        dx, dy = 1e-3, 1e-3
+    else:
+        dx, dy = x_out[1] - x_out[0], y_out[1] - y_out[0]
 
     denom = B_xx * B_yy - B_xy * B_yx
     theta_x_in = (
@@ -57,7 +66,19 @@ def find_input_slopes(
         - B_yx * x_out
     ) / denom
 
+    # This selects pixels whose centre point lie within the beam cone,
+    # so if the cone is too narrow, it selects no pixels.
+    # FIXME: Should select pixels which are partially within the beam cone.
     F = (theta_x_in**2 + theta_y_in**2) - semi_conv**2
+
+    # If beam radius is less than the distance between pixels, then raise a warning that semi_conv
+    # and propagation distances might be too small.
+    if semi_conv * B_xx < dx or semi_conv * B_yy < dy:
+        warnings.warn(
+            "Beam radius on detector is smaller than the distance between pixels. "
+            "This may lead to no pixels being selected."
+        )
+
     mask = F <= 0
 
     input_slopes_xy = jnp.stack([theta_x_in, theta_y_in])
@@ -190,3 +211,13 @@ def project_coordinates_backward(
     scan_y_px, scan_x_px = ScanGrid.metres_to_pixels([scan_rays_x, scan_rays_y])
 
     return scan_y_px, scan_x_px, semi_conv_mask
+
+
+@njit
+def inplace_sum(px_y, px_x, mask, frame, buffer):
+    n = px_y.shape[0]
+    for i in range(n):
+        py = px_y[i]
+        px = px_x[i]
+        if mask[i]:
+            buffer[py, px] += frame[i]

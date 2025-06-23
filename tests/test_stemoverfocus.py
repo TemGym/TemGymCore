@@ -2,7 +2,8 @@ import pytest
 import numpy as np
 import jax.numpy as jnp
 import sympy as sp
-
+from jax.scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import NearestNDInterpolator
 from jaxgym.transfer import accumulate_transfer_matrices
 
 from microscope_calibration.stemoverfocus import (
@@ -12,15 +13,13 @@ from microscope_calibration.stemoverfocus import (
 )
 from microscope_calibration import components as comp
 from microscope_calibration.generate import (
-    compute_fourdstem_dataset,
     compute_scan_grid_rays_and_intensities,
     do_shifted_sum,
+    compute_fourdstem_dataset,
 )
 from microscope_calibration.model import ModelParameters, create_stem_model
-
-from scipy.ndimage import rotate
-from scipy.ndimage import zoom
-from jax.scipy.interpolate import RegularGridInterpolator
+import random
+import pytest
 
 
 @pytest.fixture
@@ -67,7 +66,8 @@ def stem_model_basic(test_params_basic_dict):
 
 
 def test_find_input_slopes_single_on_axis_pixel():
-    # Test that for a single pixel on the optical axis and not descan error, the back calculted input slope
+    # Test that for a single pixel on the optical axis
+    # and not descan error, the back calculted input slope
     # is zero
     pos = jnp.array([-0.0053, 0.00515])
     shift = -pos
@@ -101,7 +101,8 @@ def test_find_input_slopes_single_on_axis_pixel():
 
 
 def test_find_input_slopes_sympy():
-    # Test using sympy matries that the inversion of the linear function to back calculate the input slopes
+    # Test using sympy matries that the inversion of the linear
+    # function to back calculate the input slopes
     # works correctly.
 
     detector_coords = np.array([[0, 0]])
@@ -222,7 +223,8 @@ def test_ray_coords_at_plane_many_coords_at_source():
 
 
 def test_solve_model_fourdstem_wrapper(stem_model_basic, test_params_basic_dict):
-    # Test that the transfer matrices returned by the fourdstem wrapper match the manually constructed ones
+    # Test that the transfer matrices returned by the
+    # fourdstem wrapper match the manually constructed ones
     stem_model = stem_model_basic
     test_params = test_params_basic_dict
 
@@ -289,7 +291,8 @@ def test_same_z_components():
 
 
 def test_out_of_order_z():
-    # Test that if one places components at out of order z positions, and try to run a ray through it,
+    # Test that if one places components at out of order z positions,
+    # and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
     model_params = ModelParameters(
         semi_conv=0.001,
@@ -312,38 +315,47 @@ def test_out_of_order_z():
     assert inv_tm.shape == (5, 5)
 
 
-def test_project_frame_forward_and_backward():
-
-    test_image = np.zeros((7, 9), dtype=np.uint8)
-    test_image[0, 0] = 1
-    test_image[0, -1] = 2
-    test_image[-1, -1] = 3
-    test_image[-1, 0] = 4
+@pytest.mark.parametrize(
+    "scan_rotation",
+    [random.uniform(-180, 180) for _ in range(3)]
+)
+def test_project_frame_forward_and_backward_simple_sample(scan_rotation):
+    test_image = np.zeros((11, 10), dtype=np.uint8)
+    test_image[0, 0] = 1.0
+    test_image[4, 4] = 1.0
+    test_image[3, 4] = 1.0
+    test_image[4, 3] = 1.0
+    test_image[5, 4] = 1.0
+    test_image[4, 5] = 1.0
 
     params_dict = ModelParameters(
-        semi_conv=0.000001,
-        defocus=.001,
-        camera_length=0.1,
-        scan_shape=(7, 9),
-        det_shape=(64, 64),
+        semi_conv=1e-3,
+        defocus=0.,
+        camera_length=0.5,
+        scan_shape=(11, 10),
+        det_shape=(11, 10),
         scan_step=(0.001, 0.001),
         det_px_size=(0.001, 0.001),
-        scan_rotation=0.0,
+        scan_rotation=scan_rotation,
         descan_error=jnp.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
     )
 
     stem_model = model = create_stem_model(params_dict)
     PointSource, ScanGrid, Descanner, Detector = model
 
-    fourdstem_array = np.zeros((ScanGrid.scan_shape[0],
-                                ScanGrid.scan_shape[1], *Detector.det_shape), dtype=np.float32)
+    x, y = ScanGrid.get_coords().T
 
-    cy, cx = np.asarray(Detector.det_shape) // 2
-    fourdstem_array[0, 0, cy, cx] = 1.
-    fourdstem_array[0, -1, cy, cx] = 2.
-    fourdstem_array[-1, -1, cy, cx] = 3.
-    fourdstem_array[-1, 0, cy, cx] = 4.
-    fourdstem_array = fourdstem_array.reshape(-1, *Detector.det_shape)
+    test_interpolant = NearestNDInterpolator(
+        (y, x), test_image.flatten()
+    )
+
+    sampled_test_interpolant = test_interpolant((y, x))
+    sampled_test_interpolant = sampled_test_interpolant.reshape(ScanGrid.scan_shape)
+
+    fourdstem_array = np.zeros((ScanGrid.scan_shape[0],
+                                ScanGrid.scan_shape[1], *Detector.det_shape), dtype=jnp.float32)
+
+    fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, test_interpolant)
 
     sample_px_ys, sample_px_xs, detector_intensities = compute_scan_grid_rays_and_intensities(
         stem_model, fourdstem_array

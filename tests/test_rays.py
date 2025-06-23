@@ -1,20 +1,18 @@
-import jax.numpy as jnp
+import pytest
 import numpy as np
 import math
-from jaxgym.ray import Ray, propagate, propagate_dir_cosine
-import pytest
 from jax import jacobian
+
+from jaxgym.ray import Ray, propagate, propagate_dir_cosine
 from jaxgym.utils import custom_jacobian_matrix
 
 
-# Fix seed for reproducibility
-rs = np.random.RandomState(42)
 # Generate 5 random test cases: (x0, y0, dx0, dy0, z0, pl0, d)
 random_tests = [
     (
-        *rs.uniform(-10, 10, size=6),  # x0, y0, dx0, dy0, z0, pl0
-        rs.uniform(0.0, 20.0),
-    )  # d
+        *np.random.uniform(-10, 10, size=6),  # x0, y0, dx0, dy0, z0, pl0
+        np.random.uniform(0.0, 20.0),          # d
+    )
     for _ in range(5)
 ]
 
@@ -45,7 +43,7 @@ def test_propagate_zero_distance():
 def test_propagate_dir_cosine_basic():
     x0, y0, dx0, dy0, z0, pl0 = 1.0, -1.0, 2.0, 3.0, 0.5, 10.0
     ray = Ray(x=x0, y=y0, dx=dx0, dy=dy0, z=z0, pathlength=pl0)
-    d = 4.0
+    d = np.random.uniform(-10, 10.0)
     # Compute expected using direction cosines
     N = math.sqrt(1.0 + dx0**2 + dy0**2)
     L = dx0 / N
@@ -65,9 +63,11 @@ def test_propagate_dir_cosine_basic():
 
 
 def test_propagate_jacobian_matrix():
-    # Fixed ray and distance for free-space propagation
+    # test that gradient of the propagate function with respect to the ray input
+    # is a homogeneous 5x5 matrix, where the first two rows are the translation
+    # of the ray position by the distance d, and the last three rows are identity
     ray = Ray(x=0.5, y=-0.5, dx=0.1, dy=-0.2, z=1.0, pathlength=0.0)
-    d = 2.3
+    d = np.random.uniform(-10.0, 10.0)
 
     # Compute jacobian of propagate wrt ray input
     jac = jacobian(propagate, argnums=1)(d, ray)
