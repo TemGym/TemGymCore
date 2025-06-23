@@ -53,6 +53,10 @@ gui = [
   'PySide6',
   'superqt',
 ]
+stemmodel = [
+    "libertem",
+    "libertem-ui",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/TemGym/TemGym"
