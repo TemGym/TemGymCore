@@ -38,11 +38,6 @@ def find_input_slopes(
 
     x_out, y_out = detector_coords[:, 0], detector_coords[:, 1]
 
-    if len(detector_coords) == 1:
-        dx, dy = 1e-3, 1e-3
-    else:
-        dx, dy = x_out[1] - x_out[0], y_out[1] - y_out[0]
-
     denom = B_xx * B_yy - B_xy * B_yx
     theta_x_in = (
         -A_xx * B_yy * pos_x
@@ -70,14 +65,6 @@ def find_input_slopes(
     # so if the cone is too narrow, it selects no pixels.
     # FIXME: Should select pixels which are partially within the beam cone.
     F = (theta_x_in**2 + theta_y_in**2) - semi_conv**2
-
-    # If beam radius is less than the distance between pixels, then raise a warning that semi_conv
-    # and propagation distances might be too small.
-    if semi_conv * B_xx < dx or semi_conv * B_yy < dy:
-        warnings.warn(
-            "Beam radius on detector is smaller than the distance between pixels. "
-            "This may lead to no pixels being selected."
-        )
 
     mask = F <= 0
 

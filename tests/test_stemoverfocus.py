@@ -320,7 +320,7 @@ def test_out_of_order_z():
     [random.uniform(-180, 180) for _ in range(3)]
 )
 def test_project_frame_forward_and_backward_simple_sample(scan_rotation):
-    test_image = np.zeros((11, 10), dtype=np.uint8)
+    test_image = np.zeros((11, 11), dtype=np.uint8)
     test_image[0, 0] = 1.0
     test_image[4, 4] = 1.0
     test_image[3, 4] = 1.0
@@ -329,13 +329,13 @@ def test_project_frame_forward_and_backward_simple_sample(scan_rotation):
     test_image[4, 5] = 1.0
 
     params_dict = ModelParameters(
-        semi_conv=1e-3,
-        defocus=0.,
+        semi_conv=1e-4,
+        defocus=0.0,
         camera_length=0.5,
-        scan_shape=(11, 10),
-        det_shape=(11, 10),
-        scan_step=(0.001, 0.001),
-        det_px_size=(0.001, 0.001),
+        scan_shape=(11, 11),
+        det_shape=(11, 11),
+        scan_step=(0.01, 0.01),
+        det_px_size=(0.01, 0.01),
         scan_rotation=scan_rotation,
         descan_error=jnp.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
     )
@@ -352,10 +352,23 @@ def test_project_frame_forward_and_backward_simple_sample(scan_rotation):
     sampled_test_interpolant = test_interpolant((y, x))
     sampled_test_interpolant = sampled_test_interpolant.reshape(ScanGrid.scan_shape)
 
+    import matplotlib.pyplot as plt
+    plt.figure()
+    plt.imshow(sampled_test_interpolant, cmap='gray')
+    plt.title("Sampled Test Interpolant")
+    plt.savefig("sampled_test_interpolant.png")
+
     fourdstem_array = np.zeros((ScanGrid.scan_shape[0],
                                 ScanGrid.scan_shape[1], *Detector.det_shape), dtype=jnp.float32)
 
     fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, test_interpolant)
+
+    sum_fourdstem_array = np.sum(fourdstem_array, axis=(-2, -1))
+
+    plt.figure()
+    plt.imshow(sum_fourdstem_array, cmap='gray')
+    plt.title("Sum of FourDSTEM Array")
+    plt.savefig("sum_fourdstem_array.png")
 
     sample_px_ys, sample_px_xs, detector_intensities = compute_scan_grid_rays_and_intensities(
         stem_model, fourdstem_array
@@ -371,5 +384,11 @@ def test_project_frame_forward_and_backward_simple_sample(scan_rotation):
                                        sample_px_ys,
                                        sample_px_xs,
                                        detector_intensities)
+
+    plt.figure()
+    plt.imshow(shifted_sum_image, cmap='gray')
+    plt.title("Shifted Sum Image")
+    plt.colorbar()
+    plt.savefig("shifted_sum_image.png")
 
     np.testing.assert_allclose(shifted_sum_image, test_image, atol=1e-6)
