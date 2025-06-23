@@ -99,21 +99,24 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
     result_fig._toolbar.append(run_btn)
 
     shifted_sum_window = pn.Row(
-        pn.Column(
-            semi_conv_slider,
-            defocus_slider,
-            camera_length_slider,
-            scan_rotation_slider,
-            flip_y_bool,
-            scan_step_input,
-            det_px_size_input,
-        ),
         pn.layout.Tabs(
             ("Frame Imaging", frame_window.layout()),
             ("Virtual Imaging", vi_window.layout()),
             ("CoM", com_window.layout()),
-            ("ShiftedSum", result_fig.layout),
-        ),
+            ("ShiftedSum", pn.Row(
+                    pn.Column(
+                        semi_conv_slider,
+                        defocus_slider,
+                        camera_length_slider,
+                        scan_rotation_slider,
+                        flip_y_bool,
+                        scan_step_input,
+                        det_px_size_input,
+                    ),
+                    result_fig.layout,
+                ),
+            ),  # noqa
+        )
     )
     return shifted_sum_window
 
