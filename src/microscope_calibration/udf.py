@@ -1,11 +1,9 @@
 from numba import njit
 import numpy as np
-import jax.numpy as jnp
 from libertem.udf import UDF
 
-from .model import ModelParameters
+from .model import ModelParameters, create_stem_model
 from .stemoverfocus import project_frame_backward
-from . import components as comp
 
 
 @njit
@@ -23,32 +21,9 @@ class ShiftedSumUDF(UDF):
     def get_task_data(self):
         # Ran once per-partition and re-used
         params_dict = ModelParameters(**self.params.model_parameters)
-        crossover_z = jnp.zeros((1))
-        PointSource = comp.PointSource(
-            z=crossover_z, semi_conv=params_dict["semi_conv"]
-        )
-        ScanGrid = comp.ScanGrid(
-            z=jnp.array([params_dict["defocus"]]),
-            scan_step=params_dict["scan_step"],
-            scan_shape=self.meta.dataset_shape.nav.to_tuple(),
-            scan_rotation=params_dict["scan_rotation"],
-        )
-        Descanner = comp.Descanner(
-            z=jnp.array([params_dict["defocus"]]),
-            descan_error=params_dict["descan_error"],
-            scan_pos_x=0.0,
-            scan_pos_y=0.0,
-        )
-
-        Detector = comp.Detector(
-            z=jnp.array([params_dict["camera_length"]]),
-            det_shape=self.meta.dataset_shape.sig.to_tuple(),
-            det_pixel_size=params_dict["det_px_size"],
-            flip_y=params_dict["flip_y"],
-        )
-        model = [PointSource, ScanGrid, Descanner, Detector]
-        scan_coords = ScanGrid.coords
-        detector_coords = Detector.coords
+        model = create_stem_model(params_dict)
+        scan_coords = model.scan_grid.coords
+        detector_coords = model.detector.coords
         return {
             "model": model,
             "scan_coords": scan_coords,
