@@ -132,13 +132,13 @@ def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
     # include rays smaller than min_alpha as well as those up to semi_conv
     mask = r2 <= jnp.maximum(semi_conv**2, min_alpha**2)
 
-    # build the “only keep last true” mask
+    # Trick to find the last index in an array by using the max of a reversed array
     rev = mask[::-1]
     idx = jnp.argmax(rev)
     last_idx = mask.shape[0] - idx - 1
     last_only = jnp.zeros_like(mask).at[last_idx].set(True)
 
-    # replace Python‐if with a JAX conditional
+    # using jnp.where instead of if call to avoid JAX tracing issues
     mask = jnp.where((semi_conv < min_alpha) & jnp.any(mask),
                      last_only,
                      mask)
