@@ -6,7 +6,7 @@ from numba import njit
 from jaxgym.ray import Ray
 from jaxgym.run import solve_model
 from jaxgym.transfer import accumulate_transfer_matrices, transfer_rays
-from jaxgym import Coords_XY
+from jaxgym import Coords_XY, Scale_YX
 
 from . import components as comp
 from .model import Model
@@ -14,7 +14,6 @@ import warnings
 
 
 def find_input_slopes(
-    semi_conv: float,
     pos: Coords_XY,
     detector_coords: Coords_XY,
     transformation_matrix: np.ndarray,
@@ -61,16 +60,9 @@ def find_input_slopes(
         - B_yx * x_out
     ) / denom
 
-    # This selects pixels whose centre point lie within the beam cone,
-    # so if the cone is too narrow, it selects no pixels.
-    # FIXME: Should select pixels which are partially within the beam cone.
-    F = (theta_x_in**2 + theta_y_in**2) - semi_conv**2
-
-    mask = F <= 0
-
     input_slopes_xy = jnp.stack([theta_x_in, theta_y_in])
 
-    return input_slopes_xy, mask
+    return input_slopes_xy
 
 
 def ray_coords_at_plane(
@@ -79,7 +71,7 @@ def ray_coords_at_plane(
     detector_coords: Coords_XY,
     total_transfer_matrix: np.ndarray,
     det_transfer_matrix_to_specific_plane: np.ndarray,
-    xp: jnp.ndarray = jnp,
+    det_px_size: Scale_YX,
 ):
     """
     For all rays from a point source within a given semi-convergence angle, that hit the detector pixels,
@@ -101,21 +93,56 @@ def ray_coords_at_plane(
                                with the detector.
     """
 
-    input_slopes, mask = find_input_slopes(
-        semi_conv, pt_src, detector_coords, total_transfer_matrix
+    input_slopes = find_input_slopes(
+        pt_src, detector_coords, total_transfer_matrix
     )
 
     coords = transfer_rays(pt_src, input_slopes, total_transfer_matrix)
 
     xs, ys, dxs, dys = coords
 
-    detector_rays = xp.stack([xs, ys, dxs, dys, xp.ones_like(xs)])
-    specified_plane = xp.dot(det_transfer_matrix_to_specific_plane, detector_rays)
+    detector_rays = jnp.stack([xs, ys, dxs, dys, jnp.ones_like(xs)])
+    specified_plane = jnp.dot(det_transfer_matrix_to_specific_plane, detector_rays)
 
     specified_plane_x = specified_plane[0]
     specified_plane_y = specified_plane[1]
 
+    camera_length_and_defocus_distance = (total_transfer_matrix[0, 2] + total_transfer_matrix[1, 3]) / 2
+
+    mask = mask_rays(input_slopes, det_px_size, camera_length_and_defocus_distance, semi_conv)
+
     return specified_plane_x, specified_plane_y, mask
+
+
+def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
+
+    det_px_dy, det_px_dx = det_px_size
+
+    # Minimum radius of the beam between two detector pixels.
+    min_radius = jnp.sqrt((det_px_dx / 2) ** 2 + (det_px_dy / 2) ** 2) - 1e-12
+
+    min_alpha = min_radius / camera_length  # Calculate minimum angle of the beam at the detector plane.
+
+    theta_x_in, theta_y_in = input_slopes
+
+    # compute squared angles
+    r2 = theta_x_in**2 + theta_y_in**2
+
+    # include rays smaller than min_alpha as well as those up to semi_conv
+    mask = r2 <= jnp.maximum(semi_conv**2, min_alpha**2)
+
+    # build the “only keep last true” mask
+    rev = mask[::-1]
+    idx = jnp.argmax(rev)
+    last_idx = mask.shape[0] - idx - 1
+    last_only = jnp.zeros_like(mask).at[last_idx].set(True)
+
+    # replace Python‐if with a JAX conditional
+    mask = jnp.where((semi_conv < min_alpha) & jnp.any(mask),
+                     last_only,
+                     mask)
+
+    return mask
 
 
 def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
@@ -181,6 +208,7 @@ def project_coordinates_backward(
 ) -> np.ndarray:
     PointSource = model.source
     ScanGrid = model.scan_grid
+    Detector = model.detector
     semi_conv = PointSource.semi_conv
 
     # Return all the transfer matrices necessary for us to propagate rays through the system
@@ -191,7 +219,7 @@ def project_coordinates_backward(
 
     # Get ray coordinates at the scan from the det
     scan_rays_x, scan_rays_y, semi_conv_mask = ray_coords_at_plane(
-        semi_conv, scan_pos, det_coords, total_transfer_matrix, det_to_scan
+        semi_conv, scan_pos, det_coords, total_transfer_matrix, det_to_scan, Detector.det_pixel_size
     )
 
     # Convert the ray coordinates to pixel indices.

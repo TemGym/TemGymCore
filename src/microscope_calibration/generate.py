@@ -31,7 +31,7 @@ def project_frame_forward(
 
     # Get ray coordinates at the scan from the detector
     scan_rays_x, scan_rays_y, mask = ray_coords_at_plane(
-        semi_conv, scan_pos, det_coords, total_transfer_matrix, detector_to_scan
+        semi_conv, scan_pos, det_coords, total_transfer_matrix, detector_to_scan, Detector.det_pixel_size
     )
 
     mask = np.asarray(mask, dtype=bool)
