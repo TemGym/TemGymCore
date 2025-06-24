@@ -12,7 +12,7 @@ from .stemoverfocus import (
 from .components import ScanGrid
 from .model import ModelParameters, create_stem_model
 import jax.numpy as jnp
-import tqdm
+import tqdm.auto as tqdm
 import numba
 
 
@@ -90,15 +90,13 @@ def compute_fourdstem_dataset(
     scan_coords = ScanGrid.coords
     det_coords = Detector.coords
 
-    ny, nx = ScanGrid.scan_shape
-    for iy in tqdm.trange(ny, desc="Scan Y", leave=True):
-        for ix in tqdm.trange(nx, desc="Scan X", leave=False):
-            idx = iy * nx + ix
-            scan_pos = scan_coords[idx]
-            det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(
-                model, det_coords, sample_interpolant, scan_pos
-            )
-            fourdstem_array[iy, ix, det_pixels_y, det_pixels_x] = sample_vals
+    for idx in tqdm.trange(np.prod(ScanGrid.scan_shape).astype(int)):
+        iy, ix = np.unravel_index(idx, ScanGrid.scan_shape)
+        scan_pos = scan_coords[idx]
+        det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(
+            model, det_coords, sample_interpolant, scan_pos
+        )
+        fourdstem_array[iy, ix, det_pixels_y, det_pixels_x] = sample_vals
 
     return fourdstem_array
 
@@ -158,11 +156,12 @@ def generate_dataset_from_image(
     model = create_stem_model(params)
     scan_shape = model.scan_grid.shape
     scan_step = model.scan_grid.scan_step
+    grid_extent = tuple(s * scale for s, scale in zip(scan_shape, scan_step))
     image_shape = image.shape
     image_scale = tuple(
-        (ss / im) * scale
-        for im, ss, scale
-        in zip(scan_shape, scan_step, image_shape)
+        extent / size
+        for extent, size
+        in zip(grid_extent, image_shape)
     )
 
     interpolant_grid = ScanGrid(
