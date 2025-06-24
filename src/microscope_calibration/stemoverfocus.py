@@ -121,7 +121,8 @@ def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
     # Minimum radius of the beam between two detector pixels.
     min_radius = jnp.sqrt((det_px_dx / 2) ** 2 + (det_px_dy / 2) ** 2) - 1e-12
 
-    min_alpha = min_radius / camera_length  # Calculate minimum angle of the beam at the detector plane.
+    # Calculate minimum semi-angle seen by the point source between two pixels
+    min_alpha = min_radius / camera_length
 
     theta_x_in, theta_y_in = input_slopes
 
