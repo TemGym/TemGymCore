@@ -352,11 +352,11 @@ def test_project_frame_forward_and_backward_simple_sample(scan_rotation):
     sampled_test_interpolant = test_interpolant((y, x))
     sampled_test_interpolant = sampled_test_interpolant.reshape(ScanGrid.scan_shape)
 
-    import matplotlib.pyplot as plt
-    plt.figure()
-    plt.imshow(sampled_test_interpolant, cmap='gray')
-    plt.title("Sampled Test Interpolant")
-    plt.savefig("sampled_test_interpolant.png")
+    # import matplotlib.pyplot as plt
+    # plt.figure()
+    # plt.imshow(sampled_test_interpolant, cmap='gray')
+    # plt.title("Sampled Test Interpolant")
+    # plt.savefig("sampled_test_interpolant.png")
 
     fourdstem_array = np.zeros((ScanGrid.scan_shape[0],
                                 ScanGrid.scan_shape[1], *Detector.det_shape), dtype=jnp.float32)
@@ -365,10 +365,10 @@ def test_project_frame_forward_and_backward_simple_sample(scan_rotation):
 
     sum_fourdstem_array = np.sum(fourdstem_array, axis=(-2, -1))
 
-    plt.figure()
-    plt.imshow(sum_fourdstem_array, cmap='gray')
-    plt.title("Sum of FourDSTEM Array")
-    plt.savefig("sum_fourdstem_array.png")
+    # plt.figure()
+    # plt.imshow(sum_fourdstem_array, cmap='gray')
+    # plt.title("Sum of FourDSTEM Array")
+    # plt.savefig("sum_fourdstem_array.png")
 
     sample_px_ys, sample_px_xs, detector_intensities = compute_scan_grid_rays_and_intensities(
         stem_model, fourdstem_array
@@ -385,10 +385,10 @@ def test_project_frame_forward_and_backward_simple_sample(scan_rotation):
                                        sample_px_xs,
                                        detector_intensities)
 
-    plt.figure()
-    plt.imshow(shifted_sum_image, cmap='gray')
-    plt.title("Shifted Sum Image")
-    plt.colorbar()
-    plt.savefig("shifted_sum_image.png")
+    # plt.figure()
+    # plt.imshow(shifted_sum_image, cmap='gray')
+    # plt.title("Shifted Sum Image")
+    # plt.colorbar()
+    # plt.savefig("shifted_sum_image.png")
 
     np.testing.assert_allclose(shifted_sum_image, test_image, atol=1e-6)

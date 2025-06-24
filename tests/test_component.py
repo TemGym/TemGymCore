@@ -264,3 +264,30 @@ def test_descanner_jacobian_matrix():
         ]
     )
     np.testing.assert_allclose(J, T, atol=1e-6)
+
+
+def test_scan_grid_rotation_random():
+
+    step = (0.1, 0.1)
+    shape = (11, 11)
+    centre_pt = (0.0, 0.0)
+    centre_pix = (shape[0] // 2, shape[1] // 2)
+
+    # test several random rotations
+    for scan_rot in np.random.uniform(-180.0, 180.0, size=5):
+        scan_grid = ScanGrid(
+            z=0.0,
+            scan_rotation=scan_rot,
+            scan_step=step,
+            scan_shape=shape,
+            scan_centre=centre_pt,
+        )
+        # world‐space vector for one pixel step in scan‐grid x
+        mx0, my0 = scan_grid.pixels_to_metres(centre_pix)
+        mx1, my1 = scan_grid.pixels_to_metres((centre_pix[0], centre_pix[1] + 1))
+        vec_scan = np.array([mx1 - mx0, my1 - my0])
+
+        # expected rotated step vector = R(scan_rot) @ [step_x, 0]
+        theta = np.deg2rad(scan_rot)
+        exp_scan = np.array([np.cos(theta) * step[0], -np.sin(theta) * step[0]])
+        np.testing.assert_allclose(vec_scan, exp_scan, atol=1e-6)
