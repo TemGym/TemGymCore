@@ -16,6 +16,7 @@ from microscope_calibration.generate import (
     compute_scan_grid_rays_and_intensities,
     do_shifted_sum,
     compute_fourdstem_dataset,
+    generate_dataset_from_image,
 )
 from microscope_calibration.model import (
     ModelParameters,
@@ -350,8 +351,7 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
         descan_error=jnp.zeros(12),
     )
 
-    stem_model = model = create_stem_model(params_dict)
-    PointSource, ScanGrid, Descanner, Detector = model
+    fourdstem_array = generate_dataset_from_image(params_dict, test_image)
 
     x, y = ScanGrid.get_coords().T
 

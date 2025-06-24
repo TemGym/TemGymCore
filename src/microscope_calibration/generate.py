@@ -1,13 +1,16 @@
+from typing_extensions import Literal
 import numpy as np
 import jax
 from jaxgym import Coords_XY
+from scipy.interpolate import NearestNDInterpolator, LinearNDInterpolator
 from .model import Model
 from .stemoverfocus import (
     ray_coords_at_plane,
     solve_model_fourdstem_wrapper,
     project_coordinates_backward,
-    inplace_sum,
 )
+from .components import ScanGrid
+from .model import ModelParameters, create_stem_model
 import jax.numpy as jnp
 import tqdm
 import numba
@@ -144,3 +147,48 @@ def compute_scan_grid_rays_and_intensities(
             detector_intensities.append(fourdstem_array[iy, ix].ravel() * mask)
 
     return sample_px_ys, sample_px_xs, detector_intensities
+
+
+def generate_dataset_from_image(
+    params: ModelParameters,
+    image: np.ndarray,
+    method: Literal["nearest", "linear"] = "nearest",
+):
+    assert method in ("nearest", "linear")
+    model = create_stem_model(params)
+    scan_shape = model.scan_grid.shape
+    scan_step = model.scan_grid.scan_step
+    image_shape = image.shape
+    image_scale = tuple(
+        (ss / im) * scale
+        for im, ss, scale
+        in zip(scan_shape, scan_step, image_shape)
+    )
+
+    interpolant_grid = ScanGrid(
+        z=model.scan_grid.z,
+        scan_shape=image_shape,
+        scan_step=image_scale,
+        scan_rotation=model.scan_grid.scan_rotation,
+    )
+    x, y = interpolant_grid.get_coords().T
+    interp_t = (
+        NearestNDInterpolator
+        if method == "nearest"
+        else LinearNDInterpolator
+    )
+    interpolant = interp_t(
+        (y, x), image.flatten(),
+    )
+
+    fourdstem_array = np.zeros(
+        (*model.scan_grid.scan_shape, *model.detector.det_shape),
+        dtype=jnp.float32,
+    )
+
+    fourdstem_array = compute_fourdstem_dataset(
+        model,
+        fourdstem_array,
+        interpolant,
+    )
+    return fourdstem_array
