@@ -10,6 +10,7 @@ from microscope_calibration.stemoverfocus import (
     solve_model_fourdstem_wrapper,
     find_input_slopes,
     ray_coords_at_plane,
+    mask_rays,
 )
 from microscope_calibration import components as comp
 from microscope_calibration.generate import (
@@ -22,25 +23,8 @@ import random
 import pytest
 
 
-@pytest.fixture
-def test_params_basic_dict():
-    return ModelParameters(
-        semi_conv=0.001,
-        defocus=0.001,
-        camera_length=0.5,
-        scan_shape=(11, 11),
-        det_shape=(11, 11),
-        scan_step=(0.001, 0.001),
-        det_px_size=(0.01, 0.01),
-        scan_rotation=0.0,
-        descan_error=jnp.array(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        ),
-    )
 
-
-@pytest.fixture
-def test_params_same_det_and_scan_grid():
+def base_model():
     return ModelParameters(
         semi_conv=1e-12,
         defocus=0.001,
@@ -54,15 +38,6 @@ def test_params_same_det_and_scan_grid():
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         ),
     )
-
-
-# Fixture that creates a STEM model with [PointSource, ScanGrid, Descanner, Detector]
-@pytest.fixture
-def stem_model_basic(test_params_basic_dict):
-    params_dict = test_params_basic_dict
-    model = create_stem_model(params_dict)
-
-    return model
 
 
 def test_find_input_slopes_single_on_axis_pixel():
@@ -219,11 +194,12 @@ def test_ray_coords_at_plane_many_coords_at_source():
     np.testing.assert_allclose(y_plane, expected_y, atol=1e-6)
 
 
-def test_solve_model_fourdstem_wrapper(stem_model_basic, test_params_basic_dict):
+def test_solve_model_fourdstem_wrapper():
     # Test that the transfer matrices returned by the
     # fourdstem wrapper match the manually constructed ones
-    stem_model = stem_model_basic
-    test_params = test_params_basic_dict
+    model_params = base_model()
+    stem_model = create_stem_model(model_params)
+
 
     scan_pos = [-0.1, -0.1]
 
@@ -233,20 +209,20 @@ def test_solve_model_fourdstem_wrapper(stem_model_basic, test_params_basic_dict)
 
     point_source_tm = np.eye(5)
     prop_to_scan_tm = np.eye(5)
-    prop_to_scan_tm[0, 2] = test_params["defocus"]
-    prop_to_scan_tm[1, 3] = test_params["defocus"]
+    prop_to_scan_tm[0, 2] = model_params["defocus"]
+    prop_to_scan_tm[1, 3] = model_params["defocus"]
     scan_tm = np.eye(5)
     prop_scan_to_descanner_tm = np.eye(5)
     descan_tm = np.eye(5)
     descan_tm[0, -1] = -scan_pos[0]
     descan_tm[1, -1] = -scan_pos[1]
     prop_descan_to_det_tm = np.eye(5)
-    prop_descan_to_det_tm[0, 2] = test_params[
+    prop_descan_to_det_tm[0, 2] = model_params[
         "camera_length"
-    ]  # - test_params['defocus']
-    prop_descan_to_det_tm[1, 3] = test_params[
+    ]
+    prop_descan_to_det_tm[1, 3] = model_params[
         "camera_length"
-    ]  # - test_params['defocus']
+    ]
     detector_tm = np.eye(5)
 
     manual_transfer_matrices = [
@@ -266,7 +242,7 @@ def test_solve_model_fourdstem_wrapper(stem_model_basic, test_params_basic_dict)
 
 
 def test_same_z_components():
-    # Test that if one places components at the same z position, and try to run a ray through it,
+    # Test that if one places components at the same z position (zero defocus, zero camera length), and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
     model_params = ModelParameters(
         semi_conv=0.001,
@@ -303,8 +279,6 @@ def test_out_of_order_z():
         descan_error=jnp.zeros(12),
     )
     model = create_stem_model(model_params)
-    tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
-
     tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
 
     assert len(tmats) == 7
@@ -389,3 +363,36 @@ def test_project_frame_forward_and_backward_simple_sample():
     # plt.savefig("shifted_sum_image.png")
 
     np.testing.assert_allclose(shifted_sum_image, test_image, atol=1e-6)
+
+
+def test_mask_rays_all_valid_for_large_semi_conv():
+
+    slopes_x = jnp.array([0.0, 1.0, 2.0])
+    slopes_y = jnp.array([0.0, 0.0, 0.0])
+    input_slopes = (slopes_x, slopes_y)
+    # semi_conv large: all rays valid
+    mask = mask_rays(
+        input_slopes,
+        det_px_size=(1.0, 1.0),
+        camera_length=1.0,
+        semi_conv=10.0,
+    )
+    assert mask.tolist() == [True, True, True]
+
+
+def test_mask_rays_selects_only_last_true_when_semi_conv_small():
+
+    slopes_x = jnp.array([0.0, 1.0, 2.0])
+    slopes_y = jnp.array([0.0, 0.0, 0.0])
+    input_slopes = (slopes_x, slopes_y)
+    det_px_size = (2.0, 2.0)
+    camera_length = 1.0
+    semi_conv = 0.1
+    mask = mask_rays(
+        input_slopes,
+        det_px_size=det_px_size,
+        camera_length=camera_length,
+        semi_conv=semi_conv,
+    )
+    # only the last valid slope remains
+    assert mask.tolist() == [False, True, False]

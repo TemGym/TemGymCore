@@ -11,6 +11,7 @@ from jaxgym import Coords_XY, Scale_YX
 from . import components as comp
 from .model import Model
 import warnings
+from jax import lax
 
 
 def find_input_slopes(
@@ -114,39 +115,42 @@ def ray_coords_at_plane(
     return specified_plane_x, specified_plane_y, mask
 
 
-def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
-
-    det_px_dy, det_px_dx = det_px_size
-
-    # Minimum radius of the beam between two detector pixels.
-    min_radius = jnp.sqrt((det_px_dx / 2) ** 2 + (det_px_dy / 2) ** 2) - 1e-12
-
-    # Calculate minimum semi-angle seen by the point source between two pixels
-    min_alpha = min_radius / camera_length
-
-    theta_x_in, theta_y_in = input_slopes
-
-    # compute squared angles
-    r2 = theta_x_in**2 + theta_y_in**2
-
-    # include rays smaller than min_alpha as well as those up to semi_conv
-    mask = r2 <= jnp.maximum(semi_conv**2, min_alpha**2)
-
-    # Choose the last value in the mask if the semi-convergence angle is smaller than the minimum alpha,
-    # rather than choosing four pixels on the detector.
-    # We are using a little trick to find the last index in an array by using the max of a reversed array
-    # By choosing the last index, we are going with the choice of rounding up to 
-    # the coordinates after the last ray, to choose one pixel out of at most four on the detector. 
+def _select_last_ray(mask):
     rev = mask[::-1]
     idx = jnp.argmax(rev)
     last_idx = mask.shape[0] - idx - 1
-    last_only = jnp.zeros_like(mask).at[last_idx].set(True)
+    return jnp.zeros_like(mask).at[last_idx].set(True)
 
-    # using jnp.where instead of if call to avoid JAX tracing issues
-    mask = jnp.where((semi_conv < min_alpha) & jnp.any(mask),
-                     last_only,
-                     mask)
 
+def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
+    ''' Mask rays that have a slope which means they won't hit the detector pixels.
+    Except for the case where the semi-convergence is smaller than a so-called minimum alpha, which is the angle
+    between the radial distance between two detector pixels and the distance from the point source. If the semi-convergence
+    is smaller than this minimum alpha, in theory no rays would hit the detector unless the central pixel is under the beam, which
+    happens when there is an odd amount of detector pixels. In the even case, the beam is going inbetween pixels. This case is realised
+    when the semi-convergence angle is smaller than min-alpha, and thus 4 pixels could be selected. If four pixels are selected, 
+    we then select only the last one in the array'''
+
+    det_px_dy, det_px_dx = det_px_size
+
+    # minimum beam radius between two pixels
+    min_radius = jnp.hypot(det_px_dx/2, det_px_dy/2) - 1e-12
+
+    # Minimum alpha is the angle between the radial distance between
+    # two detector pixels and the distance from detector to the point source.
+    min_alpha = min_radius / camera_length
+    
+    theta_x, theta_y = input_slopes
+    r2 = theta_x**2 + theta_y**2
+    # include rays up to the larger of semi_conv or min_alpha
+    mask = r2 <= jnp.maximum(semi_conv**2, min_alpha**2)
+
+    # if semi_conv < min_alpha and any ray is valid, pick only the last one
+    cond = (semi_conv < min_alpha) & jnp.any(mask)
+    mask = lax.cond(cond,
+                    _select_last_ray,   # true branch
+                    lambda m: m,        # false branch
+                    mask)
     return mask
 
 
