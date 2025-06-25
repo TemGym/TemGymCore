@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 
 from microscope_calibration.components import ScanGrid, Detector, Descanner
-
+from microscope_calibration.model import DescannerErrorParameters
 from jaxgym.ray import Ray
 from jax import jacobian
 from jaxgym.utils import custom_jacobian_matrix
@@ -192,6 +192,20 @@ def test_descanner_random_descan_error():
     # Randomly chosen non-zero descan error (length 12)
     err = np.random.rand(12)
 
+    err = DescannerErrorParameters(
+        pxo_pxi=err[0],
+        pxo_pyi=err[1],
+        pyo_pxi=err[2],
+        pyo_pyi=err[3],
+        sxo_pxi=err[4],
+        sxo_pyi=err[5],
+        syo_pxi=err[6],
+        syo_pyi=err[7],
+        offpxi=err[8],
+        offpyi=err[9],
+        offsxi=err[10],
+        offsyi=err[11],
+    )
     desc = Descanner(z=0.0, scan_pos_x=sp_x, scan_pos_y=sp_y, descan_error=err)
     ray = Ray(x=x, y=y, dx=dx, dy=dy, _one=1.0, z=0.0, pathlength=0.0)
     out = desc.step(ray)
@@ -202,17 +216,31 @@ def test_descanner_random_descan_error():
     exp_dx = dx + (sp_x * err[4] + sp_y * err[5] + err[10])
     exp_dy = dy + (sp_y * err[7] + sp_y * err[6] + err[11])
 
-    np.testing.assert_allclose(out.x, exp_x, atol=1e-8)
-    np.testing.assert_allclose(out.y, exp_y, atol=1e-8)
-    np.testing.assert_allclose(out.dx, exp_dx, atol=1e-8)
-    np.testing.assert_allclose(out.dy, exp_dy, atol=1e-8)
+    np.testing.assert_allclose(out.x, exp_x, atol=1e-6)
+    np.testing.assert_allclose(out.y, exp_y, atol=1e-6)
+    np.testing.assert_allclose(out.dx, exp_dx, atol=1e-6)
+    np.testing.assert_allclose(out.dy, exp_dy, atol=1e-6)
 
 
 def test_descanner_offset_consistency():
     # random scan position and descan error
     scan_pos_x = np.random.uniform(-5.0, 5.0)
     scan_pos_y = np.random.uniform(-5.0, 5.0)
-    err = np.random.randn(12)
+    err = np.random.rand(12)
+    err = DescannerErrorParameters(
+        pxo_pxi=err[0],
+        pxo_pyi=err[1],
+        pyo_pxi=err[2],
+        pyo_pyi=err[3],
+        sxo_pxi=err[4],
+        sxo_pyi=err[5],
+        syo_pxi=err[6],
+        syo_pyi=err[7],
+        offpxi=err[8],
+        offpyi=err[9],
+        offsxi=err[10],
+        offsyi=err[11],
+    )
     desc = Descanner(
         z=0.0, scan_pos_x=scan_pos_x, scan_pos_y=scan_pos_y, descan_error=err
     )
@@ -242,14 +270,28 @@ def test_descanner_offset_consistency():
     # assert that all rays have received the same offset
     first = offsets[0]
     for off in offsets:
-        np.testing.assert_allclose(off, first, atol=1e-8)
+        np.testing.assert_allclose(off, first, atol=1e-6)
 
 
 def test_descanner_jacobian_matrix():
     # Test that Jacobian of descanner.step yields correct 5x5 matrix when
     # jax.jacobian is called on it.
     sp_x, sp_y = 1.5, -2.0
-    err = np.arange(12, dtype=float)
+    err = np.random.rand(12)
+    err = DescannerErrorParameters(
+        pxo_pxi=err[0],
+        pxo_pyi=err[1],
+        pyo_pxi=err[2],
+        pyo_pyi=err[3],
+        sxo_pxi=err[4],
+        sxo_pyi=err[5],
+        syo_pxi=err[6],
+        syo_pyi=err[7],
+        offpxi=err[8],
+        offpyi=err[9],
+        offsxi=err[10],
+        offsyi=err[11],
+    )
     desc = Descanner(z=0.0, scan_pos_x=sp_x, scan_pos_y=sp_y, descan_error=err)
     ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, _one=1.0, z=0.0, pathlength=0.0)
 

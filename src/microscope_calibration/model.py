@@ -37,7 +37,7 @@ class DescannerErrorParameters(NamedTuple):
 
     def as_matrix(self) -> NDArray:
         return jnp.array(
-            [   
+            [
                 [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],
                 [self.pyo_pxi, self.pyo_pyi, 0.0, 0.0, self.offpyi],
                 [self.sxo_pxi, self.sxo_pyi, 0.0, 0.0, self.offsyi],

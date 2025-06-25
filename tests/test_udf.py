@@ -1,7 +1,7 @@
 import numpy as np
 import libertem.api as lt
-
-from microscope_calibration.model import ModelParameters
+import jax.numpy as jnp
+from microscope_calibration.model import ModelParameters, DescannerErrorParameters
 from microscope_calibration.udf import ShiftedSumUDF
 
 
@@ -16,6 +16,8 @@ def test_functional():
     ctx = lt.Context.make_with("inline")
     ds = ctx.load("memory", data=data, num_partitions=1)
 
+    descanner_error = jnp.zeros((12,), dtype=jnp.float32)
+    descanner_error_params = DescannerErrorParameters(*descanner_error)
     parameters = ModelParameters(
         semi_conv=1,
         defocus=0.0,
@@ -25,9 +27,7 @@ def test_functional():
         scan_step=(0.01, 0.01),
         det_px_size=(0.01, 0.01),
         scan_rotation=0.0,
-        descan_error=np.array(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        ),
+        descan_error=descanner_error_params,
     )
 
     udf = ShiftedSumUDF(parameters)

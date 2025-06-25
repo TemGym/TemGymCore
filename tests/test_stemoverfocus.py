@@ -37,10 +37,8 @@ def base_model():
         scan_step=(0.001, 0.001),
         det_px_size=(0.001, 0.001),
         scan_rotation=0.0,
-        descan_error=jnp.array(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        ),
-    )
+        descan_error=DescannerErrorParameters(),
+        )
 
 
 def test_find_input_slopes_single_on_axis_pixel():
@@ -283,6 +281,9 @@ def test_solve_model_fourdstem_wrapper():
 def test_same_z_components():
     # Test that if one places components at the same z position (zero defocus, zero camera length), and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
+    err = jnp.zeros(12)
+    descan_error = DescannerErrorParameters(*err)
+
     model_params = ModelParameters(
         semi_conv=0.001,
         defocus=0.0,
@@ -292,7 +293,7 @@ def test_same_z_components():
         scan_step=(0.1, 0.1),
         det_px_size=(0.1, 0.1),
         scan_rotation=0.0,
-        descan_error=jnp.zeros(12),
+        descan_error=descan_error,
     )
     model = create_stem_model(model_params)
     tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
@@ -306,6 +307,7 @@ def test_out_of_order_z():
     # Test that if one places components at out of order z positions,
     # and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
+    descan_error_params = DescannerErrorParameters(*jnp.zeros(12))
     model_params = ModelParameters(
         semi_conv=0.001,
         defocus=0.1,
@@ -315,7 +317,7 @@ def test_out_of_order_z():
         scan_step=(0.1, 0.1),
         det_px_size=(0.1, 0.1),
         scan_rotation=0.0,
-        descan_error=jnp.zeros(12),
+        descan_error=descan_error_params,
     )
     model = create_stem_model(model_params)
     tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
@@ -331,6 +333,7 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
     scan_rotation = np.random.uniform(-180, 180)
     grid_shape = np.random.randint(8, 20, size=2)
 
+    descan_error_params = DescannerErrorParameters(*jnp.zeros(12))
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1.0
     test_image[4, 4] = 1.0
@@ -348,9 +351,10 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
         scan_step=(0.01, 0.01),
         det_px_size=(0.01, 0.01),
         scan_rotation=scan_rotation,
-        descan_error=jnp.zeros(12),
+        descan_error=descan_error_params,
     )
-
+    model = create_stem_model(params_dict)
+    PointSource, ScanGrid, Descanner, Detector = model
     fourdstem_array = generate_dataset_from_image(params_dict, test_image)
 
     x, y = ScanGrid.get_coords().T
@@ -367,7 +371,7 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
     )
 
     sample_px_ys, sample_px_xs, detector_intensities = (
-        compute_scan_grid_rays_and_intensities(stem_model, fourdstem_array)
+        compute_scan_grid_rays_and_intensities(model, fourdstem_array)
     )
 
     sample_px_ys = np.array(sample_px_ys, dtype=np.int32).flatten()
@@ -389,6 +393,8 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
     scan_rotation = np.random.uniform(-180, 180)
     grid_shape = np.random.randint(8, 20, size=2)
 
+    descan_error = DescannerErrorParameters(*np.random.uniform(-0.01, 0.01, size=12))
+
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1.0
     test_image[4, 4] = 1.0
@@ -406,8 +412,7 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
         scan_step=(0.01, 0.01),
         det_px_size=(0.01, 0.01),
         scan_rotation=scan_rotation,
-        descan_error=np.random.uniform(
-            -0.01, 0.01, size=12)
+        descan_error=descan_error
     )
 
     stem_model = model = create_stem_model(params_dict)
@@ -490,8 +495,8 @@ def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(pxo_p
 
 @pytest.mark.parametrize(
     "sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output", [(0.0, 0.0, 0.0, 0.0, (6, 6)),
-                                                               (0.05, 0.0, 0.0, 0.05, (4, 4)),
-                                                               (0.05, 0.0, 0.0, 0.05, (3, 3))],
+                                                               (0.2, 0.0, 0.0, 0.2, (5, 5)),
+                                                               (0.0, 0.2, 0.2, 0.0, (5, 6))],
 )
 def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output):
     # Test that we can predict where a single pixel will end up after the descanner with scale error
