@@ -22,6 +22,8 @@ from microscope_calibration.model import (
     DescannerErrorParameters,
     create_stem_model
 )
+from microscope_calibration.components import Descanner
+from jaxgym.ray import Ray
 
 
 def base_model():
@@ -442,10 +444,12 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
 
 
 @pytest.mark.parametrize(
-    "offpxi, offpyi, expected_px_output", [(0.0, 0.0, (6, 6)), (0.05, 0.01, (5, 11))],
+    "pxo_pxi, pxo_pyi, pyo_pxi, pyo_pyi, expected_px_output", [(1.0, 0.0, 0.0, 1.0, (0, 0)),
+                                                               (0.0, 1.0, 1.0, 0.0, (0, -1)),
+                                                               (0.5, 0.0, 0.0, 0.5, (3, 3))],
 )
-def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offpxi, offpyi, expected_px_output):
-    # Test that we can predict where a single pixel will end up after the descanner
+def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(pxo_pxi, pxo_pyi, pyo_pxi, pyo_pyi, expected_px_output):
+    # Test that we can predict where a single pixel will end up after the descanner with scale error
     grid_shape = (12, 12)
     scan_step = (0.01, 0.01)
     det_px_size = (0.01, 0.01)
@@ -453,7 +457,7 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1
 
-    descan_error = DescannerErrorParameters(offpxi=offpxi, offpyi=offpyi)
+    descan_error = DescannerErrorParameters(pxo_pxi=pxo_pxi, pxo_pyi=pxo_pyi, pyo_pxi=pyo_pxi, pyo_pyi=pyo_pyi)
 
     params = ModelParameters(
         semi_conv=1e-4,
@@ -482,3 +486,96 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
     result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
 
     np.testing.assert_array_equal(result, 1.0)
+
+
+@pytest.mark.parametrize(
+    "sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output", [(0.0, 0.0, 0.0, 0.0, (6, 6)),
+                                                               (0.05, 0.0, 0.0, 0.05, (4, 4)),
+                                                               (0.05, 0.0, 0.0, 0.05, (3, 3))],
+)
+def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output):
+    # Test that we can predict where a single pixel will end up after the descanner with scale error
+    grid_shape = (12, 12)
+    scan_step = (0.01, 0.01)
+    det_px_size = (0.01, 0.01)
+
+    test_image = np.zeros(grid_shape, dtype=np.uint8)
+    test_image[0, 0] = 1
+
+    descan_error = DescannerErrorParameters(sxo_pxi=sxo_pxi, sxo_pyi=sxo_pyi, syo_pxi=syo_pxi, syo_pyi=syo_pyi)
+
+    params = ModelParameters(
+        semi_conv=1e-4,
+        defocus=0.0,
+        camera_length=0.5,
+        scan_shape=grid_shape,
+        det_shape=grid_shape,
+        scan_step=scan_step,
+        det_px_size=det_px_size,
+        scan_rotation=0.0,
+        descan_error=descan_error,
+    )
+
+    model = create_stem_model(params)
+    PointSource, ScanGrid, Descanner, Detector = model
+    xs, ys = ScanGrid.get_coords()[:, 0], ScanGrid.get_coords()[:, 1]
+    interp = NearestNDInterpolator((ys, xs), test_image.flatten())
+
+    fourdstem_array = np.zeros(
+        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
+        dtype=jnp.float32,
+    )
+    fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, interp)
+
+    expected_px_output = np.array(expected_px_output, dtype=np.int32)
+    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
+
+    np.testing.assert_array_equal(result, 1.0)
+
+
+@pytest.mark.parametrize(
+    "offpxi, offpyi, offsxi, offsyi, expected_px_output", [(0.0, 0.0, 0.0, 0.0, (6, 6)),
+                                                           (0.05, 0.01, 0.0, 0.0, (5, 11)),
+                                                           (0.01, 0.05, 0.0, 0.0, (1, 6)),
+                                                           (0.0, 0.0, 0.1, 0.1, (1, 11))],
+)
+def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offpxi, offpyi, offsxi, offsyi, expected_px_output):
+    # Test that we can predict where a single pixel will end up after the descanner
+    grid_shape = (12, 12)
+    scan_step = (0.01, 0.01)
+    det_px_size = (0.01, 0.01)
+
+    test_image = np.zeros(grid_shape, dtype=np.uint8)
+    test_image[0, 0] = 1
+
+    descan_error = DescannerErrorParameters(offpxi=offpxi, offpyi=offpyi, offsxi=offsxi, offsyi=offsyi)
+
+    params = ModelParameters(
+        semi_conv=1e-4,
+        defocus=0.0,
+        camera_length=0.5,
+        scan_shape=grid_shape,
+        det_shape=grid_shape,
+        scan_step=scan_step,
+        det_px_size=det_px_size,
+        scan_rotation=0.0,
+        descan_error=descan_error,
+    )
+
+    model = create_stem_model(params)
+    PointSource, ScanGrid, Descanner, Detector = model
+    xs, ys = ScanGrid.get_coords()[:, 0], ScanGrid.get_coords()[:, 1]
+    interp = NearestNDInterpolator((ys, xs), test_image.flatten())
+
+    fourdstem_array = np.zeros(
+        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
+        dtype=jnp.float32,
+    )
+    fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, interp)
+
+    expected_px_output = np.array(expected_px_output, dtype=np.int32)
+    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
+
+    np.testing.assert_array_equal(result, 1.0)
+
+

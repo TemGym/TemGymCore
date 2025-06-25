@@ -35,6 +35,17 @@ class DescannerErrorParameters(NamedTuple):
     def as_array(self) -> NDArray:
         return jnp.array(self)
 
+    def as_matrix(self) -> NDArray:
+        return jnp.array(
+            [   
+                [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],
+                [self.pyo_pxi, self.pyo_pyi, 0.0, 0.0, self.offpyi],
+                [self.sxo_pxi, self.sxo_pyi, 0.0, 0.0, self.offsyi],
+                [self.syo_pxi, self.syo_pyi, 0.0, 0.0, self.offsyi],
+                [0.0,          0.0,          0.0, 0.0, 1.0],
+            ]
+        )
+
 
 class Model(NamedTuple):
     source: comp.PointSource
