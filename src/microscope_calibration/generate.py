@@ -1,6 +1,7 @@
 from typing_extensions import Literal
 import numpy as np
 import jax
+from functools import partial
 from jaxgym import Coords_XY
 from scipy.interpolate import NearestNDInterpolator, LinearNDInterpolator
 from .model import Model
@@ -83,14 +84,18 @@ def compute_fourdstem_dataset_vmap(
 
 
 def compute_fourdstem_dataset(
-    model: Model, fourdstem_array: np.ndarray, sample_interpolant: callable
+    model: Model, fourdstem_array: np.ndarray,
+    sample_interpolant: callable, progress: bool = False,
 ) -> np.ndarray:
     Detector = model.detector
     ScanGrid = model.scan_grid
     scan_coords = ScanGrid.coords
     det_coords = Detector.coords
 
-    for idx in tqdm.trange(np.prod(ScanGrid.scan_shape).astype(int)):
+    idxs = range(np.prod(ScanGrid.scan_shape).astype(int))
+    pbar = tqdm.tqdm if progress else lambda it, **kw: it
+
+    for idx in pbar(idxs):
         iy, ix = np.unravel_index(idx, ScanGrid.scan_shape)
         scan_pos = scan_coords[idx]
         det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(
@@ -151,6 +156,7 @@ def generate_dataset_from_image(
     params: ModelParameters,
     image: np.ndarray,
     method: Literal["nearest", "linear"] = "nearest",
+    progress: bool = False,
 ):
     assert method in ("nearest", "linear")
     model = create_stem_model(params)
@@ -174,7 +180,7 @@ def generate_dataset_from_image(
     interp_t = (
         NearestNDInterpolator
         if method == "nearest"
-        else LinearNDInterpolator
+        else partial(LinearNDInterpolator, fill_value=0.)
     )
     interpolant = interp_t(
         (y, x), image.flatten(),
@@ -185,9 +191,9 @@ def generate_dataset_from_image(
         dtype=jnp.float32,
     )
 
-    fourdstem_array = compute_fourdstem_dataset(
+    return compute_fourdstem_dataset(
         model,
         fourdstem_array,
         interpolant,
+        progress=progress,
     )
-    return fourdstem_array
