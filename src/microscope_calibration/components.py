@@ -69,7 +69,7 @@ class Descanner:
             descan_error_offset_y,
             descan_error_offset_dx,
             descan_error_offset_dy,
-        ) = self.descan_error.as_array()
+        ) = self.descan_error
 
         x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
 

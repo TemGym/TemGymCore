@@ -117,11 +117,30 @@ def ray_coords_at_plane(
     return specified_plane_x, specified_plane_y, mask
 
 
+def _no_op_arg(mask, idx):
+    return mask
+
+
+def _fill_value(mask, idx):
+    return mask.at[idx].set(True)
+
+
 def _select_last_ray(mask):
     rev = mask[::-1]
     idx = jnp.argmax(rev)
-    last_idx = mask.shape[0] - idx - 1
-    return jnp.zeros_like(mask).at[last_idx].set(True)
+    last_idx = (mask.size - idx) - 1
+    new_mask = jnp.zeros_like(mask)
+    return lax.cond(
+        mask[last_idx],
+        _fill_value,
+        _no_op_arg,
+        new_mask,
+        last_idx,
+    )
+
+
+def _no_op(mask):
+    return mask
 
 
 def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
@@ -146,16 +165,12 @@ def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
     r2 = theta_x**2 + theta_y**2
     # include rays up to the larger of semi_conv or min_alpha
     mask = r2 <= jnp.maximum(semi_conv**2, min_alpha**2)
-
-    # if semi_conv < min_alpha and any ray is valid, pick only the last one
-    cond = (semi_conv < min_alpha) & jnp.any(mask)
-    mask = lax.cond(
-        cond,
-        _select_last_ray,  # true branch
-        lambda m: m,  # false branch
+    return lax.cond(
+        semi_conv > min_alpha,
+        _no_op,  # true branch
+        _select_last_ray,  # false branch
         mask,
     )
-    return mask
 
 
 def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
