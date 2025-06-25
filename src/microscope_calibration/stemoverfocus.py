@@ -263,9 +263,10 @@ def project_coordinates_backward(
 
 @njit
 def inplace_sum(px_y, px_x, mask, frame, buffer):
-    n = px_y.shape[0]
+    h, w = buffer.shape
+    n = px_y.size
     for i in range(n):
         py = px_y[i]
         px = px_x[i]
-        if mask[i]:
+        if mask[i] and (0 <= px_y[i] < h) and (0 <= px_x[i] < w):
             buffer[py, px] += frame[i]

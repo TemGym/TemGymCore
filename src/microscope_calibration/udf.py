@@ -1,4 +1,3 @@
-from numba import njit
 import numpy as np
 from libertem.udf import UDF
 
@@ -43,7 +42,11 @@ class ShiftedSumUDF(UDF):
         det_coords = self.task_data.detector_coords
         scan_pos = self.task_data.scan_coords[scan_pos_flat]
         model = self.task_data.model
-        px_y, px_x, mask = project_coordinates_backward(model, det_coords, scan_pos)
+        px_y, px_x, mask = project_coordinates_backward(
+            model,
+            det_coords,
+            scan_pos,
+        )
         inplace_sum(
             np.array(px_y),
             np.array(px_x),
