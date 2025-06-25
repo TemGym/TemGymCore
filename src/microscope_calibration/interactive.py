@@ -67,18 +67,16 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
 
     def get_model_parameters():
         return ModelParameters(
-            **{
-                "semi_conv": semi_conv_slider.value / 1000,
-                "defocus": defocus_slider.value,  # Distance from the crossover to the sample
-                "camera_length": camera_length_slider.value,  # distance from crossover to the detector
-                "scan_step": (scan_step_input.value / 1000,) * 2,  # YX!
-                "det_px_size": (det_px_size_input.value / 1000,) * 2,  # YX!
-                "scan_rotation": scan_rotation_slider.value,
-                "descan_error": descan_error,
-                "flip_y": flip_y_bool.value,
-                "scan_shape": ds.shape.nav,
-                "det_shape": ds.shape.sig,
-            }
+            semi_conv=float(semi_conv_slider.value) / 1000,
+            defocus=float(defocus_slider.value),
+            camera_length=float(camera_length_slider.value),
+            scan_step=(float(scan_step_input.value) / 1000,) * 2,
+            det_px_size=(float(det_px_size_input.value) / 1000,) * 2,
+            scan_rotation=float(scan_rotation_slider.value),
+            descan_error=descan_error,
+            flip_y=bool(flip_y_bool.value),
+            scan_shape=tuple(ds.shape.nav),
+            det_shape=tuple(ds.shape.sig),
         )
 
     def run_analysis(*e):
