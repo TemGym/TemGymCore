@@ -9,7 +9,7 @@ from jaxgym.utils import custom_jacobian_matrix
 
 
 def test_scan_grid_zero_in_metres_coords_for_odd_length():
-    # For an odd number of pixels (scan_shape=(5,5) → 6 points each axis),
+    # For an odd number of pixels (scan_shape=(5,5),
     # the metres grid should include 0.0 exactly at the centre.
     scan_grid = ScanGrid(
         z=0.0,
@@ -25,13 +25,17 @@ def test_scan_grid_zero_in_metres_coords_for_odd_length():
             mx, my = scan_grid.pixels_to_metres((py, px))
             xs.append(mx)
             ys.append(my)
-    assert any(np.isclose(v, 0.0) for v in xs), "Expected 0.0 in X coordinates for odd grid length"
-    assert any(np.isclose(v, 0.0) for v in ys), "Expected 0.0 in Y coordinates for odd grid length"
+    assert any(np.isclose(v, 0.0) for v in xs), (
+        "Expected 0.0 in X coordinates for odd grid length"
+    )
+    assert any(np.isclose(v, 0.0) for v in ys), (
+        "Expected 0.0 in Y coordinates for odd grid length"
+    )
 
 
 def test_scan_grid_zero_not_in_metres_coords_for_even_length():
-    # For an even number of pixels (scan_shape=(4,4) → 5 points each axis),
-    # the metres grid should be centred around 0 but not include it exactly.
+    # For an even number of pixels (scan_shape=(4,4)),
+    # the metres grid should be centred around 0 but not include it exactly in the coordinates
     scan_grid = ScanGrid(
         z=0.0,
         scan_rotation=0.0,
@@ -46,8 +50,12 @@ def test_scan_grid_zero_not_in_metres_coords_for_even_length():
             mx, my = scan_grid.pixels_to_metres((py, px))
             xs.append(mx)
             ys.append(my)
-    assert not any(np.isclose(v, 0.0) for v in xs), "Did not expect 0.0 in X coordinates for even grid length"
-    assert not any(np.isclose(v, 0.0) for v in ys), "Did not expect 0.0 in Y coordinates for even grid length"
+    assert not any(np.isclose(v, 0.0) for v in xs), (
+        "Did not expect 0.0 in X coordinates for even grid length"
+    )
+    assert not any(np.isclose(v, 0.0) for v in ys), (
+        "Did not expect 0.0 in Y coordinates for even grid length"
+    )
 
 
 # Test cases for ScanGrid:
@@ -267,7 +275,6 @@ def test_descanner_jacobian_matrix():
 
 
 def test_scan_grid_rotation_random():
-
     step = (0.1, 0.1)
     shape = (11, 11)
     centre_pt = (0.0, 0.0)

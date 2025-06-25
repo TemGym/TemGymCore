@@ -1,12 +1,6 @@
-import jax
 import jax.numpy as jnp
 import numpy as np
-from microscope_calibration.components import ScanGrid, Detector, Descanner
-from jaxgym.ray import Ray
-from microscope_calibration.stemoverfocus import find_input_slopes
-from microscope_calibration.components import Detector
 from jaxgym.transfer import transfer_rays, accumulate_transfer_matrices
-import sympy as sp
 
 
 def test_transfer_free_space():
@@ -43,7 +37,7 @@ def test_transfer_free_space():
 
 def test_transfer_random_matrix():
     # Create a reproducible random 5x5 matrix with integer entries
-    rng = np.random.RandomState(2)
+    rng = np.random.RandomState(np.random.randint(0, 1000))
     T_vals = rng.randint(-5, 5, size=(5, 5))
     # Ensure homogeneous coordinate row
     T_vals[4, :] = [0, 0, 0, 0, 1]
@@ -97,7 +91,8 @@ def test_empty_input():
     assert coords.shape == (4, 0)
 
 
-# add more exotic transfer tests for different distances and zero as a parametrisation
+# add more exotic transfer tests for different distances
+# and zero as a parametrisation
 def test_negative_distance_transfer():
     x0, y0 = 1.0, 2.0
     dx0, dy0 = 0.1, -0.2
@@ -134,7 +129,8 @@ def test_accumulate_transfer_matrices():
     expected = C @ B @ A
     np.testing.assert_allclose(np.array(total), expected)
 
-    # Sub-range from index 1 to 2: only C (since i_start=2, i_end=4 → mats[2:5] == [C])
+    # Sub-range from index 1 to 2: only C
+    # (since i_start=2, i_end=4 → mats[2:5] == [C])
     sub = accumulate_transfer_matrices(mats, 1, 2)
     expected_sub = C
     np.testing.assert_allclose(np.array(sub), expected_sub)

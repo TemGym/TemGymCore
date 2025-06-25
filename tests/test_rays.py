@@ -7,18 +7,12 @@ from jaxgym.ray import Ray, propagate, propagate_dir_cosine
 from jaxgym.utils import custom_jacobian_matrix
 
 
-# Generate 5 random test cases: (x0, y0, dx0, dy0, z0, pl0, d)
-random_tests = [
-    (
-        *np.random.uniform(-10, 10, size=6),  # x0, y0, dx0, dy0, z0, pl0
-        np.random.uniform(0.0, 20.0),          # d
-    )
-    for _ in range(5)
-]
+@pytest.mark.parametrize("runs", range(5))
+def test_propagate_basic(runs):
+    random_camera_length = np.random.uniform(0.1, 10.0)
+    x0, y0, dx0, dy0, z0, pl0 = np.random.uniform(-10, 10, size=6)
+    d = random_camera_length
 
-
-@pytest.mark.parametrize("x0, y0, dx0, dy0, z0, pl0, d", random_tests)
-def test_propagate_basic(x0, y0, dx0, dy0, z0, pl0, d):
     ray = Ray(x=x0, y=y0, dx=dx0, dy=dy0, z=z0, pathlength=pl0)
     new = propagate(d, ray)
     np.testing.assert_allclose(new.x, x0 + dx0 * d, atol=1e-6)

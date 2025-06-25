@@ -2,7 +2,6 @@ import pytest
 import numpy as np
 import jax.numpy as jnp
 import sympy as sp
-from jax.scipy.interpolate import RegularGridInterpolator
 from scipy.interpolate import NearestNDInterpolator
 from jaxgym.transfer import accumulate_transfer_matrices
 
@@ -18,10 +17,11 @@ from microscope_calibration.generate import (
     do_shifted_sum,
     compute_fourdstem_dataset,
 )
-from microscope_calibration.model import ModelParameters, create_stem_model
-import random
-import pytest
-
+from microscope_calibration.model import (
+    ModelParameters,
+    DescannerErrorParameters,
+    create_stem_model
+)
 
 
 def base_model():
@@ -42,7 +42,7 @@ def base_model():
 
 def test_find_input_slopes_single_on_axis_pixel():
     # Test that for a single pixel on the optical axis
-    # and not descan error, the back calculted input slope
+    # and no descan error, the back calculted input slope
     # is zero
     pos = jnp.array([-0.0053, 0.00515])
     shift = -pos
@@ -194,12 +194,52 @@ def test_ray_coords_at_plane_many_coords_at_source():
     np.testing.assert_allclose(y_plane, expected_y, atol=1e-6)
 
 
+def test_mask_rays_all_valid_for_large_semi_conv():
+    # Test that for a large semi_conv, all rays are valid and could be back projected.
+    slopes_x = jnp.array([0.0, 1.0, 2.0])
+    slopes_y = jnp.array([0.0, 0.0, 0.0])
+    input_slopes = (slopes_x, slopes_y)
+    # semi_conv large: all rays valid
+    mask = mask_rays(
+        input_slopes,
+        det_px_size=(1.0, 1.0),
+        camera_length=1.0,
+        semi_conv=10.0,
+    )
+    assert mask.tolist() == [True, True, True]
+
+
+def test_mask_rays_selects_only_last_true_when_semi_conv_small():
+    # Test that for a small semi_conv, only the middle ray is valid.
+    # This is because
+    # with this very large pixel size,
+    # and a semi-convergence * camera length smaller than the pixel size,
+    # All the rays on the detector are inside the pixel size,
+    # except the last one. Thus the first two
+    # rays are valid, however we want our model to only choose
+    # the last valid ray so one detector pixel is lit
+    # up. This is a test for that behavior.
+    slopes_x = jnp.array([0.0, 1.0, 2.0])
+    slopes_y = jnp.array([0.0, 0.0, 0.0])
+    input_slopes = (slopes_x, slopes_y)
+    det_px_size = (2.0, 2.0)
+    camera_length = 1.0
+    semi_conv = 0.1
+    mask = mask_rays(
+        input_slopes,
+        det_px_size=det_px_size,
+        camera_length=camera_length,
+        semi_conv=semi_conv,
+    )
+    # only the last valid slope remains
+    assert mask.tolist() == [False, True, False]
+
+
 def test_solve_model_fourdstem_wrapper():
     # Test that the transfer matrices returned by the
     # fourdstem wrapper match the manually constructed ones
     model_params = base_model()
     stem_model = create_stem_model(model_params)
-
 
     scan_pos = [-0.1, -0.1]
 
@@ -217,12 +257,8 @@ def test_solve_model_fourdstem_wrapper():
     descan_tm[0, -1] = -scan_pos[0]
     descan_tm[1, -1] = -scan_pos[1]
     prop_descan_to_det_tm = np.eye(5)
-    prop_descan_to_det_tm[0, 2] = model_params[
-        "camera_length"
-    ]
-    prop_descan_to_det_tm[1, 3] = model_params[
-        "camera_length"
-    ]
+    prop_descan_to_det_tm[0, 2] = model_params["camera_length"]
+    prop_descan_to_det_tm[1, 3] = model_params["camera_length"]
     detector_tm = np.eye(5)
 
     manual_transfer_matrices = [
@@ -286,12 +322,13 @@ def test_out_of_order_z():
     assert inv_tm.shape == (5, 5)
 
 
-# @pytest.mark.parametrize(
-#     "scan_rotation",
-#     [random.uniform(-180, 180) for _ in range(3)]
-# )
-def test_project_frame_forward_and_backward_simple_sample():
-    test_image = np.zeros((10, 10), dtype=np.uint8)
+@pytest.mark.parametrize("runs", range(3))
+def test_project_frame_forward_and_backward_simple_sample(runs):
+    # Test that the forward and backward projection of a simple sample
+    scan_rotation = np.random.uniform(-180, 180)
+    grid_shape = np.random.randint(8, 20, size=2)
+
+    test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1.0
     test_image[4, 4] = 1.0
     test_image[3, 4] = 1.0
@@ -303,12 +340,12 @@ def test_project_frame_forward_and_backward_simple_sample():
         semi_conv=1e-4,
         defocus=0.0,
         camera_length=0.5,
-        scan_shape=(10, 10),
-        det_shape=(10, 10),
+        scan_shape=grid_shape,
+        det_shape=grid_shape,
         scan_step=(0.01, 0.01),
         det_px_size=(0.01, 0.01),
-        scan_rotation=0.,
-        descan_error=jnp.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+        scan_rotation=scan_rotation,
+        descan_error=jnp.zeros(12),
     )
 
     stem_model = model = create_stem_model(params_dict)
@@ -316,33 +353,19 @@ def test_project_frame_forward_and_backward_simple_sample():
 
     x, y = ScanGrid.get_coords().T
 
-    test_interpolant = NearestNDInterpolator(
-        (y, x), test_image.flatten()
+    test_interpolant = NearestNDInterpolator((y, x), test_image.flatten())
+
+    fourdstem_array = np.zeros(
+        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
+        dtype=jnp.float32,
     )
 
-    sampled_test_interpolant = test_interpolant((y, x))
-    sampled_test_interpolant = sampled_test_interpolant.reshape(ScanGrid.scan_shape)
+    fourdstem_array = compute_fourdstem_dataset(
+        model, fourdstem_array, test_interpolant
+    )
 
-    # import matplotlib.pyplot as plt
-    # plt.figure()
-    # plt.imshow(sampled_test_interpolant, cmap='gray')
-    # plt.title("Sampled Test Interpolant")
-    # plt.savefig("sampled_test_interpolant.png")
-
-    fourdstem_array = np.zeros((ScanGrid.scan_shape[0],
-                                ScanGrid.scan_shape[1], *Detector.det_shape), dtype=jnp.float32)
-
-    fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, test_interpolant)
-
-    sum_fourdstem_array = np.sum(fourdstem_array, axis=(-2, -1))
-
-    # plt.figure()
-    # plt.imshow(sum_fourdstem_array, cmap='gray')
-    # plt.title("Sum of FourDSTEM Array")
-    # plt.savefig("sum_fourdstem_array.png")
-
-    sample_px_ys, sample_px_xs, detector_intensities = compute_scan_grid_rays_and_intensities(
-        stem_model, fourdstem_array
+    sample_px_ys, sample_px_xs, detector_intensities = (
+        compute_scan_grid_rays_and_intensities(stem_model, fourdstem_array)
     )
 
     sample_px_ys = np.array(sample_px_ys, dtype=np.int32).flatten()
@@ -351,48 +374,111 @@ def test_project_frame_forward_and_backward_simple_sample():
 
     shifted_sum_image = np.zeros(model.scan_grid.scan_shape, dtype=np.float32)
 
-    shifted_sum_image = do_shifted_sum(shifted_sum_image,
-                                       sample_px_ys,
-                                       sample_px_xs,
-                                       detector_intensities)
-
-    # plt.figure()
-    # plt.imshow(shifted_sum_image, cmap='gray')
-    # plt.title("Shifted Sum Image")
-    # plt.colorbar()
-    # plt.savefig("shifted_sum_image.png")
+    shifted_sum_image = do_shifted_sum(
+        shifted_sum_image, sample_px_ys, sample_px_xs, detector_intensities
+    )
 
     np.testing.assert_allclose(shifted_sum_image, test_image, atol=1e-6)
 
 
-def test_mask_rays_all_valid_for_large_semi_conv():
+@pytest.mark.parametrize("runs", range(3))
+def test_project_frame_forward_and_backward_with_descan_random(runs):
+    # Test that we get the same image after projecting forward and backward with a random descan error matrix. 
+    scan_rotation = np.random.uniform(-180, 180)
+    grid_shape = np.random.randint(8, 20, size=2)
 
-    slopes_x = jnp.array([0.0, 1.0, 2.0])
-    slopes_y = jnp.array([0.0, 0.0, 0.0])
-    input_slopes = (slopes_x, slopes_y)
-    # semi_conv large: all rays valid
-    mask = mask_rays(
-        input_slopes,
-        det_px_size=(1.0, 1.0),
-        camera_length=1.0,
-        semi_conv=10.0,
+    test_image = np.zeros(grid_shape, dtype=np.uint8)
+    test_image[0, 0] = 1.0
+    test_image[4, 4] = 1.0
+    test_image[3, 4] = 1.0
+    test_image[4, 3] = 1.0
+    test_image[5, 4] = 1.0
+    test_image[4, 5] = 1.0
+
+    params_dict = ModelParameters(
+        semi_conv=1e-4,
+        defocus=0.0,
+        camera_length=0.5,
+        scan_shape=grid_shape,
+        det_shape=grid_shape,
+        scan_step=(0.01, 0.01),
+        det_px_size=(0.01, 0.01),
+        scan_rotation=scan_rotation,
+        descan_error=np.random.uniform(
+            -0.01, 0.01, size=12)
     )
-    assert mask.tolist() == [True, True, True]
+
+    stem_model = model = create_stem_model(params_dict)
+    PointSource, ScanGrid, Descanner, Detector = model
+
+    x, y = ScanGrid.get_coords().T
+
+    test_interpolant = NearestNDInterpolator((y, x), test_image.flatten())
+
+    fourdstem_array = np.zeros(
+        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
+        dtype=jnp.float32,
+    )
+
+    fourdstem_array = compute_fourdstem_dataset(
+        model, fourdstem_array, test_interpolant
+    )
+
+    sample_px_ys, sample_px_xs, detector_intensities = (
+        compute_scan_grid_rays_and_intensities(stem_model, fourdstem_array)
+    )
+
+    sample_px_ys = np.array(sample_px_ys, dtype=np.int32).flatten()
+    sample_px_xs = np.array(sample_px_xs, dtype=np.int32).flatten()
+    detector_intensities = np.array(detector_intensities, dtype=np.float32).flatten()
+
+    shifted_sum_image = np.zeros(model.scan_grid.scan_shape, dtype=np.float32)
+
+    shifted_sum_image = do_shifted_sum(
+        shifted_sum_image, sample_px_ys, sample_px_xs, detector_intensities
+    )
+
+    np.testing.assert_allclose(shifted_sum_image, test_image, atol=1e-6)
 
 
-def test_mask_rays_selects_only_last_true_when_semi_conv_small():
+@pytest.mark.parametrize(
+    "offpxi, offpyi, expected_px_output", [(0.0, 0.0, (6, 6)), (0.05, 0.01, (5, 11))],
+)
+def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offpxi, offpyi, expected_px_output):
+    # Test that we can predict where a single pixel will end up after the descanner
+    grid_shape = (12, 12)
+    scan_step = (0.01, 0.01)
+    det_px_size = (0.01, 0.01)
 
-    slopes_x = jnp.array([0.0, 1.0, 2.0])
-    slopes_y = jnp.array([0.0, 0.0, 0.0])
-    input_slopes = (slopes_x, slopes_y)
-    det_px_size = (2.0, 2.0)
-    camera_length = 1.0
-    semi_conv = 0.1
-    mask = mask_rays(
-        input_slopes,
+    test_image = np.zeros(grid_shape, dtype=np.uint8)
+    test_image[0, 0] = 1
+
+    descan_error = DescannerErrorParameters(offpxi=offpxi, offpyi=offpyi)
+
+    params = ModelParameters(
+        semi_conv=1e-4,
+        defocus=0.0,
+        camera_length=0.5,
+        scan_shape=grid_shape,
+        det_shape=grid_shape,
+        scan_step=scan_step,
         det_px_size=det_px_size,
-        camera_length=camera_length,
-        semi_conv=semi_conv,
+        scan_rotation=0.0,
+        descan_error=descan_error,
     )
-    # only the last valid slope remains
-    assert mask.tolist() == [False, True, False]
+
+    model = create_stem_model(params)
+    PointSource, ScanGrid, Descanner, Detector = model
+    xs, ys = ScanGrid.get_coords()[:, 0], ScanGrid.get_coords()[:, 1]
+    interp = NearestNDInterpolator((ys, xs), test_image.flatten())
+
+    fourdstem_array = np.zeros(
+        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
+        dtype=jnp.float32,
+    )
+    fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, interp)
+
+    expected_px_output = np.array(expected_px_output, dtype=np.int32)
+    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
+
+    np.testing.assert_array_equal(result, 1.0)

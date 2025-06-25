@@ -45,7 +45,11 @@ class ShiftedSumUDF(UDF):
         model = self.task_data.model
         px_y, px_x, mask = project_coordinates_backward(model, det_coords, scan_pos)
         inplace_sum(
-            np.array(px_y), np.array(px_x), np.array(mask), frame.ravel(), self.results.shifted_sum
+            np.array(px_y),
+            np.array(px_x),
+            np.array(mask),
+            frame.ravel(),
+            self.results.shifted_sum,
         )
 
     def merge(self, dest, src):

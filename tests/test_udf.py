@@ -25,7 +25,9 @@ def test_functional():
         scan_step=(0.01, 0.01),
         det_px_size=(0.01, 0.01),
         scan_rotation=0.0,
-        descan_error=np.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+        descan_error=np.array(
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        ),
     )
 
     udf = ShiftedSumUDF(parameters)

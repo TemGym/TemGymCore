@@ -18,6 +18,24 @@ class ModelParameters(TypedDict):
     flip_y: bool
 
 
+class DescannerErrorParameters(NamedTuple):
+    pxo_pxi: float = 0.0  # How position x output scales with respect to position x input
+    pxo_pyi: float = 0.0  # How position x output scales with respect to position y input
+    pyo_pxi: float = 0.0  # How position y output scales with respect to position x input
+    pyo_pyi: float = 0.0  # How position y output scales with respect to position y input
+    sxo_pxi: float = 0.0  # How slope x output slope scales with respect to position x input
+    sxo_pyi: float = 0.0  # How slope x output slope scales with respect to position y input
+    syo_pxi: float = 0.0  # How slope y output slope scales with respect to position x input
+    syo_pyi: float = 0.0  # How slope y output slope scales with respect to position x input
+    offpxi: float = 0.0  # Offset position in x input
+    offpyi: float = 0.0  # Offset position in y input
+    offsxi: float = 0.0  # Offset slope in x input
+    offsyi: float = 0.0  # Offset slope in y input
+
+    def as_array(self) -> NDArray:
+        return jnp.array(self)
+
+
 class Model(NamedTuple):
     source: comp.PointSource
     scan_grid: comp.ScanGrid

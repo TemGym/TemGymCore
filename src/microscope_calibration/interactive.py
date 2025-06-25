@@ -66,18 +66,20 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
     result_fig = ApertureFigure.new(np.zeros(ds.shape.nav, dtype=np.float32))
 
     def get_model_parameters():
-        return ModelParameters(**{
-            "semi_conv": semi_conv_slider.value / 1000,
-            "defocus": defocus_slider.value,  # Distance from the crossover to the sample
-            "camera_length": camera_length_slider.value,  # distance from crossover to the detector
-            "scan_step": (scan_step_input.value / 1000,) * 2,  # YX!
-            "det_px_size": (det_px_size_input.value / 1000,) * 2,  # YX!
-            "scan_rotation": scan_rotation_slider.value,
-            "descan_error": descan_error,
-            "flip_y": flip_y_bool.value,
-            "scan_shape": ds.shape.nav,
-            "det_shape": ds.shape.sig,
-        })
+        return ModelParameters(
+            **{
+                "semi_conv": semi_conv_slider.value / 1000,
+                "defocus": defocus_slider.value,  # Distance from the crossover to the sample
+                "camera_length": camera_length_slider.value,  # distance from crossover to the detector
+                "scan_step": (scan_step_input.value / 1000,) * 2,  # YX!
+                "det_px_size": (det_px_size_input.value / 1000,) * 2,  # YX!
+                "scan_rotation": scan_rotation_slider.value,
+                "descan_error": descan_error,
+                "flip_y": flip_y_bool.value,
+                "scan_shape": ds.shape.nav,
+                "det_shape": ds.shape.sig,
+            }
+        )
 
     def run_analysis(*e):
         try:
@@ -103,7 +105,9 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
             ("Frame Imaging", frame_window.layout()),
             ("Virtual Imaging", vi_window.layout()),
             ("CoM", com_window.layout()),
-            ("ShiftedSum", pn.Row(
+            (
+                "ShiftedSum",
+                pn.Row(
                     pn.Column(
                         semi_conv_slider,
                         defocus_slider,
@@ -142,15 +146,17 @@ if __name__ == "__main__":
     ds_path = rootdir / "fourdstem_array.npy"
     ds = ctx.load("npy", ds_path, num_partitions=4)
 
-    model_parameters = ModelParameters(**{
-        "semi_conv": semi_conv,
-        "defocus": defocus,  # Distance from the crossover to the sample
-        "camera_length": camera_length,  # distance from crossover to the detector
-        "scan_step": scan_step,  # YX!
-        "det_px_size": det_px_size,  # YX!
-        "scan_rotation": scan_rotation,
-        "descan_error": descan_error,
-        "flip_y": False,
-    })
+    model_parameters = ModelParameters(
+        **{
+            "semi_conv": semi_conv,
+            "defocus": defocus,  # Distance from the crossover to the sample
+            "camera_length": camera_length,  # distance from crossover to the detector
+            "scan_step": scan_step,  # YX!
+            "det_px_size": det_px_size,  # YX!
+            "scan_rotation": scan_rotation,
+            "descan_error": descan_error,
+            "flip_y": False,
+        }
+    )
 
     interactive_window(ctx, ds, model_parameters).show()

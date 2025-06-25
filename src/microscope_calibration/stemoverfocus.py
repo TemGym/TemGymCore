@@ -94,9 +94,7 @@ def ray_coords_at_plane(
                                with the detector.
     """
 
-    input_slopes = find_input_slopes(
-        pt_src, detector_coords, total_transfer_matrix
-    )
+    input_slopes = find_input_slopes(pt_src, detector_coords, total_transfer_matrix)
 
     coords = transfer_rays(pt_src, input_slopes, total_transfer_matrix)
 
@@ -108,9 +106,13 @@ def ray_coords_at_plane(
     specified_plane_x = specified_plane[0]
     specified_plane_y = specified_plane[1]
 
-    camera_length_and_defocus_distance = (total_transfer_matrix[0, 2] + total_transfer_matrix[1, 3]) / 2
+    camera_length_and_defocus_distance = (
+        total_transfer_matrix[0, 2] + total_transfer_matrix[1, 3]
+    ) / 2
 
-    mask = mask_rays(input_slopes, det_px_size, camera_length_and_defocus_distance, semi_conv)
+    mask = mask_rays(
+        input_slopes, det_px_size, camera_length_and_defocus_distance, semi_conv
+    )
 
     return specified_plane_x, specified_plane_y, mask
 
@@ -123,23 +125,23 @@ def _select_last_ray(mask):
 
 
 def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
-    ''' Mask rays that have a slope which means they won't hit the detector pixels.
+    """Mask rays that have a slope which means they won't hit the detector pixels.
     Except for the case where the semi-convergence is smaller than a so-called minimum alpha, which is the angle
     between the radial distance between two detector pixels and the distance from the point source. If the semi-convergence
     is smaller than this minimum alpha, in theory no rays would hit the detector unless the central pixel is under the beam, which
     happens when there is an odd amount of detector pixels. In the even case, the beam is going inbetween pixels. This case is realised
-    when the semi-convergence angle is smaller than min-alpha, and thus 4 pixels could be selected. If four pixels are selected, 
-    we then select only the last one in the array'''
+    when the semi-convergence angle is smaller than min-alpha, and thus 4 pixels could be selected. If four pixels are selected,
+    we then select only the last one in the array"""
 
     det_px_dy, det_px_dx = det_px_size
 
     # minimum beam radius between two pixels
-    min_radius = jnp.hypot(det_px_dx/2, det_px_dy/2) - 1e-12
+    min_radius = jnp.hypot(det_px_dx / 2, det_px_dy / 2) - 1e-12
 
     # Minimum alpha is the angle between the radial distance between
     # two detector pixels and the distance from detector to the point source.
     min_alpha = min_radius / camera_length
-    
+
     theta_x, theta_y = input_slopes
     r2 = theta_x**2 + theta_y**2
     # include rays up to the larger of semi_conv or min_alpha
@@ -147,10 +149,12 @@ def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
 
     # if semi_conv < min_alpha and any ray is valid, pick only the last one
     cond = (semi_conv < min_alpha) & jnp.any(mask)
-    mask = lax.cond(cond,
-                    _select_last_ray,   # true branch
-                    lambda m: m,        # false branch
-                    mask)
+    mask = lax.cond(
+        cond,
+        _select_last_ray,  # true branch
+        lambda m: m,  # false branch
+        mask,
+    )
     return mask
 
 
@@ -228,7 +232,12 @@ def project_coordinates_backward(
 
     # Get ray coordinates at the scan from the det
     scan_rays_x, scan_rays_y, semi_conv_mask = ray_coords_at_plane(
-        semi_conv, scan_pos, det_coords, total_transfer_matrix, det_to_scan, Detector.det_pixel_size
+        semi_conv,
+        scan_pos,
+        det_coords,
+        total_transfer_matrix,
+        det_to_scan,
+        Detector.det_pixel_size,
     )
 
     # Convert the ray coordinates to pixel indices.
