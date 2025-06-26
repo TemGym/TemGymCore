@@ -1,8 +1,8 @@
 from typing_extensions import TypedDict, NamedTuple
-from numpy.typing import NDArray
 import jax.numpy as jnp
-from microscope_calibration import components as comp
 from jaxgym import Coords_XY
+
+from microscope_calibration import components as comp
 
 
 class ModelParameters(TypedDict):
@@ -14,7 +14,7 @@ class ModelParameters(TypedDict):
     scan_step: tuple[float, float]
     det_px_size: tuple[float, float]
     scan_rotation: float
-    descan_error: NDArray
+    descan_error: 'DescannerErrorParameters' | jnp.ndarray
     flip_y: bool
 
 
@@ -32,10 +32,10 @@ class DescannerErrorParameters(NamedTuple):
     offsxi: float = 0.0  # Constant additive error in x slope
     offsyi: float = 0.0  # Constant additive error in y slope
 
-    def as_array(self) -> NDArray:
+    def as_array(self) -> jnp.ndarray:
         return jnp.array(self)
 
-    def as_matrix(self) -> NDArray:
+    def as_matrix(self) -> jnp.ndarray:
         return jnp.array(
             [
                 [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],

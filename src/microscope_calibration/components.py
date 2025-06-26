@@ -4,6 +4,7 @@ import jax_dataclasses as jdc
 from jaxgym.ray import Ray
 from jaxgym.coordinate_transforms import GridBase
 from jaxgym import Degrees, Coords_XY, Scale_YX, Shape_YX
+from .model import DescannerErrorParameters
 
 
 @jdc.pytree_dataclass
@@ -46,7 +47,7 @@ class Descanner:
     z: float
     scan_pos_x: float
     scan_pos_y: float
-    descan_error: jnp.ndarray
+    descan_error: DescannerErrorParameters | jnp.ndarray
 
     def step(self, ray: Ray):
         sp_x, sp_y = self.scan_pos_x, self.scan_pos_y
