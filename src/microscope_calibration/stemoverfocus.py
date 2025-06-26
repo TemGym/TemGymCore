@@ -10,7 +10,6 @@ from jaxgym import Coords_XY, Scale_YX
 
 from . import components as comp
 from .model import Model
-import warnings
 from jax import lax
 
 
@@ -22,8 +21,8 @@ def find_input_slopes(
     """
     Given a set of detector pixel coordinates, a semi-convergence angle from a source,
     and a transformation matrix,
-    find the slopes and mask that tells us what
-    slopes will hit the detector pixels from the point source.
+    find the slopes that tells us what
+    rays will hit the detector pixels from the point source.
     """
     pos_x, pos_y = pos
 
@@ -110,11 +109,11 @@ def ray_coords_at_plane(
         total_transfer_matrix[0, 2] + total_transfer_matrix[1, 3]
     ) / 2
 
-    mask = mask_rays(
+    detector_semi_conv_mask = mask_rays(
         input_slopes, det_px_size, camera_length_and_defocus_distance, semi_conv
     )
 
-    return specified_plane_x, specified_plane_y, mask
+    return specified_plane_x, specified_plane_y, detector_semi_conv_mask
 
 
 def _no_op_arg(mask, idx):
@@ -163,6 +162,7 @@ def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
 
     theta_x, theta_y = input_slopes
     r2 = theta_x**2 + theta_y**2
+
     # include rays up to the larger of semi_conv or min_alpha
     mask = r2 <= jnp.maximum(semi_conv**2, min_alpha**2)
     return lax.cond(
@@ -246,7 +246,7 @@ def project_coordinates_backward(
     )
 
     # Get ray coordinates at the scan from the det
-    scan_rays_x, scan_rays_y, semi_conv_mask = ray_coords_at_plane(
+    scan_rays_x, scan_rays_y, detector_mask = ray_coords_at_plane(
         semi_conv,
         scan_pos,
         det_coords,
@@ -258,7 +258,7 @@ def project_coordinates_backward(
     # Convert the ray coordinates to pixel indices.
     scan_y_px, scan_x_px = ScanGrid.metres_to_pixels([scan_rays_x, scan_rays_y])
 
-    return scan_y_px, scan_x_px, semi_conv_mask
+    return scan_y_px, scan_x_px, detector_mask
 
 
 @njit

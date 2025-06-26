@@ -7,8 +7,19 @@ from jaxgym.ray import Ray, propagate, propagate_dir_cosine
 from jaxgym.utils import custom_jacobian_matrix
 
 
+def test_propagate_zero_distance():
+    ray = Ray(x=1.0, y=-1.0, dx=0.5, dy=0.5, z=2.0, pathlength=1.0)
+    new = propagate(0.0, ray)
+    np.testing.assert_allclose(new.x, ray.x, atol=1e-6)
+    np.testing.assert_allclose(new.y, ray.y, atol=1e-6)
+    np.testing.assert_allclose(new.dx, ray.dx, atol=1e-6)
+    np.testing.assert_allclose(new.dy, ray.dy, atol=1e-6)
+    np.testing.assert_allclose(new.z, ray.z, atol=1e-6)
+    np.testing.assert_allclose(new.pathlength, ray.pathlength, atol=1e-6)
+
+
 @pytest.mark.parametrize("runs", range(5))
-def test_propagate_basic(runs):
+def test_propagate_paraxial(runs):
     random_camera_length = np.random.uniform(0.1, 10.0)
     x0, y0, dx0, dy0, z0, pl0 = np.random.uniform(-10, 10, size=6)
     d = random_camera_length
@@ -23,18 +34,7 @@ def test_propagate_basic(runs):
     np.testing.assert_allclose(new.pathlength, pl0 + d, atol=1e-6)
 
 
-def test_propagate_zero_distance():
-    ray = Ray(x=1.0, y=-1.0, dx=0.5, dy=0.5, z=2.0, pathlength=1.0)
-    new = propagate(0.0, ray)
-    np.testing.assert_allclose(new.x, ray.x, atol=1e-6)
-    np.testing.assert_allclose(new.y, ray.y, atol=1e-6)
-    np.testing.assert_allclose(new.dx, ray.dx, atol=1e-6)
-    np.testing.assert_allclose(new.dy, ray.dy, atol=1e-6)
-    np.testing.assert_allclose(new.z, ray.z, atol=1e-6)
-    np.testing.assert_allclose(new.pathlength, ray.pathlength, atol=1e-6)
-
-
-def test_propagate_dir_cosine_basic():
+def test_propagate_dir_cosine():
     x0, y0, dx0, dy0, z0, pl0 = 1.0, -1.0, 2.0, 3.0, 0.5, 10.0
     ray = Ray(x=x0, y=y0, dx=dx0, dy=dy0, z=z0, pathlength=pl0)
     d = np.random.uniform(-10, 10.0)

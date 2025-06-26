@@ -2,7 +2,6 @@ import pytest
 import numpy as np
 import jax.numpy as jnp
 import sympy as sp
-from scipy.interpolate import NearestNDInterpolator
 from jaxgym.transfer import accumulate_transfer_matrices
 
 from microscope_calibration.stemoverfocus import (
@@ -15,7 +14,6 @@ from microscope_calibration import components as comp
 from microscope_calibration.generate import (
     compute_scan_grid_rays_and_intensities,
     do_shifted_sum,
-    compute_fourdstem_dataset,
     generate_dataset_from_image,
 )
 from microscope_calibration.model import (
@@ -23,8 +21,6 @@ from microscope_calibration.model import (
     DescannerErrorParameters,
     create_stem_model
 )
-from microscope_calibration.components import Descanner
-from jaxgym.ray import Ray
 
 
 def base_model():
@@ -353,22 +349,10 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
         scan_rotation=scan_rotation,
         descan_error=descan_error_params,
     )
+
     model = create_stem_model(params_dict)
-    PointSource, ScanGrid, Descanner, Detector = model
+
     fourdstem_array = generate_dataset_from_image(params_dict, test_image)
-
-    x, y = ScanGrid.get_coords().T
-
-    test_interpolant = NearestNDInterpolator((y, x), test_image.flatten())
-
-    fourdstem_array = np.zeros(
-        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
-        dtype=jnp.float32,
-    )
-
-    fourdstem_array = compute_fourdstem_dataset(
-        model, fourdstem_array, test_interpolant
-    )
 
     sample_px_ys, sample_px_xs, detector_intensities = (
         compute_scan_grid_rays_and_intensities(model, fourdstem_array)
@@ -389,7 +373,7 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
 
 @pytest.mark.parametrize("runs", range(3))
 def test_project_frame_forward_and_backward_with_descan_random(runs):
-    # Test that we get the same image after projecting forward and backward with a random descan error matrix. 
+    # Test that we get the same image after projecting forward and backward with a random descan error matrix.
     scan_rotation = np.random.uniform(-180, 180)
     grid_shape = np.random.randint(8, 20, size=2)
 
@@ -415,24 +399,11 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
         descan_error=descan_error
     )
 
-    stem_model = model = create_stem_model(params_dict)
-    PointSource, ScanGrid, Descanner, Detector = model
-
-    x, y = ScanGrid.get_coords().T
-
-    test_interpolant = NearestNDInterpolator((y, x), test_image.flatten())
-
-    fourdstem_array = np.zeros(
-        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
-        dtype=jnp.float32,
-    )
-
-    fourdstem_array = compute_fourdstem_dataset(
-        model, fourdstem_array, test_interpolant
-    )
+    model = create_stem_model(params_dict)
+    fourdstem_array = generate_dataset_from_image(params_dict, test_image)
 
     sample_px_ys, sample_px_xs, detector_intensities = (
-        compute_scan_grid_rays_and_intensities(stem_model, fourdstem_array)
+        compute_scan_grid_rays_and_intensities(model, fourdstem_array)
     )
 
     sample_px_ys = np.array(sample_px_ys, dtype=np.int32).flatten()
@@ -453,7 +424,7 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
                                                                (0.0, 1.0, 1.0, 0.0, (0, -1)),
                                                                (0.5, 0.0, 0.0, 0.5, (3, 3))],
 )
-def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(pxo_pxi, pxo_pyi, pyo_pxi, pyo_pyi, expected_px_output):
+def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi, pxo_pyi, pyo_pxi, pyo_pyi, expected_px_output):
     # Test that we can predict where a single pixel will end up after the descanner with scale error
     grid_shape = (12, 12)
     scan_step = (0.01, 0.01)
@@ -476,16 +447,7 @@ def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(pxo_p
         descan_error=descan_error,
     )
 
-    model = create_stem_model(params)
-    PointSource, ScanGrid, Descanner, Detector = model
-    xs, ys = ScanGrid.get_coords()[:, 0], ScanGrid.get_coords()[:, 1]
-    interp = NearestNDInterpolator((ys, xs), test_image.flatten())
-
-    fourdstem_array = np.zeros(
-        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
-        dtype=jnp.float32,
-    )
-    fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, interp)
+    fourdstem_array = generate_dataset_from_image(params, test_image)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
     result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
@@ -498,7 +460,7 @@ def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(pxo_p
                                                                (0.2, 0.0, 0.0, 0.2, (5, 5)),
                                                                (0.0, 0.2, 0.2, 0.0, (5, 6))],
 )
-def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output):
+def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output):
     # Test that we can predict where a single pixel will end up after the descanner with scale error
     grid_shape = (12, 12)
     scan_step = (0.01, 0.01)
@@ -521,16 +483,7 @@ def test_project_frame_forward_and_backward_with_descan_scale_single_pixel(sxo_p
         descan_error=descan_error,
     )
 
-    model = create_stem_model(params)
-    PointSource, ScanGrid, Descanner, Detector = model
-    xs, ys = ScanGrid.get_coords()[:, 0], ScanGrid.get_coords()[:, 1]
-    interp = NearestNDInterpolator((ys, xs), test_image.flatten())
-
-    fourdstem_array = np.zeros(
-        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
-        dtype=jnp.float32,
-    )
-    fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, interp)
+    fourdstem_array = generate_dataset_from_image(params, test_image)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
     result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
@@ -567,20 +520,9 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
         descan_error=descan_error,
     )
 
-    model = create_stem_model(params)
-    PointSource, ScanGrid, Descanner, Detector = model
-    xs, ys = ScanGrid.get_coords()[:, 0], ScanGrid.get_coords()[:, 1]
-    interp = NearestNDInterpolator((ys, xs), test_image.flatten())
-
-    fourdstem_array = np.zeros(
-        (ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape),
-        dtype=jnp.float32,
-    )
-    fourdstem_array = compute_fourdstem_dataset(model, fourdstem_array, interp)
+    fourdstem_array = generate_dataset_from_image(params, test_image)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
     result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
 
     np.testing.assert_array_equal(result, 1.0)
-
-

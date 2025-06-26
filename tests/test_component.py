@@ -8,7 +8,7 @@ from jax import jacobian
 from jaxgym.utils import custom_jacobian_matrix
 
 
-def test_scan_grid_zero_in_metres_coords_for_odd_length():
+def test_scan_grid_coords_odd():
     # For an odd number of pixels (scan_shape=(5,5),
     # the metres grid should include 0.0 exactly at the centre.
     scan_grid = ScanGrid(
@@ -33,7 +33,7 @@ def test_scan_grid_zero_in_metres_coords_for_odd_length():
     )
 
 
-def test_scan_grid_zero_not_in_metres_coords_for_even_length():
+def test_scan_grid_coords_even():
     # For an even number of pixels (scan_shape=(4,4)),
     # the metres grid should be centred around 0 but not include it exactly in the coordinates
     scan_grid = ScanGrid(
@@ -58,7 +58,6 @@ def test_scan_grid_zero_not_in_metres_coords_for_even_length():
     )
 
 
-# Test cases for ScanGrid:
 @pytest.mark.parametrize(
     "xy, rotation, expected_pixel_coords",
     [
@@ -89,7 +88,6 @@ def test_scan_grid_metres_to_pixels(xy, rotation, expected_pixel_coords):
     np.testing.assert_allclose(pixel_coords_x, expected_pixel_coords[1], atol=1e-6)
 
 
-# Test cases for ScanGrid:
 @pytest.mark.parametrize(
     "pixel_coords, rotation, expected_xy",
     [
@@ -120,7 +118,6 @@ def test_scan_grid_pixels_to_metres(pixel_coords, rotation, expected_xy):
     np.testing.assert_allclose(metres_coords_y, expected_xy[1], atol=1e-6)
 
 
-# Test cases for Detector:
 @pytest.mark.parametrize(
     "xy, rotation, expected_pixel_coords",
     [
