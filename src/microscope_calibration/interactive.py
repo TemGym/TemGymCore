@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 import numpy as np
 import panel as pn
 import libertem.api as lt
@@ -121,40 +119,3 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
         ),  # noqa
     )
     return shifted_sum_window
-
-
-if __name__ == "__main__":
-    import jax
-
-    jax.config.update("jax_platform_name", "cpu")
-
-    rootdir = Path(__file__).parent
-    ctx = lt.Context.make_with("inline")  # no parallelisation, good for debugging
-
-    params_dict = json.load(open(rootdir / "params.json"))
-    semi_conv = params_dict["semi_conv"]
-    defocus = params_dict["defocus"]
-    camera_length = params_dict["camera_length"]
-    scan_step = params_dict["scan_step"]  # YX
-    det_px_size = params_dict["det_px_size"]  # YX
-    scan_rotation = params_dict["scan_rotation"]
-    descan_error = params_dict["descan_error"]
-    flip_y = params_dict["flip_y"]
-
-    ds_path = rootdir / "fourdstem_array.npy"
-    ds = ctx.load("npy", ds_path, num_partitions=4)
-
-    model_parameters = ModelParameters(
-        **{
-            "semi_conv": semi_conv,
-            "defocus": defocus,  # Distance from the crossover to the sample
-            "camera_length": camera_length,  # distance from crossover to the detector
-            "scan_step": scan_step,  # YX!
-            "det_px_size": det_px_size,  # YX!
-            "scan_rotation": scan_rotation,
-            "descan_error": descan_error,
-            "flip_y": False,
-        }
-    )
-
-    interactive_window(ctx, ds, model_parameters).show()
