@@ -116,9 +116,9 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
                         det_px_size_input,
                     ),
                     result_fig.layout,
-                ),
-            ),  # noqa
-        )
+                )
+            ),
+        ),  # noqa
     )
     return shifted_sum_window
 

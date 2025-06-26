@@ -74,23 +74,25 @@ def ray_coords_at_plane(
     det_px_size: Scale_YX,
 ):
     """
-    For all rays from a point source within a given semi-convergence angle, that hit the detector pixels,
-    find their positions and slopes at any specified plane in the system.
+    For all rays from a point source within a given semi-convergence angle,
+    that hit the detector pixels, find their positions and slopes at any
+    specified plane in the system.
 
     Parameters:
         semi_conv (float): The maximum semiconvergence angle defining the range of input slopes.
         pt_src (Coords_XY): The (x, y) coordinates of the source point.
         detector_coords (Coords_XY): The (x, y) coordinates defining the detector pixel layout.
-        total_transfer_matrix (xp.ndarray): The overall transfer matrix used to propagate rays from the source to the detector.
-        det_transfer_matrix_to_specific_plane (xp.ndarray): The transfer matrix used to map detector coordinates
-                                                            to a specific plane.
+        total_transfer_matrix (xp.ndarray): The overall transfer matrix used to propagate rays
+        from the source to the detector.
+        det_transfer_matrix_to_specific_plane (xp.ndarray): The transfer matrix used to
+        map detector coordinates to a specific plane.
         xp: Module, either numpy or jax.numpy.
     Returns:
         tuple:
             specified_plane_x (xp.ndarray): The x-coordinates of the rays at the specific plane.
             specified_plane_y (xp.ndarray): The y-coordinates of the rays at the specific plane.
-            mask (xp.ndarray): A boolean array indicating which input slopes resulted in valid ray intersections
-                               with the detector.
+            mask (xp.ndarray): A boolean array indicating which input slopes resulted in valid ray
+                               intersections with the detector.
     """
 
     input_slopes = find_input_slopes(pt_src, detector_coords, total_transfer_matrix)
@@ -143,13 +145,17 @@ def _no_op(mask):
 
 
 def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
-    """Mask rays that have a slope which means they won't hit the detector pixels.
-    Except for the case where the semi-convergence is smaller than a so-called minimum alpha, which is the angle
-    between the radial distance between two detector pixels and the distance from the point source. If the semi-convergence
-    is smaller than this minimum alpha, in theory no rays would hit the detector unless the central pixel is under the beam, which
-    happens when there is an odd amount of detector pixels. In the even case, the beam is going inbetween pixels. This case is realised
-    when the semi-convergence angle is smaller than min-alpha, and thus 4 pixels could be selected. If four pixels are selected,
-    we then select only the last one in the array"""
+    """
+    Mask rays that have a slope which means they won't hit the detector pixels.
+    Except for the case where the semi-convergence is smaller than a so-called minimum alpha,
+    which is the angle between the radial distance between two detector pixels and the
+    distance from the point source. If the semi-convergence is smaller than this minimum
+    alpha, in theory no rays would hit the detector unless the central pixel is under
+    the beam, which happens when there is an odd amount of detector pixels. In the even
+    case, the beam is going inbetween pixels. This case is realised when the semi-convergence
+    angle is smaller than min-alpha, and thus 4 pixels could be selected. If four pixels are
+    selected, we then select only the last one in the array
+    """
 
     det_px_dy, det_px_dx = det_px_size
 
