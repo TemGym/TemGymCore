@@ -156,6 +156,7 @@ def generate_dataset_from_image(
     params: ModelParameters,
     image: np.ndarray,
     method: Literal["nearest", "linear"] = "nearest",
+    sample_scale: float = 2,
     progress: bool = False,
 ):
     assert method in ("nearest", "linear")
@@ -183,7 +184,7 @@ def generate_dataset_from_image(
         else partial(LinearNDInterpolator, fill_value=0.)
     )
     interpolant = interp_t(
-        (y, x), image.flatten(),
+        (y * sample_scale, x * sample_scale), image.flatten(),
     )
 
     fourdstem_array = np.zeros(
