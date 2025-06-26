@@ -8,52 +8,39 @@ from jax import jacobian
 from jaxgym.utils import custom_jacobian_matrix
 
 
-def test_scan_grid_coords_odd():
-    # For an odd number of pixels (scan_shape=(5,5),
-    # the metres grid should include 0.0 exactly at the centre.
+@pytest.mark.parametrize(
+    "scan_shape",
+    [(5, 5), (3, 7), (4, 4), (5, 8)],
+)
+def test_scan_grid_coords_symmetry(scan_shape):
+    # coordinates should be symmetric around zero
+    # with zero in the middle for odd dimensions
+    # and no zero value for even dimensions
+    h, w = scan_shape
     scan_grid = ScanGrid(
         z=0.0,
         scan_rotation=0.0,
         scan_step=(0.1, 0.1),
-        scan_shape=(5, 7),
+        scan_shape=scan_shape,
     )
-    xs, ys = [], []
-    sy, sx = scan_grid.scan_shape
-    for py in range(sy):
-        for px in range(sx):
-            mx, my = scan_grid.pixels_to_metres((py, px))
-            xs.append(mx)
-            ys.append(my)
-    assert any(np.isclose(v, 0.0) for v in xs), (
-        "Expected 0.0 in X coordinates for odd grid length"
-    )
-    assert any(np.isclose(v, 0.0) for v in ys), (
-        "Expected 0.0 in Y coordinates for odd grid length"
-    )
+    ycoords, xcoords = np.arange(h), np.arange(w)
+    _, yvals = scan_grid.pixels_to_metres((ycoords, np.zeros_like(ycoords)))
+    xvals, _ = scan_grid.pixels_to_metres((np.zeros_like(xcoords), xcoords))
 
+    def check_symmetry(size, vals):
+        if (size % 2) == 0:  # even
+            assert abs(vals[size // 2]) > 0.
+            assert vals[size // 2] == pytest.approx(-1 * vals[size // 2 - 1])
+            assert np.count_nonzero(vals) == vals.size
+        else:  # odd
+            assert np.count_nonzero(vals) == vals.size - 1
+            assert vals[size // 2] == pytest.approx(0.)
+            assert vals[size // 2 - 1] == pytest.approx(
+                -1 * vals[size // 2 + 1]
+            )
 
-def test_scan_grid_coords_even():
-    # For an even number of pixels (scan_shape=(4,4)),
-    # the metres grid should be centred around 0 but not include it exactly in the coordinates
-    scan_grid = ScanGrid(
-        z=0.0,
-        scan_rotation=0.0,
-        scan_step=(0.1, 0.1),
-        scan_shape=(4, 6),
-    )
-    xs, ys = [], []
-    sy, sx = scan_grid.scan_shape
-    for py in range(sy):
-        for px in range(sx):
-            mx, my = scan_grid.pixels_to_metres((py, px))
-            xs.append(mx)
-            ys.append(my)
-    assert not any(np.isclose(v, 0.0) for v in xs), (
-        "Did not expect 0.0 in X coordinates for even grid length"
-    )
-    assert not any(np.isclose(v, 0.0) for v in ys), (
-        "Did not expect 0.0 in Y coordinates for even grid length"
-    )
+    check_symmetry(h, yvals)
+    check_symmetry(w, xvals)
 
 
 @pytest.mark.parametrize(
@@ -292,25 +279,26 @@ def test_descanner_jacobian_matrix():
     np.testing.assert_allclose(J, T, atol=1e-6)
 
 
-def test_scan_grid_rotation_random():
+@pytest.mark.parametrize("repeat", tuple(range(5)))
+def test_scan_grid_rotation_random(repeat):
     step = (0.1, 0.1)
     shape = (11, 11)
     centre_pix = (shape[0] // 2, shape[1] // 2)
 
     # test several random rotations
-    for scan_rot in np.random.uniform(-180.0, 180.0, size=5):
-        scan_grid = ScanGrid(
-            z=0.0,
-            scan_rotation=scan_rot,
-            scan_step=step,
-            scan_shape=shape,
-        )
-        # world‐space vector for one pixel step in scan‐grid x
-        mx0, my0 = scan_grid.pixels_to_metres(centre_pix)
-        mx1, my1 = scan_grid.pixels_to_metres((centre_pix[0], centre_pix[1] + 1))
-        vec_scan = np.array([mx1 - mx0, my1 - my0])
+    scan_rot = np.random.uniform(-180.0, 180.0)
+    scan_grid = ScanGrid(
+        z=0.0,
+        scan_rotation=scan_rot,
+        scan_step=step,
+        scan_shape=shape,
+    )
+    # world‐space vector for one pixel step in scan‐grid x
+    mx0, my0 = scan_grid.pixels_to_metres(centre_pix)
+    mx1, my1 = scan_grid.pixels_to_metres((centre_pix[0], centre_pix[1] + 1))
+    vec_scan = np.array([mx1 - mx0, my1 - my0])
 
-        # expected rotated step vector = R(scan_rot) @ [step_x, 0]
-        theta = np.deg2rad(scan_rot)
-        exp_scan = np.array([np.cos(theta) * step[0], -np.sin(theta) * step[0]])
-        np.testing.assert_allclose(vec_scan, exp_scan, atol=1e-6)
+    # expected rotated step vector = R(scan_rot) @ [step_x, 0]
+    theta = np.deg2rad(scan_rot)
+    exp_scan = np.array([np.cos(theta) * step[0], -np.sin(theta) * step[0]])
+    np.testing.assert_allclose(vec_scan, exp_scan, atol=1e-6)
