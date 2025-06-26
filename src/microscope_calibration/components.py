@@ -21,7 +21,6 @@ class ScanGrid(GridBase):
     scan_step: Scale_YX
     scan_shape: Shape_YX
     scan_rotation: Degrees
-    scan_centre: Coords_XY = (0.0, 0.0)
     metres_to_pixels_mat: jnp.ndarray = jdc.field(init=False)
     pixels_to_metres_mat: jnp.ndarray = jdc.field(init=False)
 
@@ -36,10 +35,6 @@ class ScanGrid(GridBase):
     @property
     def rotation(self) -> Degrees:
         return self.scan_rotation
-
-    @property
-    def centre(self) -> Coords_XY:
-        return self.scan_centre
 
     @property
     def flip(self) -> Coords_XY:
@@ -132,8 +127,6 @@ class Detector(GridBase):
     z: float
     det_pixel_size: Scale_YX
     det_shape: Shape_YX
-    det_centre: Coords_XY = (0.0, 0.0)
-    det_rotation: Degrees = 0.0
     flip_y: bool = False
     metres_to_pixels_mat: jnp.ndarray = jdc.field(init=False)
     pixels_to_metres_mat: jnp.ndarray = jdc.field(init=False)
@@ -148,11 +141,7 @@ class Detector(GridBase):
 
     @property
     def rotation(self) -> Degrees:
-        return self.det_rotation
-
-    @property
-    def centre(self) -> Coords_XY:
-        return self.det_centre
+        return 0.
 
     @property
     def flip(self) -> bool:

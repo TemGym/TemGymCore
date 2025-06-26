@@ -32,8 +32,8 @@ class GridBase(abc.ABC):
     def rotation(self) -> Degrees: ...
 
     @property
-    @abc.abstractmethod
-    def centre(self) -> Coords_XY: ...
+    def centre(self) -> Coords_XY:
+        return (0., 0.)
 
     @property
     @abc.abstractmethod

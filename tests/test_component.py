@@ -16,7 +16,6 @@ def test_scan_grid_coords_odd():
         scan_rotation=0.0,
         scan_step=(0.1, 0.1),
         scan_shape=(5, 7),
-        scan_centre=(0.0, 0.0),
     )
     xs, ys = [], []
     sy, sx = scan_grid.scan_shape
@@ -41,7 +40,6 @@ def test_scan_grid_coords_even():
         scan_rotation=0.0,
         scan_step=(0.1, 0.1),
         scan_shape=(4, 6),
-        scan_centre=(0.0, 0.0),
     )
     xs, ys = [], []
     sy, sx = scan_grid.scan_shape
@@ -81,7 +79,6 @@ def test_scan_grid_metres_to_pixels(xy, rotation, expected_pixel_coords):
         scan_rotation=rotation,
         scan_step=(0.1, 0.1),
         scan_shape=(11, 11),
-        scan_centre=(0.0, 0.0),
     )
     pixel_coords_y, pixel_coords_x = scan_grid.metres_to_pixels(xy)
     np.testing.assert_allclose(pixel_coords_y, expected_pixel_coords[0], atol=1e-6)
@@ -111,7 +108,6 @@ def test_scan_grid_pixels_to_metres(pixel_coords, rotation, expected_xy):
         scan_rotation=rotation,
         scan_step=(0.1, 0.1),
         scan_shape=(11, 11),
-        scan_centre=(0.0, 0.0),
     )
     metres_coords_x, metres_coords_y = scan_grid.pixels_to_metres(pixel_coords)
     np.testing.assert_allclose(metres_coords_x, expected_xy[0], atol=1e-6)
@@ -119,29 +115,20 @@ def test_scan_grid_pixels_to_metres(pixel_coords, rotation, expected_xy):
 
 
 @pytest.mark.parametrize(
-    "xy, rotation, expected_pixel_coords",
+    "xy, expected_pixel_coords",
     [
-        # No rotation cases
-        ((0.0, 0.0), 0.0, (5, 5)),
-        ((-0.5, 0.5), 0.0, (0, 0)),
-        ((0.5, -0.5), 0.0, (10, 10)),
-        ((0.0, 0.5), 0.0, (0, 5)),
-        ((-0.5, 0.0), 0.0, (5, 0)),
-        # With rotation cases
-        ((0.0, 0.0), 90.0, (5, 5)),
-        ((-0.5, 0.5), 90.0, (10, 0)),
-        ((0.5, -0.5), 90.0, (0, 10)),
-        ((0.0, 0.5), 90.0, (5, 0)),
-        ((-0.5, 0.0), 90.0, (10, 5)),
+        ((0.0, 0.0), (5, 5)),
+        ((-0.5, 0.5), (0, 0)),
+        ((0.5, -0.5), (10, 10)),
+        ((0.0, 0.5), (0, 5)),
+        ((-0.5, 0.0), (5, 0)),
     ],
 )
-def test_detector_metres_to_pixels(xy, rotation, expected_pixel_coords):
+def test_detector_metres_to_pixels(xy, expected_pixel_coords):
     detector = Detector(
         z=0.0,
         det_pixel_size=(0.1, 0.1),
         det_shape=(11, 11),
-        det_centre=(0.0, 0.0),
-        det_rotation=rotation,
         flip_y=False,
     )
     pixel_coords_y, pixel_coords_x = detector.metres_to_pixels(xy)
@@ -151,29 +138,21 @@ def test_detector_metres_to_pixels(xy, rotation, expected_pixel_coords):
 
 # Test cases for Detector:
 @pytest.mark.parametrize(
-    "pixel_coords, rotation, expected_xy",
+    "pixel_coords, expected_xy",
     [
         # No rotation cases
-        ((5, 5), 0.0, (0.0, 0.0)),
-        ((0, 0), 0.0, (-0.5, 0.5)),
-        ((10, 10), 0.0, (0.5, -0.5)),
-        ((0, 5), 0.0, (0.0, 0.5)),
-        ((5, 0), 0.0, (-0.5, 0.0)),
-        # With rotation cases
-        ((5, 5), 90.0, (0.0, 0.0)),
-        ((10, 0), 90.0, (-0.5, 0.5)),
-        ((0, 10), 90.0, (0.5, -0.5)),
-        ((5, 0), 90.0, (0.0, 0.5)),
-        ((10, 5), 90.0, (-0.5, 0.0)),
+        ((5, 5), (0.0, 0.0)),
+        ((0, 0), (-0.5, 0.5)),
+        ((10, 10), (0.5, -0.5)),
+        ((0, 5), (0.0, 0.5)),
+        ((5, 0), (-0.5, 0.0)),
     ],
 )
-def test_detector_pixels_to_metres(pixel_coords, rotation, expected_xy):
+def test_detector_pixels_to_metres(pixel_coords, expected_xy):
     detector = Detector(
         z=0.0,
-        det_rotation=rotation,
         det_pixel_size=(0.1, 0.1),
         det_shape=(11, 11),
-        det_centre=(0.0, 0.0),
         flip_y=False,
     )
     metres_coords_x, metres_coords_y = detector.pixels_to_metres(pixel_coords)
@@ -316,7 +295,6 @@ def test_descanner_jacobian_matrix():
 def test_scan_grid_rotation_random():
     step = (0.1, 0.1)
     shape = (11, 11)
-    centre_pt = (0.0, 0.0)
     centre_pix = (shape[0] // 2, shape[1] // 2)
 
     # test several random rotations
@@ -326,7 +304,6 @@ def test_scan_grid_rotation_random():
             scan_rotation=scan_rot,
             scan_step=step,
             scan_shape=shape,
-            scan_centre=centre_pt,
         )
         # world‐space vector for one pixel step in scan‐grid x
         mx0, my0 = scan_grid.pixels_to_metres(centre_pix)
