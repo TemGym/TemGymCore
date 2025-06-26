@@ -27,10 +27,10 @@ class DescannerErrorParameters(NamedTuple):
     sxo_pyi: float = 0.0  # How slope x output slope scales with respect to position y input
     syo_pxi: float = 0.0  # How slope y output slope scales with respect to position x input
     syo_pyi: float = 0.0  # How slope y output slope scales with respect to position x input
-    offpxi: float = 0.0  # Offset position in x input
-    offpyi: float = 0.0  # Offset position in y input
-    offsxi: float = 0.0  # Offset slope in x input
-    offsyi: float = 0.0  # Offset slope in y input
+    offpxi: float = 0.0  # Constant additive error in x position
+    offpyi: float = 0.0  # Constant additive error in y position
+    offsxi: float = 0.0  # Constant additive error in x slope
+    offsyi: float = 0.0  # Constant additive error in y slope
 
     def as_array(self) -> NDArray:
         return jnp.array(self)
