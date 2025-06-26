@@ -92,16 +92,18 @@ def poly_dict_to_sympy_expr(multi_index_array, var_list, sym_vars=None):
     Parameters:
       multi_index_array: dict
           Dictionary whose keys are variable names and values are lists of terms.
-          Each term is a list where the first n entries are the exponents for each independent symbol,
-          and the last entry is the coefficient.
+          Each term is a list where the first n entries are the exponents for each
+          independent symbol, and the last entry is the coefficient.
       var_list: str or list of str
           The key or keys in multi_index_array for which to form the polynomial.
       sym_vars: list of sympy.Symbol, optional
-          The symbols to be used in the polynomial. If None, defaults to generic symbols x0, x1, ..., x{n-1}.
+          The symbols to be used in the polynomial. If None, defaults to generic symbols
+          x0, x1, ..., x{n-1}.
 
     Returns:
       sympy.Expr or dict: If a single variable is provided, returns the simplified sympy expression.
-                          If a list is provided, returns a dictionary mapping each key to its expression.
+                          If a list is provided, returns a dictionary mapping each key to its
+                          expression.
     """
     if isinstance(var_list, str):
         var_list = [var_list]

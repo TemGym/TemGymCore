@@ -1,17 +1,10 @@
 import jax_dataclasses as jdc
 import jax.numpy as jnp
-from jax.numpy import ndarray as NDArray
-from typing import Tuple
 
 from .ray import Ray, propagate
-from .coordinate_transforms import apply_transformation, pixels_to_metres_transform
-from . import Degrees, Coords_XY, Scale_YX, Coords_YX, Pixels_YX, Shape_YX
 from typing_extensions import TypeAlias
 from .ode import solve_ode
-import abc
-import jax_dataclasses as jdc
-from jax.numpy import ndarray as NDArray
-from .coordinate_transforms import apply_transformation, pixels_to_metres_transform
+from . import Degrees
 
 Radians: TypeAlias = jnp.float64  # type: ignore
 EPS = 1e-12

@@ -149,11 +149,13 @@ def pixels_to_metres_transform(
                                         Defaults to 0.0.
 
     Returns:
-        jax.numpy.ndarray: A transformation matrix that converts pixel coordinates to metre coordinates.
+        jax.numpy.ndarray: A transformation matrix that converts
+        pixel coordinates to metre coordinates.
 
     The transformation is composed by applying:
         - A conditional flip along the y-axis if flip_y is True.
-        - A fixed flip transformation for the y-axis to go from xy of ray space to yx of pixel space.
+        - A fixed flip transformation for the y-axis to go from xy
+        of ray space to yx of pixel space.
         - A rotation transformation given by the specified angle.
         - A translation to the provided centre in metres.
         - A scaling transformation with the given pixel size.

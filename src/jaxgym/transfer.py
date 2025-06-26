@@ -1,24 +1,23 @@
-import numpy as np
-import jax.numpy as jnp
-from . import Coords_XY
-from functools import partial
-import numpy as np
 import jax.numpy as jnp
 
 
 def transfer_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
     """
     Propagate rays through an optical system using the provided transfer matrix.
-    This function takes an initial point source position (x, y) and their corresponding slopes, constructs a ray vector,
-    and propagates these rays through the system by applying the transfer matrix. The output is a set of propagated ray coordinates.
+    This function takes an initial point source position (x, y) and their corresponding
+    slopes, constructs a ray vector, and propagates these rays through the system by
+    applying the transfer matrix. The output is a set of propagated ray coordinates.
     Parameters
     ----------
     input_pos_xy : tuple
-        A tuple (input_pos_x, input_pos_y) representing the x and y coordinates of the source position.
+        A tuple (input_pos_x, input_pos_y) representing the x and y coordinates of the
+        source position.
     input_slopes_xy : tuple
-        A tuple (input_slopes_x, input_slopes_y) representing the slopes of the rays in the x and y directions.
+        A tuple (input_slopes_x, input_slopes_y) representing the slopes of the rays
+        in the x and y directions.
     transfer_matrix : numpy.ndarray
-        A matrix used to propagate the rays. It should be compatible with the constructed ray vector so that the dot product results in a propagated coordinate array.
+        A matrix used to propagate the rays. It should be compatible with the constructed
+        ray vector so that the dot product results in a propagated coordinate array.
     Returns
     -------
     numpy.ndarray
@@ -33,7 +32,8 @@ def transfer_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
     input_pos_x, input_pos_y = input_pos_xy
     input_slopes_x, input_slopes_y = input_slopes_xy
 
-    # Make the input rays we can run through one last time in the model to find positions at sample and detector
+    # Make the input rays we can run through one last time in the
+    # model to find positions at sample and detector
     rays_at_source_with_semi_conv = jnp.vstack(
         [
             jnp.full(input_slopes_x.shape[0], input_pos_x),
@@ -62,13 +62,13 @@ def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):
     """Compute the total transfer matrix between component indices [start, end]
     by multiplying in right-to-left order.
 
-    Given that the transfer_matrices list contains both component and intermediate propagation matrices,
-    where each component appears at even indices (0, 2, 4, ...),
+    Given that the transfer_matrices list contains both component and
+    intermediate propagation matrices, where each component appears at even indices (0, 2, 4, ...),
     this function multiplies the matrices from index 2*start up to index 2*end using reversed order.
     """
     i_start = 2 * start
     i_end = 2 * end
-    matrices = transfer_matrices[i_start : i_end + 1]
+    matrices = transfer_matrices[i_start: i_end + 1]
     total = matrices[-1]
     for tm in reversed(matrices[:-1]):
         total = total @ tm
