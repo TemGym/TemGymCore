@@ -352,7 +352,7 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
 
     model = create_stem_model(params_dict)
 
-    fourdstem_array = generate_dataset_from_image(params_dict, test_image)
+    fourdstem_array = generate_dataset_from_image(params_dict, test_image, sample_scale=1.)
 
     sample_px_ys, sample_px_xs, detector_intensities = (
         compute_scan_grid_rays_and_intensities(model, fourdstem_array)
@@ -400,7 +400,7 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
     )
 
     model = create_stem_model(params_dict)
-    fourdstem_array = generate_dataset_from_image(params_dict, test_image)
+    fourdstem_array = generate_dataset_from_image(params_dict, test_image, sample_scale=1.)
 
     sample_px_ys, sample_px_xs, detector_intensities = (
         compute_scan_grid_rays_and_intensities(model, fourdstem_array)
@@ -447,7 +447,7 @@ def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi, pxo_pyi, 
         descan_error=descan_error,
     )
 
-    fourdstem_array = generate_dataset_from_image(params, test_image)
+    fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
     result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
@@ -483,7 +483,7 @@ def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi, sxo_pyi, 
         descan_error=descan_error,
     )
 
-    fourdstem_array = generate_dataset_from_image(params, test_image)
+    fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
     result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
@@ -520,7 +520,7 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
         descan_error=descan_error,
     )
 
-    fourdstem_array = generate_dataset_from_image(params, test_image)
+    fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
     result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
