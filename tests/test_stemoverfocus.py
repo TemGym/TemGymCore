@@ -421,7 +421,7 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
 
 @pytest.mark.parametrize(
     "pxo_pxi, pxo_pyi, pyo_pxi, pyo_pyi, expected_px_output", [(1.0, 0.0, 0.0, 1.0, (0, 0)),
-                                                               (0.0, 1.0, 1.0, 0.0, (0, -1)),
+                                                               (0.0, 1.0, 1.0, 0.0, (-1, -1)),
                                                                (0.5, 0.0, 0.0, 0.5, (3, 3))],
 )
 def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi, pxo_pyi, pyo_pxi, pyo_pyi, expected_px_output):
@@ -458,7 +458,7 @@ def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi, pxo_pyi, 
 @pytest.mark.parametrize(
     "sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output", [(0.0, 0.0, 0.0, 0.0, (6, 6)),
                                                                (0.2, 0.0, 0.0, 0.2, (5, 5)),
-                                                               (0.0, 0.2, 0.2, 0.0, (5, 6))],
+                                                               (0.0, 0.2, 0.2, 0.0, (6, 6))],
 )
 def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output):
     # Test that we can predict where a single pixel will end up after the descanner with scale error

@@ -82,8 +82,8 @@ class Descanner:
         new_y = (
             y
             + (
-                sp_y * descan_error_yy
-                + sp_y * descan_error_yx
+                sp_x * descan_error_yx
+                + sp_y * descan_error_yy
                 + descan_error_offset_y
                 - sp_y
             )
@@ -102,8 +102,8 @@ class Descanner:
         new_dy = (
             dy
             + (
-                sp_y * descan_error_dyy
-                + sp_y * descan_error_dyx
+                sp_x * descan_error_dyx
+                + sp_y * descan_error_dyy
                 + descan_error_offset_dy
             )
             * _one

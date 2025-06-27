@@ -175,10 +175,10 @@ def test_descanner_random_descan_error():
     out = desc.step(ray)
 
     # Expected values computed using the same formula as in the implementation
-    exp_x = x + (sp_x * err[0] + sp_y * err[1] + err[8] - sp_x)
-    exp_y = y + (sp_y * err[3] + sp_y * err[2] + err[9] - sp_y)
-    exp_dx = dx + (sp_x * err[4] + sp_y * err[5] + err[10])
-    exp_dy = dy + (sp_y * err[7] + sp_y * err[6] + err[11])
+    exp_x = x + sp_x * err[0] + sp_y * err[1] + err[8] - sp_x
+    exp_y = y + sp_x * err[2] + sp_y * err[3] + err[9] - sp_y
+    exp_dx = dx + sp_x * err[4] + sp_y * err[5] + err[10]
+    exp_dy = dy + sp_x * err[6] + sp_y * err[7] + err[11]
 
     np.testing.assert_allclose(out.x, exp_x, atol=1e-6)
     np.testing.assert_allclose(out.y, exp_y, atol=1e-6)
@@ -265,9 +265,9 @@ def test_descanner_jacobian_matrix():
 
     # Compute expected coefficients
     K1 = sp_x * err[0] + sp_y * err[1] + err[8] - sp_x
-    K2 = sp_y * err[3] + sp_y * err[2] + err[9] - sp_y
+    K2 = sp_x * err[2] + sp_y * err[3] + err[9] - sp_y
     K3 = sp_x * err[4] + sp_y * err[5] + err[10]
-    K4 = sp_y * err[7] + sp_y * err[6] + err[11]
+    K4 = sp_x * err[6] + sp_y * err[7] + err[11]
     T = np.array(
         [
             [1.0, 0.0, 0.0, 0.0, K1],

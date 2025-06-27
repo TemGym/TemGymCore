@@ -225,14 +225,6 @@ def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
 
     detector_to_scan_grid = jnp.linalg.inv(scan_grid_to_detector)
 
-    try:
-        detector_to_scan_grid = jnp.linalg.inv(scan_grid_to_detector)
-    except jnp.linalg.LinAlgError:
-        print(
-            "scan_grid to Detector Matrix is singular, cannot invert. Returning identity matrix."
-        )
-        detector_to_scan_grid = jnp.eye(5)
-
     return transfer_matrices, total_transfer_matrix, detector_to_scan_grid
 
 

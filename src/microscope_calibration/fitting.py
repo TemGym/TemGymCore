@@ -6,14 +6,14 @@ from microscope_calibration.model import DescannerErrorParameters
 
 def descan_model_x(vars, pxo_pxi, pxo_pyi, sxo_pxi, sxo_pyi, offpxi, offsxi):
     spx, spy, B = vars
-    return (spx * pxo_pxi + spy * pxo_pyi + offpxi +
-            B * (spx * sxo_pxi + spy * sxo_pyi + offsxi))
+    return (spx * pxo_pxi + spy * pxo_pyi + offpxi) + \
+            B * (spx * sxo_pxi + spy * sxo_pyi + offsxi)
 
 
 def descan_model_y(vars, pyo_pxi, pyo_pyi, syo_pxi, syo_pyi, offpyi, offsyi):
     spx, spy, B = vars
-    return (spx * pyo_pxi + spy * pyo_pyi + offpyi +
-            B * (spx * syo_pxi + spy * syo_pyi + offsyi))
+    return (spx * pyo_pxi + spy * pyo_pyi + offpyi) + \
+            B * (spx * syo_pxi + spy * syo_pyi + offsyi)
 
 
 def fit_descan_error_matrix(scan_coords, det_coords, camera_lengths, num_samples=100):

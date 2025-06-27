@@ -45,8 +45,7 @@ def project_frame_forward(
 
     mask = np.asarray(mask, dtype=bool)
 
-    # interpolate and add 1 to avoid zero artefacts in the point image, then zero‐out invalid rays
-    sample_vals = sample_interpolant((scan_rays_y, scan_rays_x))  # + 1.0
+    sample_vals = sample_interpolant((scan_rays_y, scan_rays_x))
     sample_vals = np.where(mask, sample_vals, 0.0)
 
     # compute detector pixel indices for all rays
