@@ -1,8 +1,10 @@
-from typing_extensions import TypedDict, NamedTuple
+from typing import TypedDict, NamedTuple, TYPE_CHECKING
 import jax.numpy as jnp
+
 from jaxgym import Coords_XY
 
-from microscope_calibration import components as comp
+if TYPE_CHECKING:
+    from .components import PointSource, Descanner, ScanGrid, Detector
 
 
 class DescannerErrorParameters(NamedTuple):
@@ -48,15 +50,18 @@ class ModelParameters(TypedDict):
 
 
 class Model(NamedTuple):
-    source: comp.PointSource
-    scan_grid: comp.ScanGrid
-    descanner: comp.Descanner
-    detector: comp.Detector
+    source: 'PointSource'
+    scan_grid: 'ScanGrid'
+    descanner: 'Descanner'
+    detector: 'Detector'
 
 
 def create_stem_model(
     params_dict: ModelParameters, scan_pos_xy: Coords_XY = (0.0, 0.0)
 ) -> Model:
+    # delay import to avoid circular dependency
+    from microscope_calibration import components as comp
+
     PointSource = comp.PointSource(z=jnp.zeros((1)), semi_conv=params_dict["semi_conv"])
 
     ScanGrid = comp.ScanGrid(
