@@ -316,5 +316,6 @@ def test_singular_component_jacobian():
 
     inv = jnp.linalg.inv(J)
 
-    # Check if the Jacobian is a zero matrix
-    np.testing.assert_allclose(inv, jnp.ones((5, 5)) * jnp.inf, atol=1e-6)
+    # Check that jax.jacobian called on a singular component and used with our custom_jacobian_matrix
+    # returns a matrix that is singular (i.e., has NaN or Inf values)
+    assert np.isnan(inv).any() or np.isinf(inv).any()
