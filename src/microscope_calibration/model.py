@@ -5,19 +5,6 @@ from jaxgym import Coords_XY
 from microscope_calibration import components as comp
 
 
-class ModelParameters(TypedDict):
-    semi_conv: float
-    defocus: float
-    camera_length: float
-    scan_shape: tuple[int, int]
-    det_shape: tuple[int, int]
-    scan_step: tuple[float, float]
-    det_px_size: tuple[float, float]
-    scan_rotation: float
-    descan_error: 'DescannerErrorParameters' | jnp.ndarray
-    flip_y: bool
-
-
 class DescannerErrorParameters(NamedTuple):
     pxo_pxi: float = 0.0  # How position x output scales with respect to position x input
     pxo_pyi: float = 0.0  # How position x output scales with respect to position y input
@@ -45,6 +32,19 @@ class DescannerErrorParameters(NamedTuple):
                 [0.0,          0.0,          0.0, 0.0, 1.0],
             ]
         )
+
+
+class ModelParameters(TypedDict):
+    semi_conv: float
+    defocus: float
+    camera_length: float
+    scan_shape: tuple[int, int]
+    det_shape: tuple[int, int]
+    scan_step: tuple[float, float]
+    det_px_size: tuple[float, float]
+    scan_rotation: float
+    descan_error: DescannerErrorParameters
+    flip_y: bool
 
 
 class Model(NamedTuple):
