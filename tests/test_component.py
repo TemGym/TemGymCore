@@ -5,7 +5,8 @@ from microscope_calibration.components import ScanGrid, Detector, Descanner
 from microscope_calibration.model import DescannerErrorParameters
 from jaxgym.ray import Ray
 from jax import jacobian
-from jaxgym.utils import custom_jacobian_matrix
+from jaxgym.utils import custom_jacobian_matrix, SingularComponent
+import jax.numpy as jnp
 
 
 @pytest.mark.parametrize(
@@ -302,3 +303,18 @@ def test_scan_grid_rotation_random(repeat):
     theta = np.deg2rad(scan_rot)
     exp_scan = np.array([np.cos(theta) * step[0], -np.sin(theta) * step[0]])
     np.testing.assert_allclose(vec_scan, exp_scan, atol=1e-6)
+
+
+def test_singular_component_jacobian():
+    # Test that the Jacobian of a singular component is a zero matrix
+    singular_component = SingularComponent()
+    ray = Ray(x=0.0, y=0.0, dx=1.0, dy=1.0, _one=1.0, z=0.0, pathlength=0.0)
+
+    # Compute Jacobian wrt input ray
+    jac = jacobian(singular_component.step)(ray)
+    J = custom_jacobian_matrix(jac)
+
+    inv = jnp.linalg.inv(J)
+
+    # Check if the Jacobian is a zero matrix
+    np.testing.assert_allclose(inv, jnp.ones((5, 5)) * jnp.inf, atol=1e-6)

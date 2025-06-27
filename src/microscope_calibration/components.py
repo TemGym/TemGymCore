@@ -4,7 +4,7 @@ import jax_dataclasses as jdc
 from jaxgym.ray import Ray
 from jaxgym.coordinate_transforms import GridBase
 from jaxgym import Degrees, Coords_XY, Scale_YX, Shape_YX
-from .model import DescannerErrorParameters
+from microscope_calibration.model import DescannerErrorParameters
 
 
 @jdc.pytree_dataclass

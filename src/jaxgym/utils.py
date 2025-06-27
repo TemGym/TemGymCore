@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
 from scipy.constants import e, m_e, h
+from jaxgym.ray import Ray
+import jax_dataclasses as jdc
 
 RadiansJNP = jnp.float64
 
@@ -157,3 +159,20 @@ def zero_phase(u, idx_x, idx_y):
     phase_difference = 0 - jnp.angle(u_centre)
     u = u * jnp.exp(1j * phase_difference)
     return u
+
+
+@jdc.pytree_dataclass
+# A component that should give a singular jacobian used for testing
+class SingularComponent:
+    def step(self, ray: Ray):
+        new_x = ray.x
+        new_y = ray.x
+        return Ray(
+            x=new_x,
+            y=new_y,
+            dx=ray.dx,
+            dy=ray.dy,
+            _one=ray._one,
+            pathlength=ray.pathlength,
+            z=ray.z,
+        )
