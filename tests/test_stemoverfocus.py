@@ -460,7 +460,11 @@ def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi, pxo_pyi, 
                                                                (0.2, 0.0, 0.0, 0.2, (5, 5)),
                                                                (0.0, 0.2, 0.2, 0.0, (6, 6))],
 )
-def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi, sxo_pyi, syo_pxi, syo_pyi, expected_px_output):
+def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi,
+                                                              sxo_pyi,
+                                                              syo_pxi,
+                                                              syo_pyi,
+                                                              expected_px_output):
     # Test that we can predict where a single pixel will end up after the descanner with scale error
     grid_shape = (12, 12)
     scan_step = (0.01, 0.01)

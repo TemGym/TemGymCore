@@ -180,7 +180,7 @@ def generate_dataset_from_image(
     interp_t = (
         NearestNDInterpolator
         if method == "nearest"
-        else partial(LinearNDInterpolator, fill_value=0.)
+        else partial(LinearNDInterpolator, fill_value=1.0)
     )
     interpolant = interp_t(
         (y * sample_scale, x * sample_scale), image.flatten(),

@@ -39,14 +39,8 @@ def test_fit_descan_error_matrix_perfect_data():
     camera_lengths = np.random.uniform(0.5, 2.0, N)
 
     # true model parameters for x and y in one NamedTuple
-    true_params = DescannerErrorParameters(
-        pxo_pxi=1.2, pxo_pyi=-0.7,
-        sxo_pxi=0.1, sxo_pyi=-0.2,
-        offpxi=0.05, offsxi=-0.03,
-        pyo_pxi=-1.5, pyo_pyi=2.3,
-        syo_pxi=0.15, syo_pyi=-0.25,
-        offpyi=-0.02, offsyi=0.04,
-    )
+    # true model parameters for x and y in one NamedTuple
+    true_params = descan_error_params_random()
 
     # build perfect detector coordinates
     spx = scan_coords[:, 0]
@@ -168,7 +162,6 @@ def test_fit_descan_error_matrix_random():
     err = fit_descan_error_matrix(scan_coords, det_coords, bvals,
                                 num_samples=len(bvals))
 
-    # check x-related fields
     for key in err._fields:
         fitted_val = getattr(err, key)
         known_val = getattr(descan_error, key)
