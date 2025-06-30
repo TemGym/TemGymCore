@@ -49,7 +49,7 @@ def calculate_derivatives(ray, model, order):
     return derivs
 
 
-# @jax.jit
+@jax.jit
 def solve_model(ray, model):
     model_ray_jacobians = []
 
