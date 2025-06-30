@@ -1,13 +1,18 @@
 import numpy as np
 from libertem.udf import UDF
+from libertem.common.buffers import AuxBufferWrapper
 
 from .model import ModelParameters, create_stem_model
 from .stemoverfocus import project_coordinates_backward, inplace_sum
 
 
 class ShiftedSumUDF(UDF):
-    def __init__(self, model_parameters: ModelParameters):
-        super().__init__(model_parameters=model_parameters)
+    def __init__(
+        self,
+        model_parameters: ModelParameters,
+        shifts: AuxBufferWrapper | None = None,
+    ):
+        super().__init__(model_parameters=model_parameters, shifts=shifts)
 
     def get_task_data(self):
         # Ran once per-partition and re-used
@@ -35,6 +40,9 @@ class ShiftedSumUDF(UDF):
         }
 
     def process_frame(self, frame: np.ndarray):
+        if self.params.get("shifts", None) is not None:
+            shifts = self.params.shifts
+            frame = np.roll(frame, -1 * shifts, axis=(0, 1))
         scan_pos_flat = np.ravel_multi_index(
             self.meta.coordinates.ravel(),
             self.meta.dataset_shape.nav,
