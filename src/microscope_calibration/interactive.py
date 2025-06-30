@@ -118,4 +118,5 @@ def interactive_window(ctx: lt.Context, ds: lt.DataSet, model_params: ModelParam
             ),
         ),  # noqa
     )
-    return shifted_sum_window
+    model_parameters = get_model_parameters()
+    return shifted_sum_window, model_parameters
