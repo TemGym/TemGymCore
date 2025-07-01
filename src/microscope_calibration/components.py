@@ -49,32 +49,52 @@ class Descanner:
     descan_error: jnp.ndarray
 
     def step(self, ray: Ray):
+        """
+        The traditional 5x5 linear ray transfer matrix of an optical system is
+               [Axx, Axy, Bxx, Bxy, pos_offset_x],
+               [Ayx, Ayy, Byx, Byy, pos_offset_y],
+               [Cxx, Cxy, Dxx, Dxy, slope_offset_x],
+               [Cyx, Cyy, Dyx, Dyy, slope_offset_y],
+               [0.0, 0.0, 0.0, 0.0, 1.0],
+        Since the Descanner is designed to only shift or tilt the entire incoming beam,
+        with a certain error as a function of scan position, we write the 5th column
+        of the ray transfer matrix, which is designed to describe an offset in shift or tilt,
+        as a linear function of the scan position (spx, spy) (ignoring scan tilt for now):
+        Thus -
+            pos_offset_x(spx, spy) = pxo_pxi * spx + pxo_pyi * spy + offpxi
+            pos_offset_y(spx, spy) = pyo_pxi * spx + pyo_pyi * spy + offpyi
+            slope_offset_x(spx, spy) = sxo_pxi * spx + sxo_pyi * spy + offsxi
+            slope_offset_y(spx, spy) = syo_pxi * spx + syo_pyi * spy + offsyi
+        which can be represented as another 5x5 transfer matrix that is used to populate
+        the 5th column of the ray transfer matrix of the optical system.
+        """
+
         sp_x, sp_y = self.scan_pos_x, self.scan_pos_y
 
         (
-            descan_error_xx,
-            descan_error_xy,
-            descan_error_yx,
-            descan_error_yy,
-            descan_error_dxx,
-            descan_error_dxy,
-            descan_error_dyx,
-            descan_error_dyy,
-            descan_error_offset_x,
-            descan_error_offset_y,
-            descan_error_offset_dx,
-            descan_error_offset_dy,
+            pxo_pxi,  # How position x output scales with respect to scan x position
+            pxo_pyi,  # How position x output scales with respect to scan y position
+            pyo_pxi,  # How position y output scales with respect to scan x position
+            pyo_pyi,  # How position y output scales with respect to scan y position
+            sxo_pxi,  # How slope x output scales with respect to scan x position
+            sxo_pyi,  # How slope x output scales with respect to scan y position
+            syo_pxi,  # How slope y output scales with respect to scan x position
+            syo_pyi,  # How slope y output scales with respect to scan y position
+            offpxi,  # Constant additive error in x position
+            offpyi,  # Constant additive error in y position
+            offsxi,  # Constant additive error in x slope
+            offsyi,  # Constant additive error in y slope
         ) = self.descan_error
 
         x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
 
-        # Apply the negative of the input scan position to all rays equally, i.e descan the beam
+        
         new_x = (
             x
             + (
-                sp_x * descan_error_xx
-                + sp_y * descan_error_xy
-                + descan_error_offset_x
+                sp_x * pxo_pxi
+                + sp_y * pxo_pyi
+                + offpxi
                 - sp_x
             )
             * _one
@@ -82,9 +102,9 @@ class Descanner:
         new_y = (
             y
             + (
-                sp_x * descan_error_yx
-                + sp_y * descan_error_yy
-                + descan_error_offset_y
+                sp_x * pyo_pxi
+                + sp_y * pyo_pyi
+                + offpyi
                 - sp_y
             )
             * _one
@@ -93,18 +113,18 @@ class Descanner:
         new_dx = (
             dx
             + (
-                sp_x * descan_error_dxx
-                + sp_y * descan_error_dxy
-                + descan_error_offset_dx
+                sp_x * sxo_pxi
+                + sp_y * sxo_pyi
+                + offsxi
             )
             * _one
         )
         new_dy = (
             dy
             + (
-                sp_x * descan_error_dyx
-                + sp_y * descan_error_dyy
-                + descan_error_offset_dy
+                sp_x * syo_pxi
+                + sp_y * syo_pyi
+                + offsyi
             )
             * _one
         )
