@@ -17,7 +17,7 @@ def descan_model_y(vars, pyo_pxi, pyo_pyi, syo_pxi, syo_pyi, offpyi, offsyi):
         B * (spx * syo_pxi + spy * syo_pyi + offsyi)
 
 
-def fit_descan_error_matrix(model_params, com_dict, num_samples=100):
+def fit_descan_error_matrix(model_params, com_dict):
 
     scan_coords = []
     det_coords = []
@@ -46,6 +46,8 @@ def fit_descan_error_matrix(model_params, com_dict, num_samples=100):
     camera_lengths = camera_lengths[mask]
     scan_coords = scan_coords[mask]
     det_coords = det_coords[mask]
+
+    num_samples = camera_lengths.size
 
     indices = np.random.choice(camera_lengths.size, num_samples, replace=False)
 
