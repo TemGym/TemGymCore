@@ -268,3 +268,28 @@ def inplace_sum(px_y, px_x, mask, frame, buffer):
         px = px_x[i]
         if mask[i] and (0 <= px_y[i] < h) and (0 <= px_x[i] < w):
             buffer[py, px] += frame[i]
+
+
+def check_diameter_on_scan_and_det(params):
+    semi_conv = params["semi_conv"]
+    defocus = params["defocus"]
+    scan_step = params["scan_step"][0]  # Assuming square scan step
+    det_px_size = params["det_px_size"][0]  # Assuming square detector pixel
+    camera_length = params["camera_length"]
+
+    scan_disk_diameter = defocus * 2 * semi_conv  # Diameter at the scan plane
+    detector_disk_diameter = (
+        (defocus + camera_length) * 2 * semi_conv
+    )  # Radius at the detector plane
+
+    if scan_disk_diameter < scan_step:
+        Warning(
+            f"Scan disk radius {scan_disk_diameter} is smaller than scan step {scan_step}. "
+        )
+    if detector_disk_diameter < det_px_size:
+        Warning(
+            f"Detector disk radius {detector_disk_diameter} "
+            f"is smaller than detector pixel size {det_px_size}."
+        )
+
+    return scan_disk_diameter, detector_disk_diameter
