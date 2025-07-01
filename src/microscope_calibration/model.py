@@ -25,23 +25,7 @@ class DescannerErrorParameters(NamedTuple):
         return jnp.array(self)
 
     def as_matrix(self) -> jnp.ndarray:
-        # The traditional 5x5 linear ray transfer matrix of an optical system is
-        #        [Axx, Axy, Bxx, Bxy, pos_offset_x],
-        #        [Ayx, Ayy, Byx, Byy, pos_offset_y],
-        #        [Cxx, Cxy, Dxx, Dxy, slope_offset_x],
-        #        [Cyx, Cyy, Dyx, Dyy, slope_offset_y],
-        #        [0.0, 0.0, 0.0, 0.0, 1.0],
-        # Since the Descanner is designed to only shift or tilt the entire incoming beam,
-        # with a certain error as a function of scan position, we write the 5th column
-        # of the ray transfer matrix, which is designed to describe an offset in shift or tilt,
-        # as a linear function of the scan position (spx, spy) (ignoring scan tilt for now):
-        # Thus -
-        #     pos_offset_x(spx, spy) = pxo_pxi * spx + pxo_pyi * spy + offpxi
-        #     pos_offset_y(spx, spy) = pyo_pxi * spx + pyo_pyi * spy + offpyi
-        #     slope_offset_x(spx, spy) = sxo_pxi * spx + sxo_pyi * spy + offsxi
-        #     slope_offset_y(spx, spy) = syo_pxi * spx + syo_pyi * spy + offsyi
-        # which can be represented as another 5x5 transfer matrix that is used to populate
-        # the 5th column of the ray transfer matrix of the optical system.
+        # Not used but represents the equations in descanner.step()
         return jnp.array(
             [
                 [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],
