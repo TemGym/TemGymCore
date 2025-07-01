@@ -74,25 +74,42 @@ def ray_coords_at_plane(
     det_px_size: Scale_YX,
 ):
     """
-    For all rays from a point source within a given semi-convergence angle,
-    that hit the detector pixels, find their positions and slopes at any
-    specified plane in the system.
+    Propagate rays from a point source through the detector and back‐project them
+    onto an arbitrary plane.
 
-    Parameters:
-        semi_conv (float): The maximum semiconvergence angle defining the range of input slopes.
-        pt_src (Coords_XY): The (x, y) coordinates of the source point.
-        detector_coords (Coords_XY): The (x, y) coordinates defining the detector pixel layout.
-        total_transfer_matrix (xp.ndarray): The overall transfer matrix used to propagate rays
-        from the source to the detector.
-        det_transfer_matrix_to_specific_plane (xp.ndarray): The transfer matrix used to
-        map detector coordinates to a specific plane.
-        xp: Module, either numpy or jax.numpy.
-    Returns:
-        tuple:
-            specified_plane_x (xp.ndarray): The x-coordinates of the rays at the specific plane.
-            specified_plane_y (xp.ndarray): The y-coordinates of the rays at the specific plane.
-            mask (xp.ndarray): A boolean array indicating which input slopes resulted in valid ray
-                               intersections with the detector.
+    For each detector pixel coordinate, this function:
+      1. Computes the input slopes from the point source that hit the detector
+         within a given semi-convergence angle.
+      2. Propagates those rays to the detector plane using total_transfer_matrix.
+      3. Maps the resulting detector‐plane rays onto a specified plane via
+         det_transfer_matrix_to_specific_plane.
+      4. Computes a boolean mask of rays that both hit the detector pixels and
+         satisfy the semi-convergence and pixel‐size constraints.
+
+    Parameters
+    ----------
+    semi_conv : float
+        Maximum semi-convergence angle (in radians) defining the allowable input slopes.
+    pt_src : Coords_XY
+        The (x, y) position of the point source.
+    detector_coords : Coords_XY
+        An (N, 2) array of (x, y) coordinates for each detector pixel.
+    total_transfer_matrix : np.ndarray
+        The 5×5 transfer matrix mapping rays from the source plane to the detector plane.
+    det_transfer_matrix_to_specific_plane : np.ndarray
+        The transfer matrix mapping detector-plane ray coordinates onto the target plane.
+    det_px_size : Scale_YX
+        A (pixel_y, pixel_x) tuple specifying the detector pixel dimensions.
+
+    Returns
+    -------
+    specified_plane_x : jax.Array
+        The x-coordinates of each ray intersection on the specified plane.
+    specified_plane_y : jax.Array
+        The y-coordinates of each ray intersection on the specified plane.
+    detector_semi_conv_mask : jax.Array[bool]
+        A boolean mask indicating which rays hit the detector pixels and
+        satisfy the semi-convergence/pixel‐size criteria.
     """
 
     input_slopes = find_input_slopes(pt_src, detector_coords, total_transfer_matrix)
@@ -146,15 +163,18 @@ def _no_op(mask):
 
 def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
     """
-    Mask rays that have a slope which means they won't hit the detector pixels.
-    Except for the case where the semi-convergence is smaller than a so-called minimum alpha,
-    which is the angle between the radial distance between two detector pixels and the
-    distance from the point source. If the semi-convergence is smaller than this minimum
-    alpha, in theory no rays would hit the detector unless the central pixel is under
-    the beam, which happens when there is an odd amount of detector pixels. In the even
-    case, the beam is going inbetween pixels. This case is realised when the semi-convergence
-    angle is smaller than min-alpha, and thus 4 pixels could be selected. If four pixels are
-    selected, we then select only the last one in the array
+    Filter rays by their input slope so that only those intersecting detector pixels remain.
+
+    Rays outside the semi-convergence cone (defined by semi_conv) cannot reach the detector
+    and are discarded. We also compute a minimum acceptance angle
+
+        min_alpha = (pixel_diagonal / 2) / camera_length
+
+    where pixel_diagonal = hypot(det_px_dx, det_px_dy). If semi_conv < min_alpha, the beam
+    footprint is smaller than the pixel spacing and would not fully cover any pixel
+    centers except possibly one. In this edge case, multiple candidate rays may satisfy
+    the slope test; we resolve this by keeping only the last valid ray to ensure a single
+    pixel hit and avoid ambiguous multi-pixel selection.
     """
 
     det_px_dy, det_px_dx = det_px_size

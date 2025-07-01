@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from .components import PointSource, Descanner, ScanGrid, Detector
 
 
-class DescannerErrorParameters(NamedTuple):
+class DescanErrorParameters(NamedTuple):
     pxo_pxi: float = 0.0  # How position x output scales with respect to scan x position
     pxo_pyi: float = 0.0  # How position x output scales with respect to scan y position
     pyo_pxi: float = 0.0  # How position y output scales with respect to scan x position
@@ -46,7 +46,7 @@ class ModelParameters(TypedDict):
     scan_step: tuple[float, float]
     det_px_size: tuple[float, float]
     scan_rotation: float
-    descan_error: DescannerErrorParameters
+    descan_error: DescanErrorParameters
     flip_y: bool
 
 

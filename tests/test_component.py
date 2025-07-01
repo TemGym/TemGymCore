@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 
 from microscope_calibration.components import ScanGrid, Detector, Descanner
-from microscope_calibration.model import DescannerErrorParameters
+from microscope_calibration.model import DescanErrorParameters
 from jaxgym.ray import Ray
 from jax import jacobian
 from jaxgym.utils import custom_jacobian_matrix, SingularComponent
@@ -156,7 +156,7 @@ def test_descanner_random_descan_error():
     # Randomly chosen non-zero descan error (length 12)
     err = np.random.rand(12)
 
-    err = DescannerErrorParameters(
+    err = DescanErrorParameters(
         pxo_pxi=err[0],
         pxo_pyi=err[1],
         pyo_pxi=err[2],
@@ -191,7 +191,7 @@ def test_descanner_offset_consistency():
     scan_pos_x = np.random.uniform(-5.0, 5.0)
     scan_pos_y = np.random.uniform(-5.0, 5.0)
     err = np.random.rand(12)
-    err = DescannerErrorParameters(
+    err = DescanErrorParameters(
         pxo_pxi=err[0],
         pxo_pyi=err[1],
         pyo_pxi=err[2],
@@ -242,7 +242,7 @@ def test_descanner_jacobian_matrix():
     # jax.jacobian is called on it.
     sp_x, sp_y = 1.5, -2.0
     err = np.random.rand(12)
-    err = DescannerErrorParameters(
+    err = DescanErrorParameters(
         pxo_pxi=err[0],
         pxo_pyi=err[1],
         pyo_pxi=err[2],

@@ -66,7 +66,9 @@ class Descanner:
             slope_offset_x(spx, spy) = sxo_pxi * spx + sxo_pyi * spy + offsxi
             slope_offset_y(spx, spy) = syo_pxi * spx + syo_pyi * spy + offsyi
         which can be represented as another 5x5 transfer matrix that is used to populate
-        the 5th column of the ray transfer matrix of the optical system.
+        the 5th column of the ray transfer matrix of the optical system. The jacobian call
+        in jaxgym will return the complete 5x5 ray transfer matrix of the optical system
+        with the total descan error included in the 5th column.
         """
 
         sp_x, sp_y = self.scan_pos_x, self.scan_pos_y
@@ -88,7 +90,6 @@ class Descanner:
 
         x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
 
-        
         new_x = (
             x
             + (

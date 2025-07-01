@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.optimize import curve_fit
 
-from microscope_calibration.model import DescannerErrorParameters
+from microscope_calibration.model import DescanErrorParameters
 from microscope_calibration.model import create_stem_model
 
 
@@ -51,7 +51,7 @@ def fit_descan_error_matrix(model_params, com_dict):
 
     indices = np.random.choice(camera_lengths.size, num_samples, replace=False)
 
-    popt_x, pcov_x = curve_fit(
+    popt_x, _ = curve_fit(
         descan_model_x,
         (scan_coords[:, 0][indices], scan_coords[:, 1][indices], camera_lengths[indices]),
         det_coords[:, 0][indices],
@@ -59,7 +59,7 @@ def fit_descan_error_matrix(model_params, com_dict):
     )
     pxo_pxi, pxo_pyi, sxo_pxi, sxo_pyi, offpxi, offsxi = popt_x
 
-    popt_y, pcov_y = curve_fit(
+    popt_y, _ = curve_fit(
         descan_model_y,
         (scan_coords[:, 0][indices], scan_coords[:, 1][indices], camera_lengths[indices]),
         det_coords[:, 1][indices],
@@ -67,15 +67,15 @@ def fit_descan_error_matrix(model_params, com_dict):
     )
     pyo_pxi, pyo_pyi, syo_pxi, syo_pyi, offpyi, offsyi = popt_y
 
-    return DescannerErrorParameters(pxo_pxi=pxo_pxi,
-                                    pxo_pyi=pxo_pyi,
-                                    pyo_pxi=pyo_pxi,
-                                    pyo_pyi=pyo_pyi,
-                                    sxo_pxi=sxo_pxi,
-                                    sxo_pyi=sxo_pyi,
-                                    syo_pxi=syo_pxi,
-                                    syo_pyi=syo_pyi,
-                                    offpxi=offpxi,
-                                    offpyi=offpyi,
-                                    offsxi=offsxi,
-                                    offsyi=offsyi)
+    return DescanErrorParameters(pxo_pxi=pxo_pxi,
+                                 pxo_pyi=pxo_pyi,
+                                 pyo_pxi=pyo_pxi,
+                                 pyo_pyi=pyo_pyi,
+                                 sxo_pxi=sxo_pxi,
+                                 sxo_pyi=sxo_pyi,
+                                 syo_pxi=syo_pxi,
+                                 syo_pyi=syo_pyi,
+                                 offpxi=offpxi,
+                                 offpyi=offpyi,
+                                 offsxi=offsxi,
+                                 offsyi=offsyi)
