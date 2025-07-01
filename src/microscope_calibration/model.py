@@ -83,6 +83,7 @@ def create_stem_model(
         z=jnp.array([params_dict["camera_length"] + params_dict["defocus"]]),
         det_shape=tuple(params_dict["det_shape"]),
         det_pixel_size=tuple(params_dict["det_px_size"]),
+        flip_y=params_dict["flip_y"],
     )
 
     return Model(PointSource, ScanGrid, Descanner, Detector)

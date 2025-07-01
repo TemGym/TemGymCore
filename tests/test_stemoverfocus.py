@@ -3,12 +3,15 @@ import numpy as np
 import jax.numpy as jnp
 import sympy as sp
 from jaxgym.transfer import accumulate_transfer_matrices
+from skimage.util import view_as_blocks
 
 from microscope_calibration.stemoverfocus import (
     solve_model_fourdstem_wrapper,
     find_input_slopes,
     ray_coords_at_plane,
     mask_rays,
+    project_coordinates_backward,
+    inplace_sum
 )
 from microscope_calibration import components as comp
 from microscope_calibration.generate import (
@@ -275,7 +278,8 @@ def test_solve_model_fourdstem_wrapper():
 
 
 def test_same_z_components():
-    # Test that if one places components at the same z position (zero defocus, zero camera length), and try to run a ray through it,
+    # Test that if one places components at the same z position (zero defocus, zero camera length),
+    # and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
     err = jnp.zeros(12)
     descan_error = DescannerErrorParameters(*err)
@@ -373,7 +377,8 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
 
 @pytest.mark.parametrize("runs", range(3))
 def test_project_frame_forward_and_backward_with_descan_random(runs):
-    # Test that we get the same image after projecting forward and backward with a random descan error matrix.
+    # Test that we get the same image after projecting forward and backward
+    # with a random descan error matrix.
     scan_rotation = np.random.uniform(-180, 180)
     grid_shape = np.random.randint(8, 20, size=2)
 
@@ -424,7 +429,11 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
                                                                (0.0, 1.0, 1.0, 0.0, (-1, -1)),
                                                                (0.5, 0.0, 0.0, 0.5, (3, 3))],
 )
-def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi, pxo_pyi, pyo_pxi, pyo_pyi, expected_px_output):
+def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi,
+                                                              pxo_pyi,
+                                                              pyo_pxi,
+                                                              pyo_pyi,
+                                                              expected_px_output):
     # Test that we can predict where a single pixel will end up after the descanner with scale error
     grid_shape = (12, 12)
     scan_step = (0.01, 0.01)
@@ -433,7 +442,10 @@ def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi, pxo_pyi, 
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1
 
-    descan_error = DescannerErrorParameters(pxo_pxi=pxo_pxi, pxo_pyi=pxo_pyi, pyo_pxi=pyo_pxi, pyo_pyi=pyo_pyi)
+    descan_error = DescannerErrorParameters(pxo_pxi=pxo_pxi,
+                                            pxo_pyi=pxo_pyi,
+                                            pyo_pxi=pyo_pxi,
+                                            pyo_pyi=pyo_pyi)
 
     params = ModelParameters(
         semi_conv=1e-4,
@@ -450,7 +462,8 @@ def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi, pxo_pyi, 
     fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
-    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
+    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]],
+                      dtype=np.uint8)
 
     np.testing.assert_array_equal(result, 1.0)
 
@@ -473,7 +486,10 @@ def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi,
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1
 
-    descan_error = DescannerErrorParameters(sxo_pxi=sxo_pxi, sxo_pyi=sxo_pyi, syo_pxi=syo_pxi, syo_pyi=syo_pyi)
+    descan_error = DescannerErrorParameters(sxo_pxi=sxo_pxi,
+                                            sxo_pyi=sxo_pyi,
+                                            syo_pxi=syo_pxi,
+                                            syo_pyi=syo_pyi)
 
     params = ModelParameters(
         semi_conv=1e-4,
@@ -490,7 +506,8 @@ def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi,
     fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
-    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
+    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]],
+                      dtype=np.uint8)
 
     np.testing.assert_array_equal(result, 1.0)
 
@@ -501,7 +518,11 @@ def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi,
                                                            (0.01, 0.05, 0.0, 0.0, (1, 6)),
                                                            (0.0, 0.0, 0.1, 0.1, (1, 11))],
 )
-def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offpxi, offpyi, offsxi, offsyi, expected_px_output):
+def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offpxi,
+                                                                            offpyi,
+                                                                            offsxi,
+                                                                            offsyi,
+                                                                            expected_px_output):
     # Test that we can predict where a single pixel will end up after the descanner
     grid_shape = (12, 12)
     scan_step = (0.01, 0.01)
@@ -510,7 +531,10 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1
 
-    descan_error = DescannerErrorParameters(offpxi=offpxi, offpyi=offpyi, offsxi=offsxi, offsyi=offsyi)
+    descan_error = DescannerErrorParameters(offpxi=offpxi,
+                                            offpyi=offpyi,
+                                            offsxi=offsxi,
+                                            offsyi=offsyi)
 
     params = ModelParameters(
         semi_conv=1e-4,
@@ -527,6 +551,96 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
     fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
 
     expected_px_output = np.array(expected_px_output, dtype=np.int32)
-    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]], dtype=np.uint8)
+    result = np.array(fourdstem_array[0, 0, expected_px_output[0], expected_px_output[1]],
+                      dtype=np.uint8)
 
     np.testing.assert_array_equal(result, 1.0)
+
+
+@pytest.mark.parametrize("scan_rotation", [0, 90, -90])
+@pytest.mark.parametrize("flip_y", [False, True])
+def test_scan_rotation_90_flip(scan_rotation, flip_y):
+
+    params = ModelParameters(
+        semi_conv=1,
+        defocus=0.5,  # Distance from the crossover to the sample
+        camera_length=0.5,  # Distance from the point source to the detector
+        scan_shape=(16, 16),  # YX!
+        det_shape=(32, 32),  # YX!
+        scan_step=(1e-2, 1e-2),  # YX!
+        det_px_size=(1e-2, 1e-2),  # YX!
+        scan_rotation=scan_rotation,
+        descan_error=DescannerErrorParameters(),
+        flip_y=flip_y,
+    )
+
+    test_image = np.random.randint(0, 8, size=params['det_shape'])
+
+    model = create_stem_model(params)
+    det_coords = model.detector.get_coords()
+
+    scan_pos = [0.0, 0.0]  # No scan position offset
+
+    # back-projection with wrong descan error
+    px_y, px_x, mask = project_coordinates_backward(model, det_coords, scan_pos)
+    scan_image = np.zeros(params['scan_shape'])
+
+    inplace_sum(np.array(px_y), np.array(px_x), np.array(mask), test_image.ravel(), scan_image)
+
+    if flip_y:
+        test_image = np.flipud(test_image).copy()
+
+    # Crop to even dimensions then reshape and sum over 2×2 blocks
+    manual_bin_of_test_image = view_as_blocks(test_image, block_shape=(2, 2))
+    manual_bin_of_test_image = np.sum(manual_bin_of_test_image, axis=(-2, -1))
+
+    if scan_rotation == 90:
+        manual_bin_of_test_image = np.rot90(manual_bin_of_test_image, k=1)
+    elif scan_rotation == -90:
+        manual_bin_of_test_image = np.rot90(manual_bin_of_test_image, k=-1)
+
+    np.testing.assert_allclose(scan_image, manual_bin_of_test_image, rtol=1e-5)
+
+
+@pytest.mark.parametrize("scan_rotation", [0, 45, -45])
+def test_scan_rotation_45(scan_rotation):
+
+    params = ModelParameters(
+        semi_conv=1,
+        defocus=0.5,  # Distance from the crossover to the sample
+        camera_length=0.5,  # Distance from the point source to the detector
+        scan_shape=(17, 17),  # YX!
+        det_shape=(33, 33),  # YX!
+        scan_step=(1e-3, 1e-3),  # YX!
+        det_px_size=(1e-2, 1e-2),  # YX!
+        scan_rotation=scan_rotation,
+        descan_error=DescannerErrorParameters(),
+        flip_y=False,
+    )
+
+    test_image = np.zeros(params['det_shape'], dtype=np.uint8)
+    test_image[params['det_shape'][0] // 2, :] = 1
+
+    model = create_stem_model(params)
+    det_coords = model.detector.get_coords()
+
+    scan_pos = [0.0, 0.0]  # No scan position offset
+
+    # back-projection with wrong descan error
+    px_y, px_x, mask = project_coordinates_backward(model, det_coords, scan_pos)
+    scan_image = np.zeros(params['scan_shape'])
+
+    inplace_sum(np.array(px_y), np.array(px_x), np.array(mask), test_image.ravel(), scan_image)
+
+    if scan_rotation == -45:
+        diagonal_image = np.eye(params['scan_shape'][0], dtype=np.uint8)
+    elif scan_rotation == 45:
+        diagonal_image = np.fliplr(np.eye(params['scan_shape'][0], dtype=np.uint8))
+    else:
+        diagonal_image = scan_image.copy()
+
+    scan_image_masked = scan_image[diagonal_image.astype(bool)].copy()
+    scan_image_inv_masked = scan_image[~diagonal_image.astype(bool)].copy()
+
+    assert np.sum(scan_image_masked) > 0.0
+    assert np.sum(scan_image_inv_masked) == 0.0
