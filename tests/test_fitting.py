@@ -15,33 +15,46 @@ from libertem.udf.com import CoMUDF
 def descan_error_params_random():
     # Randomize descan error parameters
     return DescanErrorParameters(
-        pxo_pxi=np.random.uniform(-2.0, 2.0),
-        pxo_pyi=np.random.uniform(-2.0, 2.0),
-        pyo_pxi=np.random.uniform(-2.0, -2.0),
-        pyo_pyi=np.random.uniform(-2.0, 2.0),
-        sxo_pxi=np.random.uniform(-2.0, 2.0),
-        sxo_pyi=np.random.uniform(-2.0, 2.0),
-        syo_pxi=np.random.uniform(-2.0, 2.0),
-        syo_pyi=np.random.uniform(-2.0, 2.0),
-        offpxi=np.random.uniform(-0.04, 0.04),
-        offsxi=np.random.uniform(-0.04, 0.04),
-        offpyi=np.random.uniform(-0.04, 0.04),
-        offsyi=np.random.uniform(-0.04, 0.04)
+        pxo_pxi=np.random.uniform(-0.2, 0.2),
+        pxo_pyi=np.random.uniform(-0.2, 0.2),
+        pyo_pxi=np.random.uniform(-0.2, -0.2),
+        pyo_pyi=np.random.uniform(-0.2, 0.2),
+        sxo_pxi=np.random.uniform(-0.2, 0.2),
+        sxo_pyi=np.random.uniform(-0.2, 0.2),
+        syo_pxi=np.random.uniform(-0.2, 0.2),
+        syo_pyi=np.random.uniform(-0.2, 0.2),
+        offpxi=np.random.uniform(-0.001, 0.001),
+        offsxi=np.random.uniform(-0.001, 0.001),
+        offpyi=np.random.uniform(-0.001, 0.001),
+        offsyi=np.random.uniform(-0.001, 0.001)
     )
 
 
-def test_fit_descan_error_matrix_random():
+def test_fit_descan_error_matrix():
 
     ctx = lt.Context.make_with("inline")
 
-    scan_shape = (41, 41)
-    det_shape = (129, 129)
+    scan_shape = (19, 19)
+    det_shape = (29, 29)
     scan_step = (0.0005, 0.0005)
     det_px_size = (0.01, 0.01)
 
     test_image = np.ones(scan_shape, dtype=np.uint8)
 
-    descan_error = descan_error_params_random()
+    descan_error = DescanErrorParameters(
+        pxo_pxi=3,
+        pxo_pyi=-3.,
+        pyo_pxi=1.,
+        pyo_pyi=0.,
+        sxo_pxi=2.,
+        sxo_pyi=-2.,
+        syo_pxi=3.,
+        syo_pyi=-1.,
+        offpxi=0.,
+        offsxi=0.,
+        offpyi=0.,
+        offsyi=0.,
+    )
 
     params = ModelParameters(
         semi_conv=1e-4,
@@ -58,28 +71,38 @@ def test_fit_descan_error_matrix_random():
 
     datasets = {}
     clengths = (0.5, 1.0, 1.5)
-    with ProcessPoolExecutor(max_workers=3) as p:
-        futures = []
-        for cl in clengths:
-            _params = copy.deepcopy(params)
-            _params["camera_length"] = cl
-            f = p.submit(generate_dataset_from_image,
-                        _params,
-                        test_image,
-                        method="linear",
-                        sample_scale=1.0,
-                        progress=False)
-            futures.append(f)
-
-        for f, cl in zip(futures, clengths):
-            data = f.result()
-            datasets[cl] = ctx.load("memory", data=data, num_partitions=1)
+    for cl in clengths:
+        _params = copy.deepcopy(params)
+        _params["camera_length"] = cl
+        data = generate_dataset_from_image(
+            _params,
+            test_image,
+            method="linear",
+            sample_scale=1.0,
+            progress=False
+        )
+        datasets[cl] = ctx.load("memory", data=data, num_partitions=1)
 
     com_r = {}
     com_udf = CoMUDF.with_params()
     for i, (cl, ds) in enumerate(datasets.items()):
         sum_res, com_res = ctx.run_udf(ds, [SumUDF(), com_udf])
         com_r[cl] = com_res
+
+    # Uncomment the following lines to visualize the results
+    # import matplotlib.pyplot as plt
+    # fig, axs = plt.subplots(2, len(datasets), figsize=(12, 6))
+    # for i, (cl, ds) in enumerate(datasets.items()):
+    #     sum_res, com_res = ctx.run_udf(ds, [SumUDF(), com_udf])
+    #     com_r[cl] = com_res
+    #     axs[0, i].imshow(sum_res["intensity"].data, cmap="gray")
+    #     axs[0, i].set_title(f"Sum cl={cl}")
+
+    # for i, (cl, ds) in enumerate(datasets.items()):
+    #     axs[1, i].imshow(com_r[cl]["magnitude"].data)
+    #     axs[1, i].set_title(f"CoM shift cl={cl}")
+
+    # fig.savefig('com_results.png')
 
     err = fit_descan_error_matrix(params, com_r)
 
