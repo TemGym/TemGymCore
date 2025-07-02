@@ -1,8 +1,6 @@
 import numpy as np
 import copy
 
-from concurrent.futures import ProcessPoolExecutor
-
 from microscope_calibration.fitting import fit_descan_error_matrix
 from microscope_calibration.model import DescanErrorParameters, ModelParameters
 from microscope_calibration.generate import generate_dataset_from_image
