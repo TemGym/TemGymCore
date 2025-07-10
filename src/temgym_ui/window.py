@@ -263,7 +263,7 @@ class TemGymWindow(QMainWindow):
             self.update_camera(model)
         if tree:
             self.update_tree(model)
-        self.update_rays(model, self.num_rays)
+        # self.update_rays(model, self.num_rays)
 
     def add_geometry(self, model):
         self.tem_window.clear()

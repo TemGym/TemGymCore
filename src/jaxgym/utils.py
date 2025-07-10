@@ -4,6 +4,7 @@ import numpy as np
 from scipy.constants import e, m_e, h
 from jaxgym.ray import Ray
 import jax_dataclasses as jdc
+from numba import njit
 
 RadiansJNP = jnp.float64
 
@@ -20,27 +21,21 @@ def custom_jacobian_matrix(ray_jac):
     )
 
 
-@jax.jit
+@njit
 def multi_cumsum_inplace(values, partitions, start):
-    def body_fun(i, carry):
-        vals, part_idx, part_count = carry
-        current_len = partitions[part_idx]
-
-        def reset_part(_):
-            # move to the next partition, reset, set start
-            new_vals = vals.at[i].set(start)
-            return (new_vals, part_idx + 1, 0)
-
-        def continue_part(_):
-            # accumulate with previous value
-            new_vals = vals.at[i].add(vals[i - 1])
-            return (new_vals, part_idx, part_count + 1)
-
-        return jax.lax.cond(part_count == current_len, reset_part, continue_part, None)
-
-    values = values.at[0].set(start)
-    values, _, _ = jax.lax.fori_loop(1, values.shape[0], body_fun, (values, 0, 0))
-    return values
+    part_idx = 0
+    current_part_len = partitions[part_idx]
+    part_count = 0
+    values[0] = start
+    for v_idx in range(1, values.size):
+        if current_part_len == part_count:
+            part_count = 0
+            part_idx += 1
+            current_part_len = partitions[part_idx]
+            values[v_idx] = start
+        else:
+            values[v_idx] += values[v_idx - 1]
+            part_count += 1
 
 
 def concentric_rings(
@@ -48,42 +43,39 @@ def concentric_rings(
     radius: float,
 ):
     num_rings = max(
-        1, int(jnp.floor((-1 + jnp.sqrt(1 + 4 * num_points_approx / jnp.pi)) / 2))
+        1,
+        int(np.floor((-1 + np.sqrt(1 + 4 * num_points_approx / np.pi)) / 2))
     )
 
     # Calculate the circumference of each ring
-    num_points_kth_ring = jnp.round(2 * jnp.pi * jnp.arange(1, num_rings + 1)).astype(
-        int
-    )
+    num_points_kth_ring = np.round(
+        2 * np.pi * np.arange(1, num_rings + 1)
+    ).astype(int)
     num_rings = num_points_kth_ring.size
     points_per_unit = num_points_approx / num_points_kth_ring.sum()
-    points_per_ring = jnp.round(num_points_kth_ring * points_per_unit).astype(int)
+    points_per_ring = np.round(num_points_kth_ring * points_per_unit).astype(int)
 
     # Make get the radii for the number of circles of rays we need
-    radii = jnp.linspace(
-        0,
-        radius,
-        num_rings + 1,
-        endpoint=True,
+    radii = np.linspace(
+        0, radius, num_rings + 1, endpoint=True,
     )[1:]
-    div_angle = 2 * jnp.pi / points_per_ring
+    div_angle = 2 * np.pi / points_per_ring
 
-    params = jnp.stack((radii, div_angle), axis=0)
+    params = np.stack((radii, div_angle), axis=0)
 
     # Cupy gave an error here saying that points_per_ring must not be an array
-    repeats = points_per_ring
+    repeats = points_per_ring.tolist()
 
-    all_params = jnp.repeat(params, repeats, axis=-1)
-    multi_cumsum_inplace(all_params[1, :], points_per_ring, 0.0)
+    all_params = np.repeat(params, repeats, axis=-1)
+    multi_cumsum_inplace(all_params[1, :], points_per_ring, 0.)
 
     all_radii = all_params[0, :]
     all_angles = all_params[1, :]
 
     return (
-        all_radii * jnp.sin(all_angles),
-        all_radii * jnp.cos(all_angles),
+        all_radii * np.sin(all_angles),
+        all_radii * np.cos(all_angles),
     )
-
 
 def fibonacci_spiral(
     nb_samples: int,
@@ -116,16 +108,14 @@ def fibonacci_spiral(
     return y, x
 
 
-def random_coords(num: int, jnp=jnp):
+def random_coords(num: int):
     # generate random points uniformly sampled in x/y
     # within a centred circle of radius 0.5
     # return (y, x)
-    key = jax.random.PRNGKey(1)
-
-    yx = jax.random.uniform(
-        key, shape=(int(num * 1.28), 2), minval=-1, maxval=1
-    )  # 1.28 =  4 / np.pi
-    radii = jnp.sqrt((yx**2).sum(axis=1))
+    yx = np.random.uniform(
+        -1, 1, size=(int(num * 1.28), 2)  # 4 / np.pi
+    )
+    radii = np.sqrt((yx ** 2).sum(axis=1))
     mask = radii < 1
     yx = yx[mask, :]
     return (

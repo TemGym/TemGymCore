@@ -1,13 +1,44 @@
-import jax_dataclasses as jdc
-import jax.numpy as jnp
-
 from .ray import Ray, propagate
-from typing_extensions import TypeAlias
+from .utils import random_coords, concentric_rings
 from .ode import solve_ode
 from . import Degrees
 
+import jax_dataclasses as jdc
+import jax.numpy as jnp
+import numpy as np
+
+from typing_extensions import TypeAlias
+
 Radians: TypeAlias = jnp.float64  # type: ignore
-EPS = 1e-12
+
+
+@jdc.pytree_dataclass
+class PointSource:
+    z: float
+    semi_conv: float
+    offset_xy: tuple[float, float] = (0.0, 0.0)
+
+    def step(self, ray: Ray):
+        return ray
+    
+    def generate(self, num_rays: int, random: bool = False):
+        semi_conv = self.semi_conv
+        offset_xy = self.offset_xy
+
+        if random:
+            y, x = random_coords(num_rays) * semi_conv
+        else:
+            y, x = concentric_rings(num_rays, semi_conv)
+        
+        r = np.zeros((num_rays, 5), dtype=np.float64)  # x, y, theta_x, theta_y, 1
+
+        r[:, 0] += offset_xy[0]
+        r[:, 1] += offset_xy[1]
+        r[:, 2] = x
+        r[:, 3] = y
+        r[:, 4] = 1.
+
+        return r
 
 
 @jdc.pytree_dataclass
@@ -214,7 +245,7 @@ class Biprism:
             pathlength=pathlength,
             z=ray.z,
         )
-
+    
 
 # Base class for grid transforms
 

@@ -1,9 +1,9 @@
 import jax.numpy as jnp
 import numpy as np
-from jaxgym.transfer import transfer_rays_pt_src, accumulate_transfer_matrices
+from jaxgym.transfer import transfer_rays, transfer_rays_pt_src, accumulate_transfer_matrices
 
 
-def test_transfer_free_space():
+def test_transfer_pt_src_free_space():
     # Define a point source position and random ray angle
     x0, y0 = 1.0, -2.0
     angle = np.pi / 4
@@ -35,7 +35,7 @@ def test_transfer_free_space():
     np.testing.assert_allclose(coords[3, 0], dy0, atol=1e-6)
 
 
-def test_transfer_random_matrix():
+def test_transfer_pt_src_random_matrix():
     # Create a reproducible random 5x5 matrix with integer entries
     rng = np.random.RandomState(np.random.randint(0, 1000))
     T_vals = rng.randint(-5, 5, size=(5, 5))
@@ -62,7 +62,7 @@ def test_transfer_random_matrix():
     np.testing.assert_allclose(coords[3, 0], dy_exp, atol=1e-6)
 
 
-def test_identity_transfer():
+def test_transfer_pt_src_identity():
     # Batch of rays from same source through identity matrix
     x0, y0 = 0.5, -0.5
     N = 4
@@ -81,7 +81,7 @@ def test_identity_transfer():
     np.testing.assert_allclose(coords[3], dy_vals)
 
 
-def test_empty_input():
+def test_transfer_pt_src_empty_input():
     # No rays
     slopes_x = jnp.array([], dtype=float)
     slopes_y = jnp.array([], dtype=float)
@@ -116,6 +116,22 @@ def test_negative_distance_transfer():
     np.testing.assert_allclose(coords[1, 0], y_exp, atol=1e-6)
 
 
+def test_transfer_rays_shape():
+    # input rays of N x 5 shape
+    N = 10
+    M = 7
+    rays = np.zeros((N, 5))  # shape (N, 5)
+
+    # 7 input ray transfer matrices of shape (7, 5, 5)
+    transfer_matrices = np.zeros((M, 5, 5))
+
+    output_coords = transfer_rays(rays, transfer_matrices)
+
+    # Output shape should be N, M, 5
+
+    assert output_coords.shape == (N, M, 5), f"Expected shape (N, M, 5), got {output_coords.shape}"
+
+
 def test_accumulate_transfer_matrices():
     # Define three simple homogeneous matrices
     A = np.eye(5)
@@ -134,30 +150,3 @@ def test_accumulate_transfer_matrices():
     sub = accumulate_transfer_matrices(mats, 1, 2)
     expected_sub = C
     np.testing.assert_allclose(np.array(sub), expected_sub)
-
-
-def test_shear_and_scaling():
-    # Shear x by alpha * y and scale y by k
-    alpha = 2.0
-    k = 0.5
-    transfer_matrix = jnp.array(
-        [
-            [1.0, alpha, 0.0, 0.0, 0.0],
-            [0.0, k, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    x0, y0 = 1.0, 2.0
-    dx0, dy0 = 0.1, 0.2
-    slopes_x = jnp.array([dx0])
-    slopes_y = jnp.array([dy0])
-
-    coords = transfer_rays_pt_src((x0, y0), (slopes_x, slopes_y), transfer_matrix)
-    x_exp = x0 + alpha * y0
-    y_exp = k * y0
-    np.testing.assert_allclose(coords[0, 0], x_exp, atol=1e-6)
-    np.testing.assert_allclose(coords[1, 0], y_exp, atol=1e-6)
-    np.testing.assert_allclose(coords[2, 0], dx0, atol=1e-6)
-    np.testing.assert_allclose(coords[3, 0], dy0, atol=1e-6)

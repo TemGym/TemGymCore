@@ -1,4 +1,36 @@
 import jax.numpy as jnp
+import numpy as np
+from itertools import accumulate
+import operator
+
+
+def transfer_rays(ray_coords, transfer_matrices):
+    """
+    Propagate rays through an optical system using the provided transfer matrices.
+    This version first builds the cumulative product of the transfer matrices so
+    that each plane’s matrix is the product of all preceding ones, then applies
+    each to the input rays via einsum.
+
+    Parameters
+    ----------
+    ray_coords : numpy.ndarray
+        A 2D array of shape (N, 5) for N rays: [x, y, dx, dy, 1].
+    transfer_matrices : numpy.ndarray
+        A 3D array of shape (M, 5, 5) for M sequential transfer matrices.
+
+    Returns
+    -------
+    numpy.ndarray
+        A 3D array of shape (N, M, 5): ray coords at each of the M planes.
+    """
+
+    cumulative_matrices = accumulate_all_transfer_matrices_cumulative(transfer_matrices)
+
+    # propagate all N rays through each of the M cumulative matrices
+    # result[n, m, i] = sum_j cum_tms[m, i, j] * ray_coords[n, j]
+    coords = np.einsum('mij,nj->nmi', cumulative_matrices, ray_coords, optimize=True)
+
+    return coords
 
 
 def transfer_rays_pt_src(input_pos_xy, input_slopes_xy, transfer_matrix):
@@ -58,33 +90,6 @@ def transfer_rays_pt_src(input_pos_xy, input_slopes_xy, transfer_matrix):
     return coords
 
 
-def transfer_rays(ray_coords, transfer_matrices):
-    """
-    Propagate rays through an optical system using the provided transfer matrices.
-    This function takes an initial ray position and their corresponding
-    slopes, constructs a ray vector, and propagates these rays through the system by
-    applying the transfer matrix. The output is a set of propagated ray coordinates.
-    Parameters
-    ----------
-    ray_coords : numpy.ndarray
-        A 2D numpy array of shape N x 5, where N is the number of rays.
-    transfer_matrices : numpy.ndarray
-        A 3D numpy array of shape (M, 5, 5) or (5, 5, M)? representing the transfer matrices for the system.
-        M is the number of transfer matrices.
-    Returns
-    -------
-    numpy.ndarray
-        A 2D numpy array of shape N x M x 4 where N is the number of rays, M is the number of transfer matrices,
-        and the last dimension corresponds to:
-            - x positions
-            - y positions
-            - x slopes (dxs)
-            - y slopes (dys)
-    """
-
-    return _
-
-
 def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):
     """Compute the total transfer matrix between component indices [start, end]
     by multiplying in right-to-left order.
@@ -100,3 +105,19 @@ def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):
     for tm in reversed(matrices[:-1]):
         total = total @ tm
     return total
+
+
+def accumulate_all_transfer_matrices_cumulative(transfer_matrices):
+    """Compute cumulative products in reverse order:
+       start with the last matrix, then multiply by the one before it, and so on."""
+    all_matrices = []
+    # Begin with the last matrix
+    total = transfer_matrices[-1]
+    all_matrices.append(total)
+    # Multiply backwards through the list
+    for tm in reversed(transfer_matrices[:-1]):
+        total = tm @ total
+        all_matrices.append(total)
+
+    return jnp.stack(all_matrices, axis=0)
+

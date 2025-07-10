@@ -3,13 +3,13 @@ import tomli
 from dataclasses import dataclass
 from typing import Any
 
-from . import components as comp
+# from . import components as comp
 
 
 component_map = {
-    "ParallelBeam": comp.ParallelBeam,
-    "Lens": comp.Lens,
-    "Detector": comp.Detector,
+    # "ParallelBeam": comp.ParallelBeam,
+    # "Lens": comp.Lens,
+    # "Detector": comp.Detector,
 }
 
 

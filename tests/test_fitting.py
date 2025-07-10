@@ -5,9 +5,15 @@ from microscope_calibration.fitting import fit_descan_error_matrix
 from microscope_calibration.model import DescanErrorParameters, ModelParameters
 from microscope_calibration.generate import generate_dataset_from_image
 
-import libertem.api as lt
-from libertem.udf.sum import SumUDF
-from libertem.udf.com import CoMUDF
+import pytest
+
+try:
+    import libertem.api as lt
+    from libertem.udf.sum import SumUDF
+    from libertem.udf.com import CoMUDF
+except ImportError:
+    pytest.skip("libertem not installed, skipping tests", allow_module_level=True)
+
 
 
 def descan_error_params_random():

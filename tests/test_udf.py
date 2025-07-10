@@ -1,5 +1,10 @@
 import numpy as np
-import libertem.api as lt
+import pytest
+try:
+    import libertem.api as lt
+except ImportError:
+    pytest.skip("libertem not installed, skipping tests", allow_module_level=True)
+
 import jax.numpy as jnp
 from microscope_calibration.model import ModelParameters, DescanErrorParameters
 from microscope_calibration.udf import ShiftedSumUDF
