@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 
 
-def transfer_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
+def transfer_rays_pt_src(input_pos_xy, input_slopes_xy, transfer_matrix):
     """
     Propagate rays through an optical system using the provided transfer matrix.
     This function takes an initial point source position (x, y) and their corresponding
@@ -56,6 +56,33 @@ def transfer_rays(input_pos_xy, input_slopes_xy, transfer_matrix):
     coords = jnp.array([xs, ys, dxs, dys])
 
     return coords
+
+
+def transfer_rays(ray_coords, transfer_matrices):
+    """
+    Propagate rays through an optical system using the provided transfer matrices.
+    This function takes an initial ray position and their corresponding
+    slopes, constructs a ray vector, and propagates these rays through the system by
+    applying the transfer matrix. The output is a set of propagated ray coordinates.
+    Parameters
+    ----------
+    ray_coords : numpy.ndarray
+        A 2D numpy array of shape N x 5, where N is the number of rays.
+    transfer_matrices : numpy.ndarray
+        A 3D numpy array of shape (M, 5, 5) or (5, 5, M)? representing the transfer matrices for the system.
+        M is the number of transfer matrices.
+    Returns
+    -------
+    numpy.ndarray
+        A 2D numpy array of shape N x M x 4 where N is the number of rays, M is the number of transfer matrices,
+        and the last dimension corresponds to:
+            - x positions
+            - y positions
+            - x slopes (dxs)
+            - y slopes (dys)
+    """
+
+    return _
 
 
 def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):

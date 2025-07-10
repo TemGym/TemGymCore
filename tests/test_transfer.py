@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
-from jaxgym.transfer import transfer_rays, accumulate_transfer_matrices
+from jaxgym.transfer import transfer_rays_pt_src, accumulate_transfer_matrices
 
 
 def test_transfer_free_space():
@@ -24,7 +24,7 @@ def test_transfer_free_space():
         ]
     )
 
-    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
+    coords = transfer_rays_pt_src((x0, y0), (slopes_x, slopes_y), transfer_matrix)
 
     # Expected: x = x0 + d*dx0, y = y0 + d*dy0, slopes unchanged
     x_exp = x0 + d * dx0
@@ -53,7 +53,7 @@ def test_transfer_random_matrix():
     result_np = T_vals.dot(vec)
     x_exp, y_exp, dx_exp, dy_exp = result_np[:4]
 
-    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), T)
+    coords = transfer_rays_pt_src((x0, y0), (slopes_x, slopes_y), T)
 
     # Verify against symbolic result
     np.testing.assert_allclose(coords[0, 0], x_exp, atol=1e-6)
@@ -72,7 +72,7 @@ def test_identity_transfer():
     slopes_y = jnp.array(dy_vals)
     T = jnp.eye(5)
 
-    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), T)
+    coords = transfer_rays_pt_src((x0, y0), (slopes_x, slopes_y), T)
 
     assert coords.shape == (4, N)
     np.testing.assert_allclose(coords[0], x0)
@@ -87,7 +87,7 @@ def test_empty_input():
     slopes_y = jnp.array([], dtype=float)
     T = jnp.eye(5)
 
-    coords = transfer_rays((1.0, 2.0), (slopes_x, slopes_y), T)
+    coords = transfer_rays_pt_src((1.0, 2.0), (slopes_x, slopes_y), T)
     assert coords.shape == (4, 0)
 
 
@@ -109,7 +109,7 @@ def test_negative_distance_transfer():
         ]
     )
 
-    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
+    coords = transfer_rays_pt_src((x0, y0), (slopes_x, slopes_y), transfer_matrix)
     x_exp = x0 + d * dx0
     y_exp = y0 + d * dy0
     np.testing.assert_allclose(coords[0, 0], x_exp, atol=1e-6)
@@ -154,7 +154,7 @@ def test_shear_and_scaling():
     slopes_x = jnp.array([dx0])
     slopes_y = jnp.array([dy0])
 
-    coords = transfer_rays((x0, y0), (slopes_x, slopes_y), transfer_matrix)
+    coords = transfer_rays_pt_src((x0, y0), (slopes_x, slopes_y), transfer_matrix)
     x_exp = x0 + alpha * y0
     y_exp = k * y0
     np.testing.assert_allclose(coords[0, 0], x_exp, atol=1e-6)

@@ -5,7 +5,7 @@ from numba import njit
 
 from jaxgym.ray import Ray
 from jaxgym.run import solve_model
-from jaxgym.transfer import accumulate_transfer_matrices, transfer_rays
+from jaxgym.transfer import accumulate_transfer_matrices, transfer_rays_pt_src
 from jaxgym import Coords_XY, Scale_YX
 
 from . import components as comp
@@ -114,7 +114,7 @@ def ray_coords_at_plane(
 
     input_slopes = find_input_slopes(pt_src, detector_coords, total_transfer_matrix)
 
-    coords = transfer_rays(pt_src, input_slopes, total_transfer_matrix)
+    coords = transfer_rays_pt_src(pt_src, input_slopes, total_transfer_matrix)
 
     xs, ys, dxs, dys = coords
 
