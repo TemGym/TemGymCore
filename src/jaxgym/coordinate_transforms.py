@@ -8,16 +8,18 @@ RadiansJNP = jnp.float64
 
 
 class GridBase(abc.ABC):
-    metres_to_pixels_mat: jnp.ndarray
-    pixels_to_metres_mat: jnp.ndarray
 
-    def __post_init__(self):
-        object.__setattr__(
-            self, "metres_to_pixels_mat", self.get_metres_to_pixels_transform()
-        )
-        object.__setattr__(
-            self, "pixels_to_metres_mat", self.get_pixels_to_metres_transform()
-        )
+    @property
+    def pixels_to_metres_mat(self) -> NDArray:
+        return pixels_to_metres_transform(
+                    self.centre, self.pixel_size, self.shape, self.flip, self.rotation
+                )
+    
+    @property
+    def metres_to_pixels_mat(self) -> NDArray:
+        return jnp.linalg.inv(pixels_to_metres_transform(
+                    self.centre, self.pixel_size, self.shape, self.flip, self.rotation
+                ))
 
     @property
     @abc.abstractmethod
@@ -54,7 +56,6 @@ class GridBase(abc.ABC):
         return ray
 
     def get_metres_to_pixels_transform(self) -> NDArray:
-        # Use the common transform using centre, pixel_size, shape and rotation.
         pixels_to_metres_mat = pixels_to_metres_transform(
             self.centre, self.pixel_size, self.shape, self.flip, self.rotation
         )
@@ -67,8 +68,9 @@ class GridBase(abc.ABC):
 
     def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
         coords_x, coords_y = coords
+        metres_to_pixels_mat = self.metres_to_pixels_mat
         pixels_y, pixels_x = apply_transformation(
-            coords_y, coords_x, self.metres_to_pixels_mat
+            coords_y, coords_x, metres_to_pixels_mat
         )
         pixels_y = jnp.round(pixels_y).astype(jnp.int32)
         pixels_x = jnp.round(pixels_x).astype(jnp.int32)
@@ -76,8 +78,9 @@ class GridBase(abc.ABC):
 
     def pixels_to_metres(self, pixels: Pixels_YX) -> Coords_XY:
         pixels_y, pixels_x = pixels
+        pixels_to_metres_mat = self.pixels_to_metres_mat
         metres_y, metres_x = apply_transformation(
-            pixels_y, pixels_x, self.pixels_to_metres_mat
+            pixels_y, pixels_x, pixels_to_metres_mat
         )
         return metres_x, metres_y
 

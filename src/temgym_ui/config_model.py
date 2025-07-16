@@ -3,13 +3,23 @@ import tomli
 from dataclasses import dataclass
 from typing import Any
 
-# from . import components as comp
-
+from jaxgym import components as comp
+from microscope_calibration.components import (
+    PointSource,
+    Detector,
+)
 
 component_map = {
-    # "ParallelBeam": comp.ParallelBeam,
-    # "Lens": comp.Lens,
-    # "Detector": comp.Detector,
+    "PointSource": comp.PointSource,
+    "Lens": comp.Lens,
+    "ThickLens": comp.ThickLens,
+    "ODE": comp.ODE,
+    "Deflector": comp.Deflector,
+    "Rotator": comp.Rotator,
+    "DoubleDeflector": comp.DoubleDeflector,
+    "InputPlane": comp.InputPlane,
+    "Biprism": comp.Biprism,
+    "Detector": Detector,
 }
 
 
@@ -24,21 +34,21 @@ def to_model(config: dict[str, list]):
     for comp_def in config.get("components", tuple()):
         comp_type = comp_def.pop("type", None)
         if comp_type is None:
-            raise
+            raise ValueError("Component type not specified")
         cls = component_map.get(comp_type, None)
         if cls is None:
-            raise
+            raise ValueError(f"Unknown component type: {comp_type}")
         comp_def = {k: v.val if isinstance(v, ParamTuple) else v for k, v in comp_def.items()}
         components.append(cls(**comp_def))
-    return Model(components)
+    return components
 
 
-def from_str(model_str: str):
-    config = tomli.loads(model_str)
-    return to_model(config)
+# def from_str(model_str: str):
+#     config = tomli.loads(model_str)
+#     return to_model(config)
 
 
-def from_file(filename: os.PathLike):
-    with open(filename, 'rb') as fp:
-        config = tomli.load(fp)
-    return to_model(config)
+# def from_file(filename: os.PathLike):
+#     with open(filename, 'rb') as fp:
+#         config = tomli.load(fp)
+#     return to_model(config)

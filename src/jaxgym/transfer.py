@@ -28,9 +28,9 @@ def transfer_rays(ray_coords, transfer_matrices):
 
     # propagate all N rays through each of the M cumulative matrices
     # result[n, m, i] = sum_j cum_tms[m, i, j] * ray_coords[n, j]
-    coords = np.einsum('mij,nj->nmi', cumulative_matrices, ray_coords, optimize=True)
+    xy_coords = np.einsum('mij,nj->nmi', cumulative_matrices, ray_coords, optimize=True)
 
-    return coords
+    return xy_coords
 
 
 def transfer_rays_pt_src(input_pos_xy, input_slopes_xy, transfer_matrix):

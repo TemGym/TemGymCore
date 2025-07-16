@@ -15,6 +15,7 @@ from PySide6.QtGui import (
 from pyqtgraph.dockarea import Dock, DockArea
 import pyqtgraph.opengl as gl
 import pyqtgraph as pg
+from dataclasses import asdict
 from deepdiff import DeepDiff
 
 import numpy as np
@@ -23,6 +24,12 @@ from . import shapes as comp_geom
 from .config_model import to_model, ParamTuple
 from .utils import P2R, R2P, as_gl_lines
 from .widgets import GLImageItem, MyDockLabel
+from .rays import Rays
+from microscope_calibration.stemoverfocus import inplace_sum
+
+from jaxgym.ray import Ray
+from jaxgym.run import solve_model, get_z_vals
+from jaxgym.transfer import transfer_rays
 
 if TYPE_CHECKING:
     from . import components as comp
@@ -250,10 +257,11 @@ class TemGymWindow(QMainWindow):
         self.create3DDisplay()
         self.createDetectorDisplay()
 
+
     def set_model(
         self,
         model,
-        tree: bool = False,
+        tree: bool = True,
         geometry: bool = True,
         camera: bool = True
     ):
@@ -263,7 +271,8 @@ class TemGymWindow(QMainWindow):
             self.update_camera(model)
         if tree:
             self.update_tree(model)
-        # self.update_rays(model, self.num_rays)
+        self.update_rays(model, self.num_rays)
+
 
     def add_geometry(self, model):
         self.tem_window.clear()
@@ -293,14 +302,14 @@ class TemGymWindow(QMainWindow):
         xyoffset = (0.2 * mid_z, -0.2 * mid_z)
         self.tem_window.setCameraParams(center=QVector3D(*xyoffset, mid_z))
 
-    def update_tree(self, components: list[ComponentGUIWrapper]):
+    def update_tree(self, components: list):
         params_model = QStandardItemModel()
         params_model.setHorizontalHeaderLabels(['Parameter', 'Value'])
         params_model.itemChanged.connect(self.handleChanged)
-        for gui_comp in components:
-            comp_row = QStandardItem(type(gui_comp).__name__)
+        for component in components:
+            comp_row = QStandardItem(type(component).__name__)
             comp_row.setEditable(False)
-            for name, val in gui_comp.component.get_parameters().items():
+            for name, val in asdict(component).items():
                 key = QStandardItem(name)
                 key.setCheckable(True)
                 key.setEditable(False)
@@ -309,30 +318,34 @@ class TemGymWindow(QMainWindow):
                     QStandardItem(f"{val}"),
                 ])
             params_model.appendRow(comp_row)
-        self._current_config = self.qtmodel_to_dict(params_model)
+        # self._current_config = self.qtmodel_to_dict(params_model)
         self.params_tree.setModel(params_model)
         self.params_tree.expandAll()
 
     @Slot()
     def update_rays(self, model, num_rays: int):
-        try:
-            all_rays = tuple(model.run_iter(
-                num_rays,
-            ))
-        except IndexError:
-            return
+        optical_axis_ray = Ray(0., 0., 0., 0., 0., 0.)
+        transfer_matrices = solve_model(optical_axis_ray, model)
+        z_vals = get_z_vals(optical_axis_ray, model)
+        input_rays = model[0].generate(num_rays, random=False)
+        
+        xy_coords = transfer_rays(input_rays, transfer_matrices)
 
-        vertices = as_gl_lines(all_rays, z_mult=Z_ORIENT)
+        vertices = as_gl_lines(xy_coords, z_vals, z_mult=Z_ORIENT)
         self.ray_geometry.setData(
             pos=vertices * XYZ_SCALING,
             color=RAY_COLOR + (0.05,),
         )
 
-        image = model.detector.get_image(
-            all_rays,
-            interfere=False,
+        y_px, x_px = model[-1].metres_to_pixels(
+            xy_coords[:, -1, :2].T,
         )
-        self.spot_img.setImage(np.abs(image.T) ** 2)
+        image = np.zeros(model[-1].det_shape, dtype=np.float32)
+        inplace_sum(
+            np.asarray(y_px), np.asarray(x_px), np.ones(y_px.shape, dtype=bool),
+            np.ones(y_px.shape, dtype=np.float32), image
+        )
+        self.spot_img.setImage(image)
 
     @staticmethod
     def qtmodel_to_dict(model: QStandardItemModel):
@@ -368,6 +381,10 @@ class TemGymWindow(QMainWindow):
         if param_change:
             new_model = to_model({"components": params})
             self.update_model(new_model)
+
+    def update_model(self, model):
+        """Update the model and refresh all displays"""
+        self.set_model(model, tree=False, geometry=True, camera=False)
 
     def create3DDisplay(self):
         '''Create the 3D Display

@@ -1,6 +1,8 @@
 import jax.numpy as jnp
-import jax_dataclasses as jdc
+import numpy as np
 
+import jax_dataclasses as jdc
+from jaxgym.utils import random_coords, concentric_rings
 from jaxgym.ray import Ray
 from jaxgym.coordinate_transforms import GridBase
 from jaxgym import Degrees, Coords_XY, Scale_YX, Shape_YX
@@ -10,9 +12,29 @@ from jaxgym import Degrees, Coords_XY, Scale_YX, Shape_YX
 class PointSource:
     z: float
     semi_conv: float
+    offset_xy: Coords_XY = (0.0, 0.0)
 
     def step(self, ray: Ray):
         return ray
+    
+    def generate(self, num_rays: int, random: bool = False):
+        semi_conv = self.semi_conv
+        offset_xy = self.offset_xy
+
+        if random:
+            y, x = random_coords(num_rays) * semi_conv
+        else:
+            y, x = concentric_rings(num_rays, semi_conv)
+        
+        r = np.zeros((len(x), 5), dtype=np.float64)  # x, y, theta_x, theta_y, 1
+
+        r[:, 0] += offset_xy[0]
+        r[:, 1] += offset_xy[1]
+        r[:, 2] = x
+        r[:, 3] = y
+        r[:, 4] = 1.
+
+        return r
 
 
 @jdc.pytree_dataclass
@@ -21,8 +43,6 @@ class ScanGrid(GridBase):
     scan_step: Scale_YX
     scan_shape: Shape_YX
     scan_rotation: Degrees
-    metres_to_pixels_mat: jnp.ndarray = jdc.field(init=False)
-    pixels_to_metres_mat: jnp.ndarray = jdc.field(init=False)
 
     @property
     def pixel_size(self) -> Scale_YX:
@@ -39,8 +59,7 @@ class ScanGrid(GridBase):
     @property
     def flip(self) -> Coords_XY:
         return False
-
-
+    
 @jdc.pytree_dataclass
 class Descanner:
     z: float
@@ -149,8 +168,6 @@ class Detector(GridBase):
     det_pixel_size: Scale_YX
     det_shape: Shape_YX
     flip_y: bool = False
-    metres_to_pixels_mat: jnp.ndarray = jdc.field(init=False)
-    pixels_to_metres_mat: jnp.ndarray = jdc.field(init=False)
 
     @property
     def pixel_size(self) -> Scale_YX:

@@ -95,3 +95,17 @@ def solve_model(ray, model):
     ABCDs = jnp.array(model_ray_jacobians)  # ABCD matrices at each component
 
     return ABCDs
+
+
+@jax.jit
+def get_z_vals(ray, model):
+    z_vals = [ray.z]    
+    for i in range(1, len(model)):
+        distance = (model[i].z - ray.z).squeeze()
+        # Propagate the ray
+        ray = propagate(distance, ray)
+        # Step the ray
+        z_vals.append(ray.z)
+        ray = model[i].step(ray)
+        z_vals.append(ray.z)
+    return jnp.array(z_vals)
