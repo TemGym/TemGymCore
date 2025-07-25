@@ -16,7 +16,7 @@ class PointSource:
 
     def step(self, ray: Ray):
         return ray
-    
+
     def generate(self, num_rays: int, random: bool = False):
         semi_conv = self.semi_conv
         offset_xy = self.offset_xy
@@ -25,7 +25,7 @@ class PointSource:
             y, x = random_coords(num_rays) * semi_conv
         else:
             y, x = concentric_rings(num_rays, semi_conv)
-        
+
         r = np.zeros((len(x), 5), dtype=np.float64)  # x, y, theta_x, theta_y, 1
 
         r[:, 0] += offset_xy[0]
@@ -59,7 +59,8 @@ class ScanGrid(GridBase):
     @property
     def flip(self) -> Coords_XY:
         return False
-    
+
+
 @jdc.pytree_dataclass
 class Descanner:
     z: float
