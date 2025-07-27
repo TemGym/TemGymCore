@@ -3,11 +3,15 @@ from .utils import random_coords, concentric_rings
 from .ode import solve_ode
 from . import Degrees
 
+from typing import Union, List, Literal
+import dataclasses
 import jax_dataclasses as jdc
+from jax_dataclasses._dataclasses import FieldInfo, JDC_STATIC_MARKER, get_type_hints_partial
 import jax.numpy as jnp
+from jax.tree_util import FlattenedIndexKey, SequenceKey, DictKey
 import numpy as np
 
-from typing_extensions import TypeAlias
+from typing_extensions import TypeAlias, get_type_hints
 
 Radians: TypeAlias = jnp.float64  # type: ignore
 
@@ -41,8 +45,123 @@ class PointSource:
         return r
 
 
+class PathBuilder:
+    def __init__(
+        self,
+        parent: Union['PathBuilder', 'Component'],
+        key: int | str,
+        getter: Literal["attr", "item"],
+    ):
+        self._parent = parent
+        self._original_key = key
+        self._getter = getter
+        true_parent = self._resolve_parent()
+        if dataclasses.is_dataclass(type(true_parent)):
+            field_info = get_field_info(type(true_parent))
+            if len(field_info.static_field_names):
+                raise NotImplementedError("Static fields not supported")
+            key = FlattenedIndexKey(field_info.child_node_field_names.index(key))
+        elif isinstance(true_parent, (list, tuple)):
+            key = SequenceKey(key)
+        elif isinstance(true_parent, dict):
+            key = DictKey(key)
+        else:
+            raise NotImplementedError(f"Unknown key type for cls {type(true_parent)}")
+        self._key = key
+
+    def __getattr__(self, name: str):
+        # if name in ("_parent", "_key", "_build", "_original_key"):
+        #     return super().__getattribute__(name)
+        return type(self)(self, name, "attr")
+
+    def __getitem__(self, idx: int):
+        return type(self)(self, idx, "item")
+
+    def _resolve_parent(self):
+        return (
+            self._parent._resolve()
+            if isinstance(self._parent, PathBuilder)
+            else self._parent
+        )
+
+    def _resolve(self):
+        get_from = self._resolve_parent()
+        if self._getter == "attr":
+            return getattr(get_from, self._original_key)
+        elif self._getter == "item":
+            return get_from[self._original_key]
+        else:
+            raise ValueError(f'Unknown get with {self._getter}')
+
+    def _build(self, children: tuple[int | str] | None = None, original: bool = False):
+        if children is None:
+            children = tuple()
+        if original:
+            key = self._original_key
+        else:
+            key = self._key
+        this = (key,) + children
+        if isinstance(self._parent, Component):
+            return (self._parent,) + this
+        return self._parent._build(this, original=original)
+
+
+def get_field_info(cls) -> FieldInfo:
+    # Determine which fields are static and part of the treedef, and which should be
+    # registered as child nodes.
+    child_node_field_names: List[str] = []
+    static_field_names: List[str] = []
+
+    # We don't directly use field.type for postponed evaluation; we want to make sure
+    # that our types are interpreted as proper types and not as (string) forward
+    # references.
+    #
+    # Note that there are ocassionally situations where the @jdc.pytree_dataclass
+    # decorator is called before a referenced type is defined; to suppress this error,
+    # we resolve missing names to our subscriptible placeholder object.
+
+    try:
+        type_from_name = get_type_hints(cls, include_extras=True)  # type: ignore
+    except Exception:
+        # Try again, but suppress errors from unresolvable forward
+        # references. This should be rare.
+        type_from_name = get_type_hints_partial(cls, include_extras=True)  # type: ignore
+
+    for field in dataclasses.fields(cls):
+        if not field.init:
+            continue
+
+        field_type = type_from_name[field.name]
+
+        # Two ways to mark a field as static: either via the Static[] type or
+        # jdc.static_field().
+        if (
+            hasattr(field_type, "__metadata__")
+            and JDC_STATIC_MARKER in field_type.__metadata__
+        ):
+            static_field_names.append(field.name)
+            continue
+        if field.metadata.get(JDC_STATIC_MARKER, False):
+            static_field_names.append(field.name)
+            continue
+
+        child_node_field_names.append(field.name)
+    return FieldInfo(child_node_field_names, static_field_names)
+
+
+class Component:
+    @property
+    def params(self):
+        params = {
+            k: PathBuilder(self, k, "attr")
+            for k
+            in dataclasses.asdict(self).keys()
+        }
+        return type(self)(**params)
+
+
 @jdc.pytree_dataclass
-class Lens:
+class Lens(Component):
     z: float
     focal_length: float
 
