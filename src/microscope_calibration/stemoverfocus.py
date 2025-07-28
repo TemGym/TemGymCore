@@ -6,7 +6,7 @@ from numba import njit
 from jaxgym.ray import Ray
 from jaxgym.run import solve_model
 from jaxgym.transfer import accumulate_transfer_matrices, transfer_rays_pt_src
-from jaxgym import Coords_XY, Scale_YX
+from jaxgym import CoordsXY, ScaleYX
 
 from . import components as comp
 from .model import Model
@@ -14,8 +14,8 @@ from jax import lax
 
 
 def find_input_slopes(
-    pos: Coords_XY,
-    detector_coords: Coords_XY,
+    pos: CoordsXY,
+    detector_coords: CoordsXY,
     transformation_matrix: np.ndarray,
 ):
     """
@@ -67,11 +67,11 @@ def find_input_slopes(
 
 def ray_coords_at_plane(
     semi_conv: float,
-    pt_src: Coords_XY,
-    detector_coords: Coords_XY,
+    pt_src: CoordsXY,
+    detector_coords: CoordsXY,
     total_transfer_matrix: np.ndarray,
     det_transfer_matrix_to_specific_plane: np.ndarray,
-    det_px_size: Scale_YX,
+    det_px_size: ScaleYX,
 ):
     """
     Propagate rays from a point source through the detector and back‐project them
@@ -90,15 +90,15 @@ def ray_coords_at_plane(
     ----------
     semi_conv : float
         Maximum semi-convergence angle (in radians) defining the allowable input slopes.
-    pt_src : Coords_XY
+    pt_src : CoordsXY
         The (x, y) position of the point source.
-    detector_coords : Coords_XY
+    detector_coords : CoordsXY
         An (N, 2) array of (x, y) coordinates for each detector pixel.
     total_transfer_matrix : np.ndarray
         The 5×5 transfer matrix mapping rays from the source plane to the detector plane.
     det_transfer_matrix_to_specific_plane : np.ndarray
         The transfer matrix mapping detector-plane ray coordinates onto the target plane.
-    det_px_size : Scale_YX
+    det_px_size : ScaleYX
         A (pixel_y, pixel_x) tuple specifying the detector pixel dimensions.
 
     Returns
@@ -199,7 +199,7 @@ def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
     )
 
 
-def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
+def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: CoordsXY) -> tuple:
     # Unpack model components.
     PointSource = model.source
     ScanGrid = model.scan_grid
@@ -250,7 +250,7 @@ def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: Coords_XY) -> tuple:
 
 @jax.jit
 def project_coordinates_backward(
-    model: Model, det_coords: np.ndarray, scan_pos: Coords_XY
+    model: Model, det_coords: np.ndarray, scan_pos: CoordsXY
 ) -> np.ndarray:
     PointSource = model.source
     ScanGrid = model.scan_grid

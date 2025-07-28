@@ -1,17 +1,14 @@
 from typing import Tuple
-from typing_extensions import TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
 
-RadiansNP: TypeAlias = np.float64
 
-
-def P2R(radii: NDArray[np.float64], angles: NDArray[RadiansNP]) -> NDArray[np.complex128]:
+def P2R(radii: NDArray[np.float64], angles: NDArray[np.floating]) -> NDArray[np.complex128]:
     return radii * np.exp(1j*angles)
 
 
-def R2P(x: NDArray[np.complex128]) -> Tuple[NDArray[np.float64], NDArray[RadiansNP]]:
+def R2P(x: NDArray[np.complex128]) -> Tuple[NDArray[np.float64], NDArray[np.floating]]:
     return np.abs(x), np.angle(x)
 
 

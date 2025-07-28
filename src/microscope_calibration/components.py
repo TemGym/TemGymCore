@@ -5,6 +5,7 @@ import jax_dataclasses as jdc
 from jaxgym.utils import random_coords, concentric_rings
 from jaxgym.ray import Ray
 from jaxgym.coordinate_transforms import GridBase
+from jaxgym import Degrees, CoordsXY, ScaleYX, ShapeYX
 from jaxgym.tree_utils import HasParamsMixin
 
 
@@ -12,7 +13,7 @@ from jaxgym.tree_utils import HasParamsMixin
 class PointSource(HasParamsMixin):
     z: float
     semi_conv: float
-    offset_xy: Coords_XY = (0.0, 0.0)
+    offset_xy: CoordsXY = (0.0, 0.0)
 
     def step(self, ray: Ray):
         return ray
@@ -40,16 +41,16 @@ class PointSource(HasParamsMixin):
 @jdc.pytree_dataclass
 class ScanGrid(HasParamsMixin, GridBase):
     z: float
-    scan_step: Scale_YX
-    scan_shape: Shape_YX
+    scan_step: ScaleYX
+    scan_shape: ShapeYX
     scan_rotation: Degrees
 
     @property
-    def pixel_size(self) -> Scale_YX:
+    def pixel_size(self) -> ScaleYX:
         return self.scan_step
 
     @property
-    def shape(self) -> Shape_YX:
+    def shape(self) -> ShapeYX:
         return self.scan_shape
 
     @property
@@ -57,7 +58,7 @@ class ScanGrid(HasParamsMixin, GridBase):
         return self.scan_rotation
 
     @property
-    def flip(self) -> Coords_XY:
+    def flip(self) -> CoordsXY:
         return False
 
 
@@ -166,16 +167,16 @@ class Descanner(HasParamsMixin):
 @jdc.pytree_dataclass
 class Detector(HasParamsMixin, GridBase):
     z: float
-    det_pixel_size: Scale_YX
-    det_shape: Shape_YX
+    det_pixel_size: ScaleYX
+    det_shape: ShapeYX
     flip_y: bool = False
 
     @property
-    def pixel_size(self) -> Scale_YX:
+    def pixel_size(self) -> ScaleYX:
         return self.det_pixel_size
 
     @property
-    def shape(self) -> Shape_YX:
+    def shape(self) -> ShapeYX:
         return self.det_shape
 
     @property

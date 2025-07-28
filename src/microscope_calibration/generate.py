@@ -2,7 +2,7 @@ from typing_extensions import Literal
 import numpy as np
 import jax
 from functools import partial
-from jaxgym import Coords_XY
+from jaxgym import CoordsXY
 from scipy.interpolate import NearestNDInterpolator, LinearNDInterpolator
 from .model import Model
 from .stemoverfocus import (
@@ -21,7 +21,7 @@ def project_frame_forward(
     model: Model,
     det_coords: np.ndarray,
     sample_interpolant: callable,
-    scan_pos: Coords_XY,
+    scan_pos: CoordsXY,
 ) -> np.ndarray:
     PointSource = model.source
     Detector = model.detector

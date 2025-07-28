@@ -2,7 +2,7 @@ import abc
 from jax.numpy import ndarray as NDArray
 import jax.numpy as jnp
 import jax.lax as lax
-from . import Degrees, Radians, Shape_YX, Coords_XY, Scale_YX, Pixels_YX
+from . import Degrees, Radians, ShapeYX, CoordsXY, ScaleYX, PixelsYX
 
 RadiansJNP = jnp.float64
 
@@ -14,7 +14,7 @@ class GridBase(abc.ABC):
         return pixels_to_metres_transform(
                     self.centre, self.pixel_size, self.shape, self.flip, self.rotation
                 )
-    
+
     @property
     def metres_to_pixels_mat(self) -> NDArray:
         return jnp.linalg.inv(pixels_to_metres_transform(
@@ -23,18 +23,18 @@ class GridBase(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def pixel_size(self) -> Scale_YX: ...
+    def pixel_size(self) -> ScaleYX: ...
 
     @property
     @abc.abstractmethod
-    def shape(self) -> Shape_YX: ...
+    def shape(self) -> ShapeYX: ...
 
     @property
     @abc.abstractmethod
     def rotation(self) -> Degrees: ...
 
     @property
-    def centre(self) -> Coords_XY:
+    def centre(self) -> CoordsXY:
         return (0., 0.)
 
     @property
@@ -66,7 +66,7 @@ class GridBase(abc.ABC):
             self.centre, self.pixel_size, self.shape, self.flip, self.rotation
         )
 
-    def metres_to_pixels(self, coords: Coords_XY) -> Pixels_YX:
+    def metres_to_pixels(self, coords: CoordsXY) -> PixelsYX:
         coords_x, coords_y = coords
         metres_to_pixels_mat = self.metres_to_pixels_mat
         pixels_y, pixels_x = apply_transformation(
@@ -76,7 +76,7 @@ class GridBase(abc.ABC):
         pixels_x = jnp.round(pixels_x).astype(jnp.int32)
         return pixels_y, pixels_x
 
-    def pixels_to_metres(self, pixels: Pixels_YX) -> Coords_XY:
+    def pixels_to_metres(self, pixels: PixelsYX) -> CoordsXY:
         pixels_y, pixels_x = pixels
         pixels_to_metres_mat = self.pixels_to_metres_mat
         metres_y, metres_x = apply_transformation(
@@ -133,9 +133,9 @@ def _flip_y():
 
 
 def pixels_to_metres_transform(
-    centre: Coords_XY,
-    pixel_size: Scale_YX,
-    shape: Shape_YX,
+    centre: CoordsXY,
+    pixel_size: ScaleYX,
+    shape: ShapeYX,
     flip_y=False,
     rotation: Degrees = 0.0,
 ):
@@ -143,9 +143,9 @@ def pixels_to_metres_transform(
     Transforms pixel coordinates into metre coordinates using a series of matrix operations.
 
     Parameters:
-        centre (Coords_XY): The translation vector representing the center coordinate.
-        pixel_size (Scale_YX): The scaling factors that convert pixel dimensions to metres.
-        shape (Shape_YX): The shape of the pixel grid (e.g., image size) in (height, width) format.
+        centre (CoordsXY): The translation vector representing the center coordinate.
+        pixel_size (ScaleYX): The scaling factors that convert pixel dimensions to metres.
+        shape (ShapeYX): The shape of the pixel grid (e.g., image size) in (height, width) format.
         flip_y (bool, optional): If True, applies a flip along the y-axis to the transformation.
                                     Defaults to False.
         rotation (Degrees, optional): The rotation angle (in degrees) applied to the transformation.

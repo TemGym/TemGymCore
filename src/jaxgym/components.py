@@ -1,16 +1,11 @@
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
-from typing_extensions import TypeAlias
-
 from .ray import Ray, propagate
 from .utils import random_coords, concentric_rings
 from .ode import solve_ode
 from . import Degrees
 from .tree_utils import HasParamsMixin
-
-
-Radians: TypeAlias = jnp.float64  # type: ignore
 
 
 @jdc.pytree_dataclass
@@ -254,16 +249,16 @@ class Biprism:
 # @jdc.pytree_dataclass
 # class ImageGrid(GridBase):
 #     z: float
-#     image_pixel_size: Scale_YX
+#     image_pixel_size: ScaleYX
 #     image_shape: ShapeYX
 #     image_rotation: Degrees
-#     image_centre: Coords_XY = (0., 0.)
+#     image_centre: CoordsXY = (0., 0.)
 #     image_array: jnp.ndarray = None  # Added image array variable specific to ImageGrid
 #     metres_to_pixels_mat: jnp.ndarray = jdc.field(init=False)
 #     pixels_to_metres_mat: jnp.ndarray = jdc.field(init=False)
 
 #     @property
-#     def pixel_size(self) -> Scale_YX:
+#     def pixel_size(self) -> ScaleYX:
 #         return self.image_pixel_size
 
 #     @property
@@ -275,5 +270,5 @@ class Biprism:
 #         return self.image_rotation
 
 #     @property
-#     def centre(self) -> Coords_XY:
+#     def centre(self) -> CoordsXY:
 #         return self.image_centre

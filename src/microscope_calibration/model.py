@@ -1,7 +1,7 @@
 from typing import TypedDict, NamedTuple, TYPE_CHECKING
 import jax.numpy as jnp
 
-from jaxgym import Coords_XY
+from jaxgym import CoordsXY
 
 if TYPE_CHECKING:
     from .components import PointSource, Descanner, ScanGrid, Detector
@@ -58,7 +58,7 @@ class Model(NamedTuple):
 
 
 def create_stem_model(
-    params_dict: ModelParameters, scan_pos_xy: Coords_XY = (0.0, 0.0)
+    params_dict: ModelParameters, scan_pos_xy: CoordsXY = (0.0, 0.0)
 ) -> Model:
     # delay import to avoid circular dependency
     from microscope_calibration import components as comp
