@@ -38,7 +38,9 @@ def to_model(config: dict[str, list]):
         cls = component_map.get(comp_type, None)
         if cls is None:
             raise ValueError(f"Unknown component type: {comp_type}")
-        comp_def = {k: v.val if isinstance(v, ParamTuple) else v for k, v in comp_def.items()}
+        comp_def = {
+            k: v.val if isinstance(v, ParamTuple) else v for k, v in comp_def.items()
+        }
         components.append(cls(**comp_def))
     return components
 

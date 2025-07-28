@@ -16,7 +16,13 @@ def custom_jacobian_matrix(ray_jac):
             [ray_jac.y.x, ray_jac.y.y, ray_jac.y.dx, ray_jac.y.dy, ray_jac.y._one],
             [ray_jac.dx.x, ray_jac.dx.y, ray_jac.dx.dx, ray_jac.dx.dy, ray_jac.dx._one],
             [ray_jac.dy.x, ray_jac.dy.y, ray_jac.dy.dx, ray_jac.dy.dy, ray_jac.dy._one],
-            [ray_jac._one.x, ray_jac._one.y, ray_jac._one.dx, ray_jac._one.dy, ray_jac._one._one],
+            [
+                ray_jac._one.x,
+                ray_jac._one.y,
+                ray_jac._one.dx,
+                ray_jac._one.dy,
+                ray_jac._one._one,
+            ],
         ]
     )
 
@@ -43,21 +49,21 @@ def concentric_rings(
     radius: float,
 ):
     num_rings = max(
-        1,
-        int(np.floor((-1 + np.sqrt(1 + 4 * num_points_approx / np.pi)) / 2))
+        1, int(np.floor((-1 + np.sqrt(1 + 4 * num_points_approx / np.pi)) / 2))
     )
 
     # Calculate the circumference of each ring
-    num_points_kth_ring = np.round(
-        2 * np.pi * np.arange(1, num_rings + 1)
-    ).astype(int)
+    num_points_kth_ring = np.round(2 * np.pi * np.arange(1, num_rings + 1)).astype(int)
     num_rings = num_points_kth_ring.size
     points_per_unit = num_points_approx / num_points_kth_ring.sum()
     points_per_ring = np.round(num_points_kth_ring * points_per_unit).astype(int)
 
     # Make get the radii for the number of circles of rays we need
     radii = np.linspace(
-        0, radius, num_rings + 1, endpoint=True,
+        0,
+        radius,
+        num_rings + 1,
+        endpoint=True,
     )[1:]
     div_angle = 2 * np.pi / points_per_ring
 
@@ -67,7 +73,7 @@ def concentric_rings(
     repeats = points_per_ring.tolist()
 
     all_params = np.repeat(params, repeats, axis=-1)
-    multi_cumsum_inplace(all_params[1, :], points_per_ring, 0.)
+    multi_cumsum_inplace(all_params[1, :], points_per_ring, 0.0)
 
     all_radii = all_params[0, :]
     all_angles = all_params[1, :]
@@ -76,6 +82,7 @@ def concentric_rings(
         all_radii * np.sin(all_angles),
         all_radii * np.cos(all_angles),
     )
+
 
 def fibonacci_spiral(
     nb_samples: int,
@@ -113,9 +120,11 @@ def random_coords(num: int):
     # within a centred circle of radius 0.5
     # return (y, x)
     yx = np.random.uniform(
-        -1, 1, size=(int(num * 1.28), 2)  # 4 / np.pi
+        -1,
+        1,
+        size=(int(num * 1.28), 2),  # 4 / np.pi
     )
-    radii = np.sqrt((yx ** 2).sum(axis=1))
+    radii = np.sqrt((yx**2).sum(axis=1))
     mask = radii < 1
     yx = yx[mask, :]
     return (
@@ -164,41 +173,49 @@ class SingularComponent:
 
 
 def smiley(size):
-    '''
+    """
     Smiley face test object from https://doi.org/10.1093/micmic/ozad021
-    '''
+    """
     obj = np.ones((size, size), dtype=np.complex64)
-    y, x = np.ogrid[-size//2:size//2, -size//2:size//2]
+    y, x = np.ogrid[-size // 2 : size // 2, -size // 2 : size // 2]
 
-    outline = (((y*1.2)**2 + x**2) > (110/256*size)**2) & \
-              ((((y*1.2)**2 + x**2) < (120/256*size)**2))
+    outline = (((y * 1.2) ** 2 + x**2) > (110 / 256 * size) ** 2) & (
+        ((y * 1.2) ** 2 + x**2) < (120 / 256 * size) ** 2
+    )
     obj[outline] = 0.0
 
-    left_eye = ((y + 40/256*size)**2 + (x + 40/256*size)**2) < (20/256*size)**2
+    left_eye = ((y + 40 / 256 * size) ** 2 + (x + 40 / 256 * size) ** 2) < (
+        20 / 256 * size
+    ) ** 2
     obj[left_eye] = 0
-    right_eye = (np.abs(y + 40/256*size) < 15/256*size) & \
-                (np.abs(x - 40/256*size) < 30/256*size)
+    right_eye = (np.abs(y + 40 / 256 * size) < 15 / 256 * size) & (
+        np.abs(x - 40 / 256 * size) < 30 / 256 * size
+    )
     obj[right_eye] = 0
 
-    nose = (y + 20/256*size + x > 0) & (x < 0) & (y < 10/256*size)
+    nose = (y + 20 / 256 * size + x > 0) & (x < 0) & (y < 10 / 256 * size)
 
     obj[nose] = (0.05j * x + 0.05j * y)[nose]
 
-    mouth = (((y*1)**2 + x**2) > (50/256*size)**2) & \
-            ((((y*1)**2 + x**2) < (70/256*size)**2)) & \
-            (y > 20/256*size)
+    mouth = (
+        (((y * 1) ** 2 + x**2) > (50 / 256 * size) ** 2)
+        & (((y * 1) ** 2 + x**2) < (70 / 256 * size) ** 2)
+        & (y > 20 / 256 * size)
+    )
 
     obj[mouth] = 0
 
-    tongue = (((y - 50/256*size)**2 + (x - 50/256*size)**2) < (20/256*size)**2) & \
-             ((y**2 + x**2) > (70/256*size)**2)
+    tongue = (
+        ((y - 50 / 256 * size) ** 2 + (x - 50 / 256 * size) ** 2)
+        < (20 / 256 * size) ** 2
+    ) & ((y**2 + x**2) > (70 / 256 * size) ** 2)
     obj[tongue] = 0
 
     # This wave modulation introduces a strong signature in the diffraction pattern
     # that allows to confirm the correct scale and orientation.
-    signature_wave = np.exp(1j*(3 * y + 7 * x) * 2*np.pi/size)
+    signature_wave = np.exp(1j * (3 * y + 7 * x) * 2 * np.pi / size)
 
-    obj += 0.3*signature_wave - 0.3
+    obj += 0.3 * signature_wave - 0.3
 
     obj = np.abs(obj)
 

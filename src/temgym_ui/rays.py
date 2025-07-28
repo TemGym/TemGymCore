@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from numpy.typing import NDArray
 import numpy as np
 
+
 @dataclass
 class Rays:
     xy_coords: NDArray
@@ -12,7 +13,7 @@ class Rays:
     mask: Optional[NDArray] = None
     blocked: Optional[NDArray] = None
 
-    def __eq__(self, other: 'Rays') -> bool:
+    def __eq__(self, other: "Rays") -> bool:
         return self.num == other.num and (self.xy_coords == other.xy_coords).all()
 
     @property
@@ -70,7 +71,7 @@ class Rays:
     @property
     def y_central(self):
         return self.y
-    
+
     @property
     def dx_central(self):
         return self.dx
@@ -82,15 +83,17 @@ class Rays:
     @property
     def mask_display(self):
         return self.mask
-    
+
     @property
     def num_matrices(self):
         return self.xy_coords.shape[1]
-    
+
     @property
     def num_components(self):
         return np.ceil(self.xy_coords.shape[1] / 2)
-    
+
     @property
     def xyz_coords(self):
-        return np.concatenate((self.xy_coords[:, :, [0, 1]], self.z_coords[:, :, None]), axis=-1)
+        return np.concatenate(
+            (self.xy_coords[:, :, [0, 1]], self.z_coords[:, :, None]), axis=-1
+        )

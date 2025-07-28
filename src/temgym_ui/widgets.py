@@ -45,17 +45,17 @@ QtCore.QLocale.setDefault(QtCore.QLocale(QtCore.QLocale.C))
 
 class MyDockLabel(DockLabel):
     def updateStyle(self):
-        r = '3px'
+        r = "3px"
         if self.dim:
-            fg = '#aaa'
-            bg = '#44a'
-            border = '#339'
+            fg = "#aaa"
+            bg = "#44a"
+            border = "#339"
         else:
-            fg = '#fff'
-            bg = '#333'
-            border = '#444'
+            fg = "#fff"
+            bg = "#333"
+            border = "#444"
 
-        if self.orientation == 'vertical':
+        if self.orientation == "vertical":
             self.vStyle = """DockLabel {{
                 background-color : {};
                 color : {};
@@ -87,7 +87,9 @@ class MyDockLabel(DockLabel):
             self.setStyleSheet(self.hStyle)
 
 
-def slider_config(slider: QSlider, value: int, vmin: int, vmax: int, tick_interval: Optional[int]):
+def slider_config(
+    slider: QSlider, value: int, vmin: int, vmax: int, tick_interval: Optional[int]
+):
     slider.setTickPosition(QSlider.TickPosition.TicksBelow)
     vmin, vmax = sorted((vmin, vmax))
     slider.setRange(vmin, max(vmax, vmin + 1e-5))
@@ -193,7 +195,6 @@ def arrow_slider(
     reset_to: Optional[Union[int, bool]] = True,
     decimals: int = 0,
 ):
-
     # widget = QWidget()
     hbox = QHBoxLayout()
     # widget.setLayout(hbox)
@@ -261,7 +262,6 @@ def slider(
     tick_interval: Optional[int] = None,
     reset_to: Optional[Union[int, bool]] = True,
 ):
-
     slider = QDoubleSlider(QtCore.Qt.Orientation.Horizontal)
     slider_config(slider, value, vmin, vmax, tick_interval)
     slider.setStyleSheet(
@@ -364,7 +364,9 @@ class LabelledIntField(QWidget):
 
 
 class GLImageItem(GLGraphicsItem):
-    def __init__(self, vertices, data, smooth=False, glOptions='translucent', parentItem=None):
+    def __init__(
+        self, vertices, data, smooth=False, glOptions="translucent", parentItem=None
+    ):
         self.smooth = smooth
         self._needUpdate = False
         super().__init__(parentItem=parentItem)
@@ -404,7 +406,15 @@ class GLImageItem(GLGraphicsItem):
 
         # Test texture dimensions first
         gl.glTexImage2D(
-            GL_PROXY_TEXTURE_2D, 0, GL_RGBA, shape[0], shape[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, None
+            GL_PROXY_TEXTURE_2D,
+            0,
+            GL_RGBA,
+            shape[0],
+            shape[1],
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            None,
         )
         if gl.glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_WIDTH) == 0:
             raise Exception(
@@ -414,7 +424,15 @@ class GLImageItem(GLGraphicsItem):
 
         data = np.ascontiguousarray(self.data.transpose((1, 0, 2)))
         gl.glTexImage2D(
-            GL_TEXTURE_2D, 0, GL_RGBA, shape[0], shape[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, data
+            GL_TEXTURE_2D,
+            0,
+            GL_RGBA,
+            shape[0],
+            shape[1],
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            data,
         )
         gl.glDisable(GL_TEXTURE_2D)
 

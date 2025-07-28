@@ -17,7 +17,7 @@ class Ray(HasParamsMixin):
 
     @classmethod
     def origin(cls):
-        return cls(*((0.,) * 6))
+        return cls(*((0.0,) * 6))
 
     @property
     def size(self):
@@ -29,19 +29,11 @@ class Ray(HasParamsMixin):
         return tuple(sizes)[0]
 
     def __getitem__(self, arg):
-        params = {
-            k: v[arg]
-            for k, v
-            in dataclasses.asdict(self).items()
-        }
+        params = {k: v[arg] for k, v in dataclasses.asdict(self).items()}
         return type(self)(**params)
 
     def item(self):
-        params = {
-            k: v.item()
-            for k, v
-            in dataclasses.asdict(self).items()
-        }
+        params = {k: v.item() for k, v in dataclasses.asdict(self).items()}
         return type(self)(**params)
 
 

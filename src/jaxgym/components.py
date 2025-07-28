@@ -40,7 +40,7 @@ class PointSource(HasParamsMixin):
         r[:, 1] += offset_xy[1]
         r[:, 2] = x
         r[:, 3] = y
-        r[:, 4] = 1.
+        r[:, 4] = 1.0
 
         return r
 
@@ -139,45 +139,11 @@ class Descanner(HasParamsMixin):
 
         x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
 
-        new_x = (
-            x
-            + (
-                sp_x * pxo_pxi
-                + sp_y * pxo_pyi
-                + offpxi
-                - sp_x
-            )
-            * _one
-        )
-        new_y = (
-            y
-            + (
-                sp_x * pyo_pxi
-                + sp_y * pyo_pyi
-                + offpyi
-                - sp_y
-            )
-            * _one
-        )
+        new_x = x + (sp_x * pxo_pxi + sp_y * pxo_pyi + offpxi - sp_x) * _one
+        new_y = y + (sp_x * pyo_pxi + sp_y * pyo_pyi + offpyi - sp_y) * _one
 
-        new_dx = (
-            dx
-            + (
-                sp_x * sxo_pxi
-                + sp_y * sxo_pyi
-                + offsxi
-            )
-            * _one
-        )
-        new_dy = (
-            dy
-            + (
-                sp_x * syo_pxi
-                + sp_y * syo_pyi
-                + offsyi
-            )
-            * _one
-        )
+        new_dx = dx + (sp_x * sxo_pxi + sp_y * sxo_pyi + offsxi) * _one
+        new_dy = dy + (sp_x * syo_pxi + sp_y * syo_pyi + offsyi) * _one
 
         one = _one
 
@@ -209,7 +175,7 @@ class Detector(HasParamsMixin, GridBase):
 
     @property
     def rotation(self) -> Degrees:
-        return 0.
+        return 0.0
 
     @property
     def flip(self) -> bool:

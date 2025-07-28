@@ -7,24 +7,24 @@ from microscope_calibration.model import create_stem_model
 
 def descan_model_x(vars, pxo_pxi, pxo_pyi, sxo_pxi, sxo_pyi, offpxi, offsxi):
     spx, spy, B = vars
-    return (spx * pxo_pxi + spy * pxo_pyi + offpxi) + \
-        B * (spx * sxo_pxi + spy * sxo_pyi + offsxi)
+    return (spx * pxo_pxi + spy * pxo_pyi + offpxi) + B * (
+        spx * sxo_pxi + spy * sxo_pyi + offsxi
+    )
 
 
 def descan_model_y(vars, pyo_pxi, pyo_pyi, syo_pxi, syo_pyi, offpyi, offsyi):
     spx, spy, B = vars
-    return (spx * pyo_pxi + spy * pyo_pyi + offpyi) + \
-        B * (spx * syo_pxi + spy * syo_pyi + offsyi)
+    return (spx * pyo_pxi + spy * pyo_pyi + offpyi) + B * (
+        spx * syo_pxi + spy * syo_pyi + offsyi
+    )
 
 
 def fit_descan_error_matrix(model_params, com_dict):
-
     scan_coords = []
     det_coords = []
     camera_lengths = []
 
     for camera_length in com_dict:
-
         PointSource, ScanGrid, Descanner, Detector = create_stem_model(model_params)
 
         scan_coords.append(ScanGrid.coords)
@@ -53,7 +53,11 @@ def fit_descan_error_matrix(model_params, com_dict):
 
     popt_x, _ = curve_fit(
         descan_model_x,
-        (scan_coords[:, 0][indices], scan_coords[:, 1][indices], camera_lengths[indices]),
+        (
+            scan_coords[:, 0][indices],
+            scan_coords[:, 1][indices],
+            camera_lengths[indices],
+        ),
         det_coords[:, 0][indices],
         p0=np.zeros(6),
     )
@@ -61,21 +65,27 @@ def fit_descan_error_matrix(model_params, com_dict):
 
     popt_y, _ = curve_fit(
         descan_model_y,
-        (scan_coords[:, 0][indices], scan_coords[:, 1][indices], camera_lengths[indices]),
+        (
+            scan_coords[:, 0][indices],
+            scan_coords[:, 1][indices],
+            camera_lengths[indices],
+        ),
         det_coords[:, 1][indices],
         p0=np.zeros(6),
     )
     pyo_pxi, pyo_pyi, syo_pxi, syo_pyi, offpyi, offsyi = popt_y
 
-    return DescanErrorParameters(pxo_pxi=pxo_pxi,
-                                 pxo_pyi=pxo_pyi,
-                                 pyo_pxi=pyo_pxi,
-                                 pyo_pyi=pyo_pyi,
-                                 sxo_pxi=sxo_pxi,
-                                 sxo_pyi=sxo_pyi,
-                                 syo_pxi=syo_pxi,
-                                 syo_pyi=syo_pyi,
-                                 offpxi=offpxi,
-                                 offpyi=offpyi,
-                                 offsxi=offsxi,
-                                 offsyi=offsyi)
+    return DescanErrorParameters(
+        pxo_pxi=pxo_pxi,
+        pxo_pyi=pxo_pyi,
+        pyo_pxi=pyo_pxi,
+        pyo_pyi=pyo_pyi,
+        sxo_pxi=sxo_pxi,
+        sxo_pyi=sxo_pyi,
+        syo_pxi=syo_pxi,
+        syo_pyi=syo_pyi,
+        offpxi=offpxi,
+        offpyi=offpyi,
+        offsxi=offsxi,
+        offsyi=offsyi,
+    )

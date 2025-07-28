@@ -8,18 +8,19 @@ RadiansJNP = jnp.float64
 
 
 class GridBase(abc.ABC):
-
     @property
     def pixels_to_metres_mat(self) -> NDArray:
         return pixels_to_metres_transform(
-                    self.centre, self.pixel_size, self.shape, self.flip, self.rotation
-                )
+            self.centre, self.pixel_size, self.shape, self.flip, self.rotation
+        )
 
     @property
     def metres_to_pixels_mat(self) -> NDArray:
-        return jnp.linalg.inv(pixels_to_metres_transform(
-                    self.centre, self.pixel_size, self.shape, self.flip, self.rotation
-                ))
+        return jnp.linalg.inv(
+            pixels_to_metres_transform(
+                self.centre, self.pixel_size, self.shape, self.flip, self.rotation
+            )
+        )
 
     @property
     @abc.abstractmethod
@@ -35,7 +36,7 @@ class GridBase(abc.ABC):
 
     @property
     def centre(self) -> CoordsXY:
-        return (0., 0.)
+        return (0.0, 0.0)
 
     @property
     @abc.abstractmethod

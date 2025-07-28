@@ -13,20 +13,20 @@ if TYPE_CHECKING:
     from .ray import Ray
 
 
-def run_to_end(ray: 'Ray', components):
+def run_to_end(ray: "Ray", components):
     for component in components:
         # # if the component is an ODE component, then just run the step
         # # function of the component, otherwise run the propagation function first
         # if isinstance(component, comp.ODE):
         #     ray = component.step(ray)
         # else:
-        distance = (component.z - ray.z)
+        distance = component.z - ray.z
         ray = propagate(distance, ray)
         ray = component.step(ray)
     return ray
 
 
-def run_to_end_with_history(ray: 'Ray', components):
+def run_to_end_with_history(ray: "Ray", components):
     rays = [ray]
     for component in components:
         if isinstance(component, comp.ODE):
@@ -39,14 +39,14 @@ def run_to_end_with_history(ray: 'Ray', components):
     return rays
 
 
-def run_to_component(ray: 'Ray', component):
+def run_to_component(ray: "Ray", component):
     distance = (component.z - ray.z).squeeze()
     ray = propagate(distance, ray)
     ray = component.step(ray)
     return ray
 
 
-def calculate_derivatives(ray: 'Ray', model, order):
+def calculate_derivatives(ray: "Ray", model, order):
     derivs = []
     current_func = run_to_end
     for _ in range(order):
@@ -57,7 +57,7 @@ def calculate_derivatives(ray: 'Ray', model, order):
 
 
 @jax.jit
-def solve_model(ray: 'Ray', model):
+def solve_model(ray: "Ray", model):
     model_ray_jacobians = []
 
     # Run the step function of the first component at the starting plane
@@ -105,7 +105,7 @@ def solve_model(ray: 'Ray', model):
 
 
 @jax.jit
-def get_z_vals(ray: 'Ray', model):
+def get_z_vals(ray: "Ray", model):
     z_vals = [ray.z]
     for i in range(1, len(model)):
         distance = (model[i].z - ray.z).squeeze()
@@ -118,7 +118,9 @@ def get_z_vals(ray: 'Ray', model):
     return jnp.array(z_vals)
 
 
-def run_with_grads(input_ray: 'Ray', model: Sequence, grad_vars: Sequence['PathBuilder']):
+def run_with_grads(
+    input_ray: "Ray", model: Sequence, grad_vars: Sequence["PathBuilder"]
+):
     ray_params, ray_tree = jax.tree.flatten(input_ray)
     model_params, model_tree = jax.tree.flatten(model)
 
@@ -142,16 +144,14 @@ def run_with_grads(input_ray: 'Ray', model: Sequence, grad_vars: Sequence['PathB
         # build the input ray from the params
         grad_iter = iter(grad_params[:num_ray_params])
         grad_ray_params = [
-            p if ix not in grad_ray_idxs.values()
-            else next(grad_iter)
+            p if ix not in grad_ray_idxs.values() else next(grad_iter)
             for ix, p in enumerate(ray_params)
         ]
         input_ray = jax.tree.unflatten(ray_tree, grad_ray_params)
         # build the model from the params
         grad_iter = iter(grad_params[num_ray_params:])
         grad_model_params = [
-            p if ix not in grad_idxs.values()
-            else next(grad_iter)
+            p if ix not in grad_idxs.values() else next(grad_iter)
             for ix, p in enumerate(model_params)
         ]
         grad_model = jax.tree.unflatten(model_tree, grad_model_params)
@@ -166,5 +166,7 @@ def run_with_grads(input_ray: 'Ray', model: Sequence, grad_vars: Sequence['PathB
     grad_ray_params = list(ray_params[idx] for idx in grad_ray_idxs.values())
     grad_model_params = list(model_params[idx] for idx in grad_idxs.values())
     grads, value = jac_fn(len(grad_ray_params), *(grad_ray_params + grad_model_params))
-    grads = {k: grads[i] for i, k in enumerate(chain(grad_ray_idxs.keys(), grad_idxs.keys()))}
+    grads = {
+        k: grads[i] for i, k in enumerate(chain(grad_ray_idxs.keys(), grad_idxs.keys()))
+    }
     return value, grads

@@ -32,7 +32,7 @@ class DescanErrorParameters(NamedTuple):
                 [self.pyo_pxi, self.pyo_pyi, 0.0, 0.0, self.offpyi],
                 [self.sxo_pxi, self.sxo_pyi, 0.0, 0.0, self.offsyi],
                 [self.syo_pxi, self.syo_pyi, 0.0, 0.0, self.offsyi],
-                [0.0,          0.0,          0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 0.0, 1.0],
             ]
         )
 
@@ -51,10 +51,10 @@ class ModelParameters(TypedDict):
 
 
 class Model(NamedTuple):
-    source: 'PointSource'
-    scan_grid: 'ScanGrid'
-    descanner: 'Descanner'
-    detector: 'Detector'
+    source: "PointSource"
+    scan_grid: "ScanGrid"
+    descanner: "Descanner"
+    detector: "Detector"
 
 
 def create_stem_model(

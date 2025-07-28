@@ -28,7 +28,7 @@ def transfer_rays(ray_coords, transfer_matrices):
 
     # propagate all N rays through each of the M cumulative matrices
     # result[n, m, i] = sum_j cum_tms[m, i, j] * ray_coords[n, j]
-    xy_coords = np.einsum('mij,nj->nmi', cumulative_matrices, ray_coords, optimize=True)
+    xy_coords = np.einsum("mij,nj->nmi", cumulative_matrices, ray_coords, optimize=True)
 
     return xy_coords
 
@@ -100,7 +100,7 @@ def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):
     """
     i_start = 2 * start
     i_end = 2 * end
-    matrices = transfer_matrices[i_start: i_end + 1]
+    matrices = transfer_matrices[i_start : i_end + 1]
     total = matrices[-1]
     for tm in reversed(matrices[:-1]):
         total = total @ tm
@@ -109,7 +109,7 @@ def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):
 
 def accumulate_all_transfer_matrices_cumulative(transfer_matrices):
     """Compute cumulative products in reverse order:
-       start with the last matrix, then multiply by the one before it, and so on."""
+    start with the last matrix, then multiply by the one before it, and so on."""
     all_matrices = []
     # Begin with the last matrix
     total = transfer_matrices[-1]
@@ -120,4 +120,3 @@ def accumulate_all_transfer_matrices_cumulative(transfer_matrices):
         all_matrices.append(total)
 
     return jnp.stack(all_matrices, axis=0)
-

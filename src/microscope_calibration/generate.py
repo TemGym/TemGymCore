@@ -84,8 +84,10 @@ def compute_fourdstem_dataset_vmap(
 
 
 def compute_fourdstem_dataset(
-    model: Model, fourdstem_array: np.ndarray,
-    sample_interpolant: callable, progress: bool = False,
+    model: Model,
+    fourdstem_array: np.ndarray,
+    sample_interpolant: callable,
+    progress: bool = False,
 ) -> np.ndarray:
     Detector = model.detector
     ScanGrid = model.scan_grid
@@ -165,11 +167,7 @@ def generate_dataset_from_image(
     scan_step = model.scan_grid.scan_step
     grid_extent = tuple(s * scale for s, scale in zip(scan_shape, scan_step))
     image_shape = image.shape
-    image_scale = tuple(
-        extent / size
-        for extent, size
-        in zip(grid_extent, image_shape)
-    )
+    image_scale = tuple(extent / size for extent, size in zip(grid_extent, image_shape))
 
     interpolant_grid = ScanGrid(
         z=model.scan_grid.z,
@@ -184,7 +182,8 @@ def generate_dataset_from_image(
         else partial(LinearNDInterpolator, fill_value=1.0)
     )
     interpolant = interp_t(
-        (y * sample_scale, x * sample_scale), image.flatten(),
+        (y * sample_scale, x * sample_scale),
+        image.flatten(),
     )
 
     fourdstem_array = np.zeros(

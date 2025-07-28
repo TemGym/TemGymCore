@@ -3,7 +3,11 @@ from typing_extensions import get_type_hints
 import dataclasses
 
 import jax
-from jax_dataclasses._dataclasses import FieldInfo, JDC_STATIC_MARKER, get_type_hints_partial
+from jax_dataclasses._dataclasses import (
+    FieldInfo,
+    JDC_STATIC_MARKER,
+    get_type_hints_partial,
+)
 from jax.tree_util import FlattenedIndexKey, SequenceKey, DictKey
 
 
@@ -72,7 +76,7 @@ class PathBuilder:
         elif self._getter == "item":
             return get_from[self._original_key]
         else:
-            raise ValueError(f'Unknown get with {self._getter}')
+            raise ValueError(f"Unknown get with {self._getter}")
 
     def _build(self, children: tuple[int | str] | None = None, original: bool = False):
         if children is None:
@@ -101,10 +105,10 @@ class PathBuilder:
         paths_vals, _ = jax.tree.flatten_with_path(tree)
         all_paths = list(p[0] for p in paths_vals)
         for idx, param_path in enumerate(all_paths):
-            if param_path[:len(node_path)] == node_path:
+            if param_path[: len(node_path)] == node_path:
                 param_idxs[
                     original_path
-                    + tuple(get_key(k) for k in param_path[len(node_path):])
+                    + tuple(get_key(k) for k in param_path[len(node_path) :])
                 ] = idx
         return param_idxs
 
@@ -157,9 +161,7 @@ class HasParamsMixin:
     def params(self):
         # could be @classproperty if this existed or could write own descriptor
         params = {
-            k.name: PathBuilder(self, k.name, "attr")
-            for k
-            in dataclasses.fields(self)
+            k.name: PathBuilder(self, k.name, "attr") for k in dataclasses.fields(self)
         }
         # return within instance of self purely to get type hints while building path
         return type(self)(**params)

@@ -38,8 +38,8 @@ if TYPE_CHECKING:
 
 LABEL_RADIUS = 0.3
 Z_ORIENT = -1
-RAY_COLOR = (0., 0.8, 0.)
-XYZ_SCALING = np.asarray((1, 1, 1.))
+RAY_COLOR = (0.0, 0.8, 0.0)
+XYZ_SCALING = np.asarray((1, 1, 1.0))
 LENGTHSCALING = 1
 MRAD = 1e-3
 UPDATE_RATE = 100
@@ -54,24 +54,14 @@ class GUIWrapper:
             Z_ORIENT * component.z,
             64,
         )
-        return (
-            gl.GLLinePlotItem(
-                pos=vertices.T,
-                color="white",
-                width=5
-            ),
-        )
+        return (gl.GLLinePlotItem(pos=vertices.T, color="white", width=5),)
 
     @staticmethod
     def label(component) -> gl.GLTextItem:
         return gl.GLTextItem(
-            pos=np.array([
-                -LABEL_RADIUS,
-                LABEL_RADIUS,
-                Z_ORIENT * component.z
-            ]),
+            pos=np.array([-LABEL_RADIUS, LABEL_RADIUS, Z_ORIENT * component.z]),
             text=type(component).__name__,
-            color='w',
+            color="w",
         )
 
 
@@ -80,7 +70,7 @@ class GridGeomParams(NamedTuple):
     h: float
     cx: float
     cy: float
-    rotation: 'Radians'
+    rotation: "Radians"
     z: float
     shape: Optional[Tuple[int, int]]
 
@@ -102,7 +92,7 @@ class GridGeomMixin:
         shape = geom.shape
         if shape is None or any(s <= 0 for s in shape):
             return None
-        vertices = self._get_mesh(rotation=0.)
+        vertices = self._get_mesh(rotation=0.0)
         min_x, min_y, z = vertices.min(axis=0)
         max_x, max_y, _ = vertices.max(axis=0)
         ny, nx = shape
@@ -116,7 +106,7 @@ class GridGeomMixin:
         yfill = np.tile(yfill, yvals.size)
         yvals = np.repeat(yvals, 2)
 
-        if rotation != 0.:
+        if rotation != 0.0:
             mag, ang = R2P(xvals + xfill * 1j)
             xcplx = P2R(mag, ang + rotation)
             xvals, xfill = xcplx.real, xcplx.imag
@@ -134,18 +124,18 @@ class GridGeomMixin:
         vertices *= XYZ_SCALING
         self.geom_border = gl.GLLinePlotItem(
             pos=np.concatenate((vertices, vertices[:1, :]), axis=0),
-            color=(0., 0., 0., 8.),
+            color=(0.0, 0.0, 0.0, 8.0),
             antialias=True,
-            mode='line_strip',
+            mode="line_strip",
         )
         grid_verts = self._get_grid_verts()
         if grid_verts is not None:
             grid_verts *= XYZ_SCALING
             self.geom_grid = gl.GLLinePlotItem(
                 pos=grid_verts,
-                color=(0., 0., 0., 0.2),
+                color=(0.0, 0.0, 0.0, 0.2),
                 antialias=True,
-                mode='lines',
+                mode="lines",
             )
         self.geom_image = GLImageItem(
             vertices,
@@ -167,12 +157,12 @@ class GridGeomMixin:
             grid_verts *= XYZ_SCALING
             self.geom_grid.setData(
                 pos=grid_verts,
-                color=(0., 0., 0., 0.3),
+                color=(0.0, 0.0, 0.0, 0.3),
                 antialias=True,
             )
         self.geom_border.setData(
             pos=np.concatenate((vertices, vertices[:1, :]), axis=0),
-            color=(0., 0., 0., 1.),
+            color=(0.0, 0.0, 0.0, 1.0),
             antialias=True,
         )
 
@@ -192,7 +182,7 @@ class GridGeomMixin:
 
 
 class ComponentGUIWrapper:
-    def __init__(self, component: 'comp.Component'):
+    def __init__(self, component: "comp.Component"):
         self.component = component
 
     def update_geometry(self):
@@ -200,13 +190,9 @@ class ComponentGUIWrapper:
 
     def get_label(self) -> gl.GLTextItem:
         return gl.GLTextItem(
-            pos=np.array([
-                -LABEL_RADIUS,
-                LABEL_RADIUS,
-                Z_ORIENT * self.component.z
-            ]),
+            pos=np.array([-LABEL_RADIUS, LABEL_RADIUS, Z_ORIENT * self.component.z]),
             text=self.component.name,
-            color='w',
+            color="w",
         )
 
     def get_geom(self) -> Iterable[gl.GLLinePlotItem]:
@@ -214,18 +200,18 @@ class ComponentGUIWrapper:
 
 
 class TemGymWindow(QMainWindow):
-    '''
+    """
     Create the UI Window
-    '''
-    def __init__(self, *args, num_rays: int = 64, **kwargs):
+    """
 
-        '''Init important parameters
+    def __init__(self, *args, num_rays: int = 64, **kwargs):
+        """Init important parameters
 
         Parameters
         ----------
         model : class
             Microscope model
-        '''
+        """
         super().__init__(*args, **kwargs)
         self.num_rays = num_rays
 
@@ -257,13 +243,8 @@ class TemGymWindow(QMainWindow):
         self.create3DDisplay()
         self.createDetectorDisplay()
 
-
     def set_model(
-        self,
-        model,
-        tree: bool = True,
-        geometry: bool = True,
-        camera: bool = True
+        self, model, tree: bool = True, geometry: bool = True, camera: bool = True
     ):
         if geometry:
             self.add_geometry(model)
@@ -272,7 +253,6 @@ class TemGymWindow(QMainWindow):
         if tree:
             self.update_tree(model)
         self.update_rays(model, self.num_rays)
-
 
     def add_geometry(self, model):
         self.tem_window.clear()
@@ -297,14 +277,14 @@ class TemGymWindow(QMainWindow):
 
     def update_camera(self, components: list[ComponentGUIWrapper]):
         z_vals = tuple(c.z for c in components)
-        mid_z = (min(z_vals) + max(z_vals)) / 2.
+        mid_z = (min(z_vals) + max(z_vals)) / 2.0
         mid_z *= Z_ORIENT
         xyoffset = (0.2 * mid_z, -0.2 * mid_z)
         self.tem_window.setCameraParams(center=QVector3D(*xyoffset, mid_z))
 
     def update_tree(self, components: list):
         params_model = QStandardItemModel()
-        params_model.setHorizontalHeaderLabels(['Parameter', 'Value'])
+        params_model.setHorizontalHeaderLabels(["Parameter", "Value"])
         params_model.itemChanged.connect(self.handleChanged)
         for component in components:
             comp_row = QStandardItem(type(component).__name__)
@@ -313,10 +293,12 @@ class TemGymWindow(QMainWindow):
                 key = QStandardItem(name)
                 key.setCheckable(True)
                 key.setEditable(False)
-                comp_row.appendRow([
-                    key,
-                    QStandardItem(f"{val}"),
-                ])
+                comp_row.appendRow(
+                    [
+                        key,
+                        QStandardItem(f"{val}"),
+                    ]
+                )
             params_model.appendRow(comp_row)
         # self._current_config = self.qtmodel_to_dict(params_model)
         self.params_tree.setModel(params_model)
@@ -324,11 +306,11 @@ class TemGymWindow(QMainWindow):
 
     @Slot()
     def update_rays(self, model, num_rays: int):
-        optical_axis_ray = Ray(0., 0., 0., 0., 0., 0.)
+        optical_axis_ray = Ray(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         transfer_matrices = solve_model(optical_axis_ray, model)
         z_vals = get_z_vals(optical_axis_ray, model)
         input_rays = model[0].generate(num_rays, random=False)
-        
+
         xy_coords = transfer_rays(input_rays, transfer_matrices)
 
         vertices = as_gl_lines(xy_coords, z_vals, z_mult=Z_ORIENT)
@@ -342,8 +324,11 @@ class TemGymWindow(QMainWindow):
         )
         image = np.zeros(model[-1].det_shape, dtype=np.float32)
         inplace_sum(
-            np.asarray(y_px), np.asarray(x_px), np.ones(y_px.shape, dtype=bool),
-            np.ones(y_px.shape, dtype=np.float32), image
+            np.asarray(y_px),
+            np.asarray(x_px),
+            np.ones(y_px.shape, dtype=bool),
+            np.ones(y_px.shape, dtype=np.float32),
+            image,
         )
         self.spot_img.setImage(image)
 
@@ -363,8 +348,8 @@ class TemGymWindow(QMainWindow):
                 params[-1][key.text()] = ParamTuple(
                     py_val,
                     {
-                        'checked': key.checkState().value == 2,
-                    }
+                        "checked": key.checkState().value == 2,
+                    },
                 )
         return params
 
@@ -387,38 +372,33 @@ class TemGymWindow(QMainWindow):
         self.set_model(model, tree=False, geometry=True, camera=False)
 
     def create3DDisplay(self):
-        '''Create the 3D Display
-        '''
+        """Create the 3D Display"""
         # Create the 3D TEM Widnow, and plot the components in 3D
         self.tem_window = gl.GLViewWidget()
         self.tem_window.setBackgroundColor(BKG_COLOR_3D)
 
         # Get the model mean height to centre the camera origin
-        mean_z = 0.
+        mean_z = 0.0
         mean_z *= Z_ORIENT
 
         xyoffset = (0.2 * mean_z, -0.2 * mean_z)
         # Define Camera Parameters
         initial_camera_params = {
-            'center': QVector3D(*xyoffset, mean_z),
-            'fov': 35,
-            'azimuth': 45.0,
-            'distance': 3.5 * abs(mean_z),
-            'elevation': 25.0,
+            "center": QVector3D(*xyoffset, mean_z),
+            "fov": 35,
+            "azimuth": 45.0,
+            "distance": 3.5 * abs(mean_z),
+            "elevation": 25.0,
         }
         self.tem_window.setCameraParams(**initial_camera_params)
 
-        self.ray_geometry = gl.GLLinePlotItem(
-            mode='lines',
-            width=2
-        )
+        self.ray_geometry = gl.GLLinePlotItem(mode="lines", width=2)
 
         # Add the window to the dock
         self.tem_dock.addWidget(self.tem_window)
 
     def createDetectorDisplay(self):
-        '''Create the detector display
-        '''
+        """Create the detector display"""
         # Create the detector window, which shows where rays land at the bottom
         self.detector_window = pg.GraphicsLayoutWidget()
         self.detector_window.setBackground(BKG_COLOR_3D)
