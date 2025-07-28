@@ -1,14 +1,13 @@
 from jaxgym.run import run_with_grads
 from jaxgym.ray import Ray
-from jaxgym import components
+import jaxgym.components as comp
 from microscope_calibration.model import DescanErrorParameters
-import microscope_calibration.components as comp
 
 
 if __name__ == "__main__":
     model = (
         comp.PointSource(0., 0.01),
-        (lens := components.Lens(0.5, 0.1)),
+        (lens := comp.Lens(0.5, 0.1)),
         (desc := comp.Descanner(0.75, 0.2, 0.1, DescanErrorParameters())),
         (det := comp.Detector(1., (0.001,) * 2, (128., 128.))),
     )

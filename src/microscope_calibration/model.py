@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from jaxgym import CoordsXY
 
 if TYPE_CHECKING:
-    from .components import PointSource, Descanner, ScanGrid, Detector
+    from jaxgym.components import PointSource, Descanner, ScanGrid, Detector
 
 
 class DescanErrorParameters(NamedTuple):

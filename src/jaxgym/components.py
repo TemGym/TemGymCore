@@ -3,16 +3,24 @@ import jax.numpy as jnp
 
 from .ray import Ray, propagate
 from .utils import random_coords, concentric_rings
-from .ode import solve_ode
-from . import Degrees
+from .coordinate_transforms import GridBase
+from . import Degrees, CoordsXY, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
 
 
 @jdc.pytree_dataclass
-class PointSource:
+class Plane(HasParamsMixin):
+    z: float
+
+    def step(self, ray: Ray):
+        return ray
+
+
+@jdc.pytree_dataclass
+class PointSource(HasParamsMixin):
     z: float
     semi_conv: float
-    offset_xy: tuple[float, float] = (0.0, 0.0)
+    offset_xy: CoordsXY = (0.0, 0.0)
 
     def step(self, ray: Ray):
         return ray
@@ -59,7 +67,157 @@ class Lens(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class ThickLens:
+class ScanGrid(HasParamsMixin, GridBase):
+    z: float
+    scan_step: ScaleYX
+    scan_shape: ShapeYX
+    scan_rotation: Degrees
+
+    @property
+    def pixel_size(self) -> ScaleYX:
+        return self.scan_step
+
+    @property
+    def shape(self) -> ShapeYX:
+        return self.scan_shape
+
+    @property
+    def rotation(self) -> Degrees:
+        return self.scan_rotation
+
+    @property
+    def flip(self) -> CoordsXY:
+        return False
+
+
+@jdc.pytree_dataclass
+class Descanner(HasParamsMixin):
+    z: float
+    scan_pos_x: float
+    scan_pos_y: float
+    descan_error: jnp.ndarray
+
+    def step(self, ray: Ray):
+        """
+        The traditional 5x5 linear ray transfer matrix of an optical system is
+               [Axx, Axy, Bxx, Bxy, pos_offset_x],
+               [Ayx, Ayy, Byx, Byy, pos_offset_y],
+               [Cxx, Cxy, Dxx, Dxy, slope_offset_x],
+               [Cyx, Cyy, Dyx, Dyy, slope_offset_y],
+               [0.0, 0.0, 0.0, 0.0, 1.0],
+        Since the Descanner is designed to only shift or tilt the entire incoming beam,
+        with a certain error as a function of scan position, we write the 5th column
+        of the ray transfer matrix, which is designed to describe an offset in shift or tilt,
+        as a linear function of the scan position (spx, spy) (ignoring scan tilt for now):
+        Thus -
+            pos_offset_x(spx, spy) = pxo_pxi * spx + pxo_pyi * spy + offpxi
+            pos_offset_y(spx, spy) = pyo_pxi * spx + pyo_pyi * spy + offpyi
+            slope_offset_x(spx, spy) = sxo_pxi * spx + sxo_pyi * spy + offsxi
+            slope_offset_y(spx, spy) = syo_pxi * spx + syo_pyi * spy + offsyi
+        which can be represented as another 5x5 transfer matrix that is used to populate
+        the 5th column of the ray transfer matrix of the optical system. The jacobian call
+        in jaxgym will return the complete 5x5 ray transfer matrix of the optical system
+        with the total descan error included in the 5th column.
+        """
+
+        sp_x, sp_y = self.scan_pos_x, self.scan_pos_y
+
+        (
+            pxo_pxi,  # How position x output scales with respect to scan x position
+            pxo_pyi,  # How position x output scales with respect to scan y position
+            pyo_pxi,  # How position y output scales with respect to scan x position
+            pyo_pyi,  # How position y output scales with respect to scan y position
+            sxo_pxi,  # How slope x output scales with respect to scan x position
+            sxo_pyi,  # How slope x output scales with respect to scan y position
+            syo_pxi,  # How slope y output scales with respect to scan x position
+            syo_pyi,  # How slope y output scales with respect to scan y position
+            offpxi,  # Constant additive error in x position
+            offpyi,  # Constant additive error in y position
+            offsxi,  # Constant additive error in x slope
+            offsyi,  # Constant additive error in y slope
+        ) = self.descan_error
+
+        x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
+
+        new_x = (
+            x
+            + (
+                sp_x * pxo_pxi
+                + sp_y * pxo_pyi
+                + offpxi
+                - sp_x
+            )
+            * _one
+        )
+        new_y = (
+            y
+            + (
+                sp_x * pyo_pxi
+                + sp_y * pyo_pyi
+                + offpyi
+                - sp_y
+            )
+            * _one
+        )
+
+        new_dx = (
+            dx
+            + (
+                sp_x * sxo_pxi
+                + sp_y * sxo_pyi
+                + offsxi
+            )
+            * _one
+        )
+        new_dy = (
+            dy
+            + (
+                sp_x * syo_pxi
+                + sp_y * syo_pyi
+                + offsyi
+            )
+            * _one
+        )
+
+        one = _one
+
+        return Ray(
+            x=new_x,
+            y=new_y,
+            dx=new_dx,
+            dy=new_dy,
+            _one=one,
+            pathlength=ray.pathlength,
+            z=ray.z,
+        )
+
+
+@jdc.pytree_dataclass
+class Detector(HasParamsMixin, GridBase):
+    z: float
+    det_pixel_size: ScaleYX
+    det_shape: ShapeYX
+    flip_y: bool = False
+
+    @property
+    def pixel_size(self) -> ScaleYX:
+        return self.det_pixel_size
+
+    @property
+    def shape(self) -> ShapeYX:
+        return self.det_shape
+
+    @property
+    def rotation(self) -> Degrees:
+        return 0.
+
+    @property
+    def flip(self) -> bool:
+        return self.flip_y
+
+
+@jdc.pytree_dataclass
+class ThickLens(HasParamsMixin):
     z_po: float
     z_pi: float
     focal_length: float
@@ -88,31 +246,7 @@ class ThickLens:
 
 
 @jdc.pytree_dataclass
-class ODE:
-    z: float
-    z_end: float
-    phi_lambda: callable
-    E_lambda: callable
-
-    def step(self, ray: Ray) -> Ray:
-        in_state = jnp.array([ray.x, ray.y, ray.dx, ray.dy, ray.pathlength])
-
-        z_start = self.z
-        z_end = self.z_end
-
-        u0 = self.phi_lambda(0.0, 0.0, z_start).astype(jnp.float64)
-
-        out_state, out_z = solve_ode(
-            in_state, z_start, z_end, self.phi_lambda, self.E_lambda, u0
-        )
-
-        x, y, dx, dy, opl = out_state
-
-        return Ray(x=x, y=y, dx=dx, dy=dy, _one=ray._one, pathlength=opl, z=out_z)
-
-
-@jdc.pytree_dataclass
-class Deflector:
+class Deflector(HasParamsMixin):
     z: float
     def_x: float
     def_y: float
@@ -136,7 +270,7 @@ class Deflector:
 
 
 @jdc.pytree_dataclass
-class Rotator:
+class Rotator(HasParamsMixin):
     z: float
     angle: Degrees
 
@@ -164,7 +298,7 @@ class Rotator:
 
 
 @jdc.pytree_dataclass
-class DoubleDeflector:
+class DoubleDeflector(HasParamsMixin):
     z: float
     first: Deflector
     second: Deflector
@@ -179,15 +313,7 @@ class DoubleDeflector:
 
 
 @jdc.pytree_dataclass
-class InputPlane:
-    z: float
-
-    def step(self, ray: Ray):
-        return ray
-
-
-@jdc.pytree_dataclass
-class Biprism:
+class Biprism(HasParamsMixin):
     z: float
     offset: float = 0.0
     rotation: Degrees = 0.0
@@ -241,34 +367,3 @@ class Biprism:
             pathlength=pathlength,
             z=ray.z,
         )
-
-
-# Base class for grid transforms
-
-
-# @jdc.pytree_dataclass
-# class ImageGrid(GridBase):
-#     z: float
-#     image_pixel_size: ScaleYX
-#     image_shape: ShapeYX
-#     image_rotation: Degrees
-#     image_centre: CoordsXY = (0., 0.)
-#     image_array: jnp.ndarray = None  # Added image array variable specific to ImageGrid
-#     metres_to_pixels_mat: jnp.ndarray = jdc.field(init=False)
-#     pixels_to_metres_mat: jnp.ndarray = jdc.field(init=False)
-
-#     @property
-#     def pixel_size(self) -> ScaleYX:
-#         return self.image_pixel_size
-
-#     @property
-#     def shape(self) -> ShapeYX:
-#         return self.image_shape
-
-#     @property
-#     def rotation(self) -> Degrees:
-#         return self.image_rotation
-
-#     @property
-#     def centre(self) -> CoordsXY:
-#         return self.image_centre

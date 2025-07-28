@@ -2,19 +2,20 @@ from typing_extensions import Literal
 import numpy as np
 import jax
 from functools import partial
-from jaxgym import CoordsXY
 from scipy.interpolate import NearestNDInterpolator, LinearNDInterpolator
+import jax.numpy as jnp
+import tqdm.auto as tqdm
+import numba
+
+from jaxgym import CoordsXY
+from jaxgym.components import ScanGrid
 from .model import Model
 from .stemoverfocus import (
     ray_coords_at_plane,
     solve_model_fourdstem_wrapper,
     project_coordinates_backward,
 )
-from .components import ScanGrid
 from .model import ModelParameters, create_stem_model
-import jax.numpy as jnp
-import tqdm.auto as tqdm
-import numba
 
 
 def project_frame_forward(

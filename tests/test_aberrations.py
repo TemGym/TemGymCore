@@ -120,7 +120,7 @@ from jaxgym.run import run_to_end, calculate_derivatives
 #     z_init = jnp.array(z_init)
 #     z_image = jnp.array(z_image)
 
-#     PointSource = comp.InputPlane(z=z_init)
+#     PointSource = comp.Plane(z=z_init)
 #     ElectrostaticLens = comp.ODE(z=z_init, z_end=z_image, phi_lambda=phi_lambda, E_lambda=E_lambda)
 #     Detector = comp.Detector(z=z_image, det_pixel_size=(5e-9, 5e-9), det_shape = (128, 128))
 #     model = [PointSource, ElectrostaticLens, Detector]

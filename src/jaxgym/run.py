@@ -15,15 +15,14 @@ if TYPE_CHECKING:
 
 def run_to_end(ray: 'Ray', components):
     for component in components:
-        # if the component is an ODE component, then just run the step
-        # function of the component, otherwise run the propagation function first
-        if isinstance(component, comp.ODE):
-            ray = component.step(ray)
-        else:
-            distance = (component.z - ray.z)
-            ray = propagate(distance, ray)
-            ray = component.step(ray)
-
+        # # if the component is an ODE component, then just run the step
+        # # function of the component, otherwise run the propagation function first
+        # if isinstance(component, comp.ODE):
+        #     ray = component.step(ray)
+        # else:
+        distance = (component.z - ray.z)
+        ray = propagate(distance, ray)
+        ray = component.step(ray)
     return ray
 
 

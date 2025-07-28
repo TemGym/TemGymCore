@@ -2,7 +2,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 from temgym_ui.window import TemGymWindow
-import microscope_calibration.components as comp
+import jaxgym.components as comp
 
 
 model = (

@@ -7,8 +7,8 @@ from jaxgym.ray import Ray
 from jaxgym.run import solve_model
 from jaxgym.transfer import accumulate_transfer_matrices, transfer_rays_pt_src
 from jaxgym import CoordsXY, ScaleYX
+import jaxgym.components as comp
 
-from . import components as comp
 from .model import Model
 from jax import lax
 
