@@ -1,3 +1,4 @@
+import dataclasses
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
@@ -13,6 +14,35 @@ class Ray(HasParamsMixin):
     z: float
     pathlength: float
     _one: float = 1.0
+
+    @classmethod
+    def origin(cls):
+        return cls(*((0.,) * 6))
+
+    @property
+    def size(self):
+        sizes = set(
+            1 if jnp.isscalar(v) else jnp.asarray(v).size
+            for v in dataclasses.asdict(self).values()
+        )
+        assert len(sizes) == 1
+        return tuple(sizes)[0]
+
+    def __getitem__(self, arg):
+        params = {
+            k: v[arg]
+            for k, v
+            in dataclasses.asdict(self).items()
+        }
+        return type(self)(**params)
+
+    def item(self):
+        params = {
+            k: v.item()
+            for k, v
+            in dataclasses.asdict(self).items()
+        }
+        return type(self)(**params)
 
 
 def propagate_dir_cosine(distance, ray):
