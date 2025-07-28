@@ -12,7 +12,7 @@ def run_to_end(ray, components):
         if isinstance(component, comp.ODE):
             ray = component.step(ray)
         else:
-            distance = (component.z - ray.z).squeeze()
+            distance = (component.z - ray.z)
             ray = propagate(distance, ray)
             ray = component.step(ray)
 
@@ -99,7 +99,7 @@ def solve_model(ray, model):
 
 @jax.jit
 def get_z_vals(ray, model):
-    z_vals = [ray.z]    
+    z_vals = [ray.z]
     for i in range(1, len(model)):
         distance = (model[i].z - ray.z).squeeze()
         # Propagate the ray
@@ -109,3 +109,32 @@ def get_z_vals(ray, model):
         ray = model[i].step(ray)
         z_vals.append(ray.z)
     return jnp.array(z_vals)
+
+
+def run_with_grads(ray, model, grad_vars):
+    model_params, tree = jax.tree.flatten(model)
+
+    grad_idxs = {}
+    for var in grad_vars:
+        grad_idxs.update(var._find_in(model))
+
+    def run_wrap(*grad_params):
+        grad_iter = iter(grad_params)
+        grad_model_params = [
+            p if ix not in grad_idxs.values()
+            else next(grad_iter)
+            for ix, p in enumerate(model_params)
+        ]
+        grad_model = jax.tree.unflatten(tree, grad_model_params)
+        out = run_to_end(ray, grad_model)
+        return out, out
+
+    jac_fn = jax.jacobian(
+        run_wrap,
+        argnums=tuple(range(len(grad_idxs))),
+        has_aux=True,
+    )
+    grad_params = list(model_params[idx] for idx in grad_idxs.values())
+    grads, value = jac_fn(*grad_params)
+    grads = {k: grads[i] for i, k in enumerate(grad_idxs.keys())}
+    return value, grads

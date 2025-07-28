@@ -45,6 +45,18 @@ class PointSource:
         return r
 
 
+def get_key(k):
+    try:
+        return k.idx
+    except AttributeError:
+        pass
+    try:
+        return k.key
+    except AttributeError:
+        pass
+    raise TypeError(f"Unrecognized key type {k}")
+
+
 class PathBuilder:
     def __init__(
         self,
@@ -101,9 +113,31 @@ class PathBuilder:
         else:
             key = self._key
         this = (key,) + children
-        if isinstance(self._parent, Component):
+        if not isinstance(self._parent, PathBuilder):
             return (self._parent,) + this
         return self._parent._build(this, original=original)
+
+    def _find_in(self, tree: Sequence[Any]) -> dict[Sequence[str | int], int]:
+        original_path = self._build(original=True)
+        this_path = self._build()
+        root = this_path[0]
+        for idx, el in enumerate(tree):
+            if el is root:
+                idx = SequenceKey(idx)
+                break
+        assert el is root, f"First item {root} not found in model"
+        node_path = (idx,) + this_path[1:]
+
+        param_idxs = {}
+        paths_vals, _ = jax.tree.flatten_with_path(tree)
+        all_paths = list(p[0] for p in paths_vals)
+        for idx, param_path in enumerate(all_paths):
+            if param_path[:len(node_path)] == node_path:
+                param_idxs[
+                    original_path
+                    + tuple(get_key(k) for k in param_path[len(node_path):])
+                ] = idx
+        return param_idxs
 
 
 def get_field_info(cls) -> FieldInfo:
@@ -152,11 +186,13 @@ def get_field_info(cls) -> FieldInfo:
 class Component:
     @property
     def params(self):
+        # could be @classproperty if this existed or could write own descriptor
         params = {
-            k: PathBuilder(self, k, "attr")
+            k.name: PathBuilder(self, k.name, "attr")
             for k
-            in dataclasses.asdict(self).keys()
+            in dataclasses.fields(self)
         }
+        # return within instance of self purely to get type hints while building path
         return type(self)(**params)
 
 
