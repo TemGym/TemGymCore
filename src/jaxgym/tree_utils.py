@@ -51,6 +51,13 @@ class PathBuilder:
     def __getitem__(self, idx: int):
         return type(self)(self, idx, "item")
 
+    def _resolve_root(self):
+        return (
+            self._parent._resolve_root()
+            if isinstance(self._parent, PathBuilder)
+            else self._parent
+        )
+
     def _resolve_parent(self):
         return (
             self._parent._resolve()
@@ -143,3 +150,16 @@ def get_field_info(cls) -> FieldInfo:
 
         child_node_field_names.append(field.name)
     return FieldInfo(child_node_field_names, static_field_names)
+
+
+class HasParamsMixin:
+    @property
+    def params(self):
+        # could be @classproperty if this existed or could write own descriptor
+        params = {
+            k.name: PathBuilder(self, k.name, "attr")
+            for k
+            in dataclasses.fields(self)
+        }
+        # return within instance of self purely to get type hints while building path
+        return type(self)(**params)

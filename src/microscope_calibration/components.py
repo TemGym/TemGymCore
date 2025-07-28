@@ -5,11 +5,11 @@ import jax_dataclasses as jdc
 from jaxgym.utils import random_coords, concentric_rings
 from jaxgym.ray import Ray
 from jaxgym.coordinate_transforms import GridBase
-from jaxgym import Degrees, Coords_XY, Scale_YX, Shape_YX
+from jaxgym.tree_utils import HasParamsMixin
 
 
 @jdc.pytree_dataclass
-class PointSource:
+class PointSource(HasParamsMixin):
     z: float
     semi_conv: float
     offset_xy: Coords_XY = (0.0, 0.0)
@@ -38,7 +38,7 @@ class PointSource:
 
 
 @jdc.pytree_dataclass
-class ScanGrid(GridBase):
+class ScanGrid(HasParamsMixin, GridBase):
     z: float
     scan_step: Scale_YX
     scan_shape: Shape_YX
@@ -62,7 +62,7 @@ class ScanGrid(GridBase):
 
 
 @jdc.pytree_dataclass
-class Descanner:
+class Descanner(HasParamsMixin):
     z: float
     scan_pos_x: float
     scan_pos_y: float
@@ -164,7 +164,7 @@ class Descanner:
 
 
 @jdc.pytree_dataclass
-class Detector(GridBase):
+class Detector(HasParamsMixin, GridBase):
     z: float
     det_pixel_size: Scale_YX
     det_shape: Shape_YX

@@ -1,11 +1,19 @@
-from .ray import propagate
+from itertools import chain
+import dataclasses
+from typing import TYPE_CHECKING, Sequence
+
 import jax
 import jax.numpy as jnp
 import jaxgym.components as comp
 from .utils import custom_jacobian_matrix
+from .ray import propagate
+
+if TYPE_CHECKING:
+    from .tree_utils import PathBuilder
+    from .ray import Ray
 
 
-def run_to_end(ray, components):
+def run_to_end(ray: 'Ray', components):
     for component in components:
         # if the component is an ODE component, then just run the step
         # function of the component, otherwise run the propagation function first
@@ -19,7 +27,7 @@ def run_to_end(ray, components):
     return ray
 
 
-def run_to_end_with_history(ray, components):
+def run_to_end_with_history(ray: 'Ray', components):
     rays = [ray]
     for component in components:
         if isinstance(component, comp.ODE):
@@ -32,14 +40,14 @@ def run_to_end_with_history(ray, components):
     return rays
 
 
-def run_to_component(ray, component):
+def run_to_component(ray: 'Ray', component):
     distance = (component.z - ray.z).squeeze()
     ray = propagate(distance, ray)
     ray = component.step(ray)
     return ray
 
 
-def calculate_derivatives(ray, model, order):
+def calculate_derivatives(ray: 'Ray', model, order):
     derivs = []
     current_func = run_to_end
     for _ in range(order):
@@ -50,7 +58,7 @@ def calculate_derivatives(ray, model, order):
 
 
 @jax.jit
-def solve_model(ray, model):
+def solve_model(ray: 'Ray', model):
     model_ray_jacobians = []
 
     # Run the step function of the first component at the starting plane
@@ -98,7 +106,7 @@ def solve_model(ray, model):
 
 
 @jax.jit
-def get_z_vals(ray, model):
+def get_z_vals(ray: 'Ray', model):
     z_vals = [ray.z]
     for i in range(1, len(model)):
         distance = (model[i].z - ray.z).squeeze()
@@ -111,30 +119,53 @@ def get_z_vals(ray, model):
     return jnp.array(z_vals)
 
 
-def run_with_grads(ray, model, grad_vars):
-    model_params, tree = jax.tree.flatten(model)
+def run_with_grads(input_ray: 'Ray', model: Sequence, grad_vars: Sequence['PathBuilder']):
+    ray_params, ray_tree = jax.tree.flatten(input_ray)
+    model_params, model_tree = jax.tree.flatten(model)
 
     grad_idxs = {}
+    grad_ray_idxs = {}
     for var in grad_vars:
-        grad_idxs.update(var._find_in(model))
+        if var is input_ray:
+            for field in dataclasses.fields(var):
+                builder = getattr(var.params, field.name)
+                idx = builder._build()[-1].key
+                path = builder._build(original=True)
+                grad_ray_idxs[path] = idx
+        elif var._resolve_root() is input_ray:
+            idx = var._build()[-1].key
+            path = var._build(original=True)
+            grad_ray_idxs[path] = idx
+        else:
+            grad_idxs.update(var._find_in(model))
 
-    def run_wrap(*grad_params):
-        grad_iter = iter(grad_params)
+    def run_wrap(num_ray_params: int, *grad_params):
+        # build the input ray from the params
+        grad_iter = iter(grad_params[:num_ray_params])
+        grad_ray_params = [
+            p if ix not in grad_ray_idxs.values()
+            else next(grad_iter)
+            for ix, p in enumerate(ray_params)
+        ]
+        input_ray = jax.tree.unflatten(ray_tree, grad_ray_params)
+        # build the model from the params
+        grad_iter = iter(grad_params[num_ray_params:])
         grad_model_params = [
             p if ix not in grad_idxs.values()
             else next(grad_iter)
             for ix, p in enumerate(model_params)
         ]
-        grad_model = jax.tree.unflatten(tree, grad_model_params)
-        out = run_to_end(ray, grad_model)
-        return out, out
+        grad_model = jax.tree.unflatten(model_tree, grad_model_params)
+        out = run_to_end(input_ray, grad_model)
+        return out, out  # double return lets us do jacobian_and_value via has_aux=True
 
     jac_fn = jax.jacobian(
         run_wrap,
-        argnums=tuple(range(len(grad_idxs))),
-        has_aux=True,
+        argnums=tuple(range(1, len(grad_ray_idxs) + len(grad_idxs) + 1)),
+        has_aux=True,  # return will be (jac, value)
     )
-    grad_params = list(model_params[idx] for idx in grad_idxs.values())
-    grads, value = jac_fn(*grad_params)
-    grads = {k: grads[i] for i, k in enumerate(grad_idxs.keys())}
+    grad_ray_params = list(ray_params[idx] for idx in grad_ray_idxs.values())
+    grad_model_params = list(model_params[idx] for idx in grad_idxs.values())
+    grads, value = jac_fn(len(grad_ray_params), *(grad_ray_params + grad_model_params))
+    grads = {k: grads[i] for i, k in enumerate(chain(grad_ray_idxs.keys(), grad_idxs.keys()))}
     return value, grads

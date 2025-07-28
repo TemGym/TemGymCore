@@ -1,9 +1,11 @@
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
+from .tree_utils import HasParamsMixin
+
 
 @jdc.pytree_dataclass
-class Ray:
+class Ray(HasParamsMixin):
     x: float
     y: float
     dx: float

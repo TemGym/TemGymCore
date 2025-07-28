@@ -1,4 +1,3 @@
-import dataclasses
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
@@ -8,7 +7,7 @@ from .ray import Ray, propagate
 from .utils import random_coords, concentric_rings
 from .ode import solve_ode
 from . import Degrees
-from .tree_utils import PathBuilder
+from .tree_utils import HasParamsMixin
 
 
 Radians: TypeAlias = jnp.float64  # type: ignore
@@ -43,21 +42,8 @@ class PointSource:
         return r
 
 
-class Component:
-    @property
-    def params(self):
-        # could be @classproperty if this existed or could write own descriptor
-        params = {
-            k.name: PathBuilder(self, k.name, "attr")
-            for k
-            in dataclasses.fields(self)
-        }
-        # return within instance of self purely to get type hints while building path
-        return type(self)(**params)
-
-
 @jdc.pytree_dataclass
-class Lens(Component):
+class Lens(HasParamsMixin):
     z: float
     focal_length: float
 
