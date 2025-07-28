@@ -1,12 +1,9 @@
-import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.constants import e, m_e, h
 from jaxgym.ray import Ray
 import jax_dataclasses as jdc
 from numba import njit
-
-RadiansJNP = jnp.float64
 
 
 def custom_jacobian_matrix(ray_jac):
@@ -177,7 +174,7 @@ def smiley(size):
     Smiley face test object from https://doi.org/10.1093/micmic/ozad021
     """
     obj = np.ones((size, size), dtype=np.complex64)
-    y, x = np.ogrid[-size // 2 : size // 2, -size // 2 : size // 2]
+    y, x = np.ogrid[-size // 2: size // 2, -size // 2: size // 2]
 
     outline = (((y * 1.2) ** 2 + x**2) > (110 / 256 * size) ** 2) & (
         ((y * 1.2) ** 2 + x**2) < (120 / 256 * size) ** 2

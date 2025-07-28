@@ -1,7 +1,5 @@
 import jax.numpy as jnp
 import numpy as np
-from itertools import accumulate
-import operator
 
 
 def transfer_rays(ray_coords, transfer_matrices):
@@ -100,7 +98,7 @@ def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):
     """
     i_start = 2 * start
     i_end = 2 * end
-    matrices = transfer_matrices[i_start : i_end + 1]
+    matrices = transfer_matrices[i_start: i_end + 1]
     total = matrices[-1]
     for tm in reversed(matrices[:-1]):
         total = total @ tm

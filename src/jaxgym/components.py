@@ -89,6 +89,9 @@ class ScanGrid(HasParamsMixin, GridBase):
     def flip(self) -> CoordsXY:
         return False
 
+    def step(self, ray: Ray):
+        return ray
+
 
 @jdc.pytree_dataclass
 class Descanner(HasParamsMixin):
@@ -180,6 +183,45 @@ class Detector(HasParamsMixin, GridBase):
     @property
     def flip(self) -> bool:
         return self.flip_y
+
+    def step(self, ray: Ray):
+        return ray
+
+
+@jdc.pytree_dataclass
+class GridTransform(HasParamsMixin, GridBase):
+    z: float
+    stepsize: ScaleYX
+    grid_shape: ShapeYX
+    grid_rotation: Degrees = 0.
+    flip_y: bool = False
+
+    @property
+    def pixel_size(self) -> ScaleYX:
+        return self.stepsize
+
+    @property
+    def shape(self) -> ShapeYX:
+        return self.grid_shape
+
+    @property
+    def rotation(self) -> bool:
+        return self.grid_rotation
+
+    @property
+    def flip(self) -> bool:
+        return self.flip_y
+
+    def step(self, ray: Ray):
+        y_px, x_px = self.metres_to_pixels((ray.x, ray.y), cast=False)
+        return Ray(
+            x_px,
+            y_px,
+            dx=ray.dx,
+            dy=ray.dy,
+            z=ray.z,
+            pathlength=ray.pathlength,
+        )
 
 
 @jdc.pytree_dataclass

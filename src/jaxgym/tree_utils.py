@@ -108,7 +108,7 @@ class PathBuilder:
             if param_path[: len(node_path)] == node_path:
                 param_idxs[
                     original_path
-                    + tuple(get_key(k) for k in param_path[len(node_path) :])
+                    + tuple(get_key(k) for k in param_path[len(node_path):])
                 ] = idx
         return param_idxs
 

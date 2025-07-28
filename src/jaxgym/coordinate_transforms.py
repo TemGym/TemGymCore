@@ -4,8 +4,6 @@ import jax.numpy as jnp
 import jax.lax as lax
 from . import Degrees, Radians, ShapeYX, CoordsXY, ScaleYX, PixelsYX
 
-RadiansJNP = jnp.float64
-
 
 class GridBase(abc.ABC):
     @property
@@ -53,9 +51,6 @@ class GridBase(abc.ABC):
         coords_xy = jnp.stack((coords_x, coords_y), axis=-1).reshape(-1, 2)
         return coords_xy
 
-    def step(self, ray):
-        return ray
-
     def get_metres_to_pixels_transform(self) -> NDArray:
         pixels_to_metres_mat = pixels_to_metres_transform(
             self.centre, self.pixel_size, self.shape, self.flip, self.rotation
@@ -67,14 +62,15 @@ class GridBase(abc.ABC):
             self.centre, self.pixel_size, self.shape, self.flip, self.rotation
         )
 
-    def metres_to_pixels(self, coords: CoordsXY) -> PixelsYX:
+    def metres_to_pixels(self, coords: CoordsXY, cast: bool = True) -> PixelsYX:
         coords_x, coords_y = coords
         metres_to_pixels_mat = self.metres_to_pixels_mat
         pixels_y, pixels_x = apply_transformation(
             coords_y, coords_x, metres_to_pixels_mat
         )
-        pixels_y = jnp.round(pixels_y).astype(jnp.int32)
-        pixels_x = jnp.round(pixels_x).astype(jnp.int32)
+        if cast:
+            pixels_y = jnp.round(pixels_y).astype(jnp.int32)
+            pixels_x = jnp.round(pixels_x).astype(jnp.int32)
         return pixels_y, pixels_x
 
     def pixels_to_metres(self, pixels: PixelsYX) -> CoordsXY:
@@ -88,6 +84,16 @@ class GridBase(abc.ABC):
     @property
     def coords(self) -> NDArray:
         return self.get_coords()
+
+    def px_to_metres_component(self):
+        from .components import GridTransform
+        return GridTransform(
+            z=self.z,
+            stepsize=self.pixel_size,
+            grid_shape=self.shape,
+            grid_rotation=self.rotation,
+            flip_y=self.flip,
+        )
 
 
 def _rotate_with_deg_to_rad(degrees: "Degrees"):
