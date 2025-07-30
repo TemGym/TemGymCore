@@ -85,16 +85,6 @@ class GridBase(abc.ABC):
     def coords(self) -> NDArray:
         return self.get_coords()
 
-    def px_to_metres_component(self):
-        from .components import GridTransform
-        return GridTransform(
-            z=self.z,
-            stepsize=self.pixel_size,
-            grid_shape=self.shape,
-            grid_rotation=self.rotation,
-            flip_y=self.flip,
-        )
-
 
 def _rotate_with_deg_to_rad(degrees: "Degrees"):
     # From libertem.corrections.coordinates v0.11.1

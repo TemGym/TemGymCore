@@ -33,7 +33,13 @@ class Ray(HasParamsMixin):
         return type(self)(**params)
 
     def item(self):
-        params = {k: v.item() for k, v in dataclasses.asdict(self).items()}
+        params = {
+            k: v.item()
+            if hasattr(v, "size")
+            else v
+            for k, v
+            in dataclasses.asdict(self).items()
+        }
         return type(self)(**params)
 
 
@@ -70,3 +76,8 @@ def propagate(distance, ray):
         pathlength=ray.pathlength + distance,
     )
     return new_ray
+
+
+@jdc.pytree_dataclass
+class PixelsRay(Ray):
+    ...
