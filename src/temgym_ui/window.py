@@ -1,4 +1,4 @@
-from typing import Iterable, TYPE_CHECKING, NamedTuple, Optional, Tuple
+from typing import TYPE_CHECKING, NamedTuple, Optional, Tuple
 
 from PySide6.QtGui import QVector3D
 from PySide6.QtCore import (
@@ -29,7 +29,6 @@ from jaxgym.run import solve_model, get_z_vals
 from jaxgym.transfer import transfer_rays
 
 if TYPE_CHECKING:
-    from jaxgym import components as comp
     from jaxgym import Radians
 
 
@@ -178,24 +177,6 @@ class GridGeomMixin:
         return vertices
 
 
-class ComponentGUIWrapper:
-    def __init__(self, component: "comp.Component"):
-        self.component = component
-
-    def update_geometry(self):
-        pass
-
-    def get_label(self) -> gl.GLTextItem:
-        return gl.GLTextItem(
-            pos=np.array([-LABEL_RADIUS, LABEL_RADIUS, Z_ORIENT * self.component.z]),
-            text=self.component.name,
-            color="w",
-        )
-
-    def get_geom(self) -> Iterable[gl.GLLinePlotItem]:
-        raise NotImplementedError()
-
-
 class TemGymWindow(QMainWindow):
     """
     Create the UI Window
@@ -215,21 +196,21 @@ class TemGymWindow(QMainWindow):
 
         # Set some main window's properties
         self.setWindowTitle("TemGym")
+        self.resize(600, 400)
 
         # Create Docks
         label = MyDockLabel("3D View")
-        self.tem_dock = Dock("3D View", size=(4, 10), label=label)
+        self.tem_dock = Dock(label.text(), label=label)
         label = MyDockLabel("Detector")
-        self.detector_dock = Dock("Detector", size=(4, 6), label=label)
+        self.detector_dock = Dock(label.text(), label=label)
         label = MyDockLabel("Controls")
-        self.gui_dock = Dock("Parameters", size=(3.5, 10), label=label)
+        self.gui_dock = Dock(label.text(), label=label)
 
         self.params_tree = QTreeView()
         self.params_tree.setAlternatingRowColors(True)
         self.params_tree.setSortingEnabled(False)
         self.params_tree.setHeaderHidden(False)
         self.params_tree.setIndentation(10)
-        self._current_config = {}
         self.gui_dock.addWidget(self.params_tree)
 
         self.centralWidget = DockArea()
@@ -275,7 +256,7 @@ class TemGymWindow(QMainWindow):
         # Add the ray geometry last so it is always on top
         self.tem_window.addItem(self.ray_geometry)
 
-    def update_camera(self, components: list[ComponentGUIWrapper]):
+    def update_camera(self, components):
         z_vals = tuple(c.z for c in components)
         mid_z = (min(z_vals) + max(z_vals)) / 2.0
         mid_z *= Z_ORIENT
@@ -290,16 +271,18 @@ class TemGymWindow(QMainWindow):
             comp_row = QStandardItem(type(component).__name__)
             comp_row.setEditable(False)
             for name, val in asdict(component).items():
+                if hasattr(val, "size"):
+                    val = np.asarray(val).tolist()
                 key = QStandardItem(name)
-                key.setCheckable(True)
+                key.setCheckable(False)
                 key.setEditable(False)
                 comp_row.appendRow(
                     [
                         key,
-                        QStandardItem(f"{val}"),
+                        (param := QStandardItem(f"{val}")),
                     ]
                 )
-            params_model.appendRow(comp_row)
+                param.setCheckable(False)
         self.params_tree.setModel(params_model)
         self.params_tree.expandAll()
 
@@ -339,14 +322,19 @@ class TemGymWindow(QMainWindow):
             component = qt_model.item(i)
             temgym_comp = model[i]
             for j in range(component.rowCount()):
-                key = component.child(j, 0)
+                key = component.child(j, 0).text()
                 value = component.child(j, 1)
                 text = value.text()
+                param_type = getattr(temgym_comp, key)
                 try:
                     py_val = eval(text, {})
                 except (NameError, SyntaxError):
                     py_val = text
-                params[key.text()] = py_val
+                if hasattr(param_type, "size"):
+                    py_val = np.asarray(py_val)
+                else:
+                    py_val = type(param_type)(py_val)
+                params[key] = py_val
             new_model.append(type(temgym_comp)(**params))
         return tuple(new_model)
 
@@ -385,15 +373,11 @@ class TemGymWindow(QMainWindow):
     def createDetectorDisplay(self):
         """Create the detector display"""
         # Create the detector window, which shows where rays land at the bottom
-        self.detector_window = pg.GraphicsLayoutWidget()
-        self.detector_window.setBackground(BKG_COLOR_3D)
-        self.detector_window.setAspectLocked(1.0)
-        self.spot_img = pg.ImageItem(border=None)
-        v2 = self.detector_window.addViewBox()
-        v2.setAspectLocked()
-
-        # Invert coordinate system so spot moves up when it should
-        v2.invertY()
-        v2.addItem(self.spot_img)
-
-        self.detector_dock.addWidget(self.detector_window)
+        self.spot_img = pg.ImageView(
+            parent=self.detector_dock,
+        )
+        self.spot_img.setImage(
+            np.random.uniform(size=(128, 128)).astype(np.float32)
+        )
+        self.spot_img.adjustSize()
+        self.detector_dock.addWidget(self.spot_img)
