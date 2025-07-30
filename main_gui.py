@@ -1,8 +1,5 @@
-import sys
-
-from PySide6.QtWidgets import QApplication
-from temgym_ui.window import TemGymWindow
 import jaxgym.components as comp
+from temgym_ui.run import temgym
 
 
 model = (
@@ -11,8 +8,4 @@ model = (
     comp.Detector(1., (0.001,) * 2, (128, 128)),
 )
 
-AppWindow = QApplication(sys.argv)
-viewer = TemGymWindow()
-viewer.set_model(model)
-viewer.show()
-AppWindow.exec()
+temgym(model)
