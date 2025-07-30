@@ -52,7 +52,6 @@ gui = [
   'triangle',
   'PySide6',
   'superqt',
-  'deepdiff',
 ]
 stemmodel = [
     "libertem",

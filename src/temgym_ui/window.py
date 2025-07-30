@@ -16,12 +16,10 @@ from pyqtgraph.dockarea import Dock, DockArea
 import pyqtgraph.opengl as gl
 import pyqtgraph as pg
 from dataclasses import asdict
-from deepdiff import DeepDiff
 
 import numpy as np
 
 from . import shapes as comp_geom
-from .config_model import to_model, ParamTuple
 from .utils import P2R, R2P, as_gl_lines
 from .widgets import GLImageItem, MyDockLabel
 from microscope_calibration.stemoverfocus import inplace_sum
@@ -213,6 +211,7 @@ class TemGymWindow(QMainWindow):
         """
         super().__init__(*args, **kwargs)
         self.num_rays = num_rays
+        self._model = None
 
         # Set some main window's properties
         self.setWindowTitle("TemGym")
@@ -232,6 +231,7 @@ class TemGymWindow(QMainWindow):
         self.params_tree.setIndentation(10)
         self._current_config = {}
         self.gui_dock.addWidget(self.params_tree)
+
         self.centralWidget = DockArea()
         self.setCentralWidget(self.centralWidget)
         self.centralWidget.addDock(self.tem_dock, "left")
@@ -245,6 +245,7 @@ class TemGymWindow(QMainWindow):
     def set_model(
         self, model, tree: bool = True, geometry: bool = True, camera: bool = True
     ):
+        self._model = model
         if geometry:
             self.add_geometry(model)
         if camera:
@@ -299,7 +300,6 @@ class TemGymWindow(QMainWindow):
                     ]
                 )
             params_model.appendRow(comp_row)
-        # self._current_config = self.qtmodel_to_dict(params_model)
         self.params_tree.setModel(params_model)
         self.params_tree.expandAll()
 
@@ -332,43 +332,29 @@ class TemGymWindow(QMainWindow):
         self.spot_img.setImage(image)
 
     @staticmethod
-    def qtmodel_to_dict(model: QStandardItemModel):
-        params = []
-        for i in range(model.rowCount()):
-            component = model.item(i)
-            params.append({"type": component.text()})
+    def qtmodel_to_model(qt_model: QStandardItemModel, model):
+        new_model = []
+        for i in range(qt_model.rowCount()):
+            params = {}
+            component = qt_model.item(i)
+            temgym_comp = model[i]
             for j in range(component.rowCount()):
                 key = component.child(j, 0)
                 value = component.child(j, 1)
+                text = value.text()
                 try:
-                    py_val = eval(value.text(), {})
+                    py_val = eval(text, {})
                 except (NameError, SyntaxError):
-                    py_val = value.text()
-                params[-1][key.text()] = ParamTuple(
-                    py_val,
-                    {
-                        "checked": key.checkState().value == 2,
-                    },
-                )
-        return params
+                    py_val = text
+                params[key.text()] = py_val
+            new_model.append(type(temgym_comp)(**params))
+        return tuple(new_model)
 
     @Slot()
     def handleChanged(self, item: QStandardItem):
-        params = self.qtmodel_to_dict(item.model())
-        diff = DeepDiff(params, self._current_config)
-        self._current_config = params
-        param_change = False
-        for path, _ in diff.get("values_changed", {}).items():
-            if path.endswith("['checked']"):
-                continue
-            param_change = True
-        if param_change:
-            new_model = to_model({"components": params})
-            self.update_model(new_model)
-
-    def update_model(self, model):
-        """Update the model and refresh all displays"""
-        self.set_model(model, tree=False, geometry=True, camera=False)
+        self.set_model(
+            self.qtmodel_to_model(item.model(), self._model)
+        )
 
     def create3DDisplay(self):
         """Create the 3D Display"""
