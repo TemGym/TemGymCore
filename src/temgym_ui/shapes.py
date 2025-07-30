@@ -1,6 +1,6 @@
+from jaxgym import Radians
 import triangle as tr
 from .utils import P2R, R2P
-from . import Radians
 import numpy as xp
 
 

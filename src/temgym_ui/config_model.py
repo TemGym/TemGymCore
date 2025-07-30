@@ -1,25 +1,18 @@
-import os
-import tomli
 from dataclasses import dataclass
 from typing import Any
 
 from jaxgym import components as comp
-from microscope_calibration.components import (
-    PointSource,
-    Detector,
-)
 
 component_map = {
     "PointSource": comp.PointSource,
     "Lens": comp.Lens,
     "ThickLens": comp.ThickLens,
-    "ODE": comp.ODE,
     "Deflector": comp.Deflector,
     "Rotator": comp.Rotator,
     "DoubleDeflector": comp.DoubleDeflector,
-    "InputPlane": comp.InputPlane,
+    "Plane": comp.Plane,
     "Biprism": comp.Biprism,
-    "Detector": Detector,
+    "Detector": comp.Detector,
 }
 
 

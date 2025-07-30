@@ -24,7 +24,6 @@ from . import shapes as comp_geom
 from .config_model import to_model, ParamTuple
 from .utils import P2R, R2P, as_gl_lines
 from .widgets import GLImageItem, MyDockLabel
-from .rays import Rays
 from microscope_calibration.stemoverfocus import inplace_sum
 
 from jaxgym.ray import Ray
@@ -32,8 +31,8 @@ from jaxgym.run import solve_model, get_z_vals
 from jaxgym.transfer import transfer_rays
 
 if TYPE_CHECKING:
-    from . import components as comp
-    from . import Radians
+    from jaxgym import components as comp
+    from jaxgym import Radians
 
 
 LABEL_RADIUS = 0.3

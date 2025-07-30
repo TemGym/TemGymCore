@@ -1,3 +1,4 @@
+import numpy as np
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 import dataclasses
@@ -26,7 +27,7 @@ class PointSource(HasParamsMixin):
     def step(self, ray: Ray):
         return ray
 
-    def generate(self, num_rays: int, random: bool = False):
+    def generate(self, num_rays: int, random: bool = False) -> np.ndarray:
         semi_conv = self.semi_conv
         offset_xy = self.offset_xy
 
@@ -35,7 +36,7 @@ class PointSource(HasParamsMixin):
         else:
             y, x = concentric_rings(num_rays, semi_conv)
 
-        r = jnp.zeros((num_rays, 5), dtype=jnp.float64)  # x, y, theta_x, theta_y, 1
+        r = np.zeros((x.size, 5), dtype=jnp.float64)  # x, y, theta_x, theta_y, 1
 
         r[:, 0] += offset_xy[0]
         r[:, 1] += offset_xy[1]
