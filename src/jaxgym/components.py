@@ -48,6 +48,35 @@ class PointSource(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
+class ParallelBeam(HasParamsMixin):
+    z: float
+    radius: float
+    offset_xy: CoordsXY = (0.0, 0.0)
+
+    def step(self, ray: Ray):
+        return ray
+
+    def generate(self, num_rays: int, random: bool = False) -> np.ndarray:
+        radius = self.radius
+        offset_xy = self.offset_xy
+
+        if random:
+            y, x = random_coords(num_rays) * radius
+        else:
+            y, x = concentric_rings(num_rays, radius)
+
+        r = np.zeros((x.size, 5), dtype=jnp.float64)  # x, y, theta_x, theta_y, 1
+
+        r[:, 0] = (x + offset_xy[0])
+        r[:, 1] = (y + offset_xy[1])
+        r[:, 2] = 0.
+        r[:, 3] = 0.
+        r[:, 4] = 1.0
+
+        return r
+
+
+@jdc.pytree_dataclass
 class Lens(HasParamsMixin):
     z: float
     focal_length: float

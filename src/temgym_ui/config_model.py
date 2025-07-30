@@ -5,6 +5,7 @@ from jaxgym import components as comp
 
 component_map = {
     "PointSource": comp.PointSource,
+    "ParallelBeam": comp.ParallelBeam,
     "Lens": comp.Lens,
     "ThickLens": comp.ThickLens,
     "Deflector": comp.Deflector,

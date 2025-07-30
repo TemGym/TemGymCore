@@ -6,8 +6,8 @@ import jaxgym.components as comp
 
 
 model = (
-    comp.PointSource(0., 0.01),
-    comp.Detector(0.5, (0.01,) * 2, (128, 128)),
+    comp.ParallelBeam(0., 0.01),
+    comp.Lens(0.5, 0.05),
     comp.Detector(1., (0.001,) * 2, (128, 128)),
 )
 
