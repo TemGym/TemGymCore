@@ -241,7 +241,7 @@ class ODE:
     phi_lambda: callable
     E_lambda: callable
 
-    def step(self, ray: Ray) -> Ray:
+    def __call__(self, ray: Ray) -> Ray:
         in_state = jnp.array([ray.x, ray.y, ray.dx, ray.dy, ray.pathlength])
 
         z_start = self.z

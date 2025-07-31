@@ -155,7 +155,7 @@ def zero_phase(u, idx_x, idx_y):
 @jdc.pytree_dataclass
 # A component that should give a singular jacobian used for testing
 class SingularComponent:
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         new_x = ray.x
         new_y = ray.x
         return Ray(

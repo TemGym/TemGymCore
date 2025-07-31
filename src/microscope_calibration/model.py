@@ -25,7 +25,7 @@ class DescanErrorParameters(NamedTuple):
         return jnp.array(self)
 
     def as_matrix(self) -> jnp.ndarray:
-        # Not used but represents the equations in descanner.step()
+        # Not used but represents the equations in descanner()
         return jnp.array(
             [
                 [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],

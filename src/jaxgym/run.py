@@ -18,11 +18,11 @@ def run_to_end(ray: "Ray", components):
         # # if the component is an ODE component, then just run the step
         # # function of the component, otherwise run the propagation function first
         # if isinstance(component, comp.ODE):
-        #     ray = component.step(ray)
+        #     ray = component(ray)
         # else:
         distance = component.z - ray.z
         ray = propagate(distance, ray)
-        ray = component.step(ray)
+        ray = component(ray)
     return ray
 
 
@@ -30,11 +30,11 @@ def run_to_end_with_history(ray: "Ray", components):
     rays = [ray]
     for component in components:
         if isinstance(component, comp.ODE):
-            ray = component.step(ray)
+            ray = component(ray)
         else:
             distance = (component.z - ray.z).squeeze()
             ray = propagate(distance, ray)
-            ray = component.step(ray)
+            ray = component(ray)
         rays.append(ray)
     return rays
 
@@ -42,7 +42,7 @@ def run_to_end_with_history(ray: "Ray", components):
 def run_to_component(ray: "Ray", component):
     distance = (component.z - ray.z).squeeze()
     ray = propagate(distance, ray)
-    ray = component.step(ray)
+    ray = component(ray)
     return ray
 
 
@@ -61,7 +61,7 @@ def solve_model(ray: "Ray", model):
     model_ray_jacobians = []
 
     # Run the step function of the first component at the starting plane
-    component_jacobian = jax.jacobian(model[0].step)(ray)
+    component_jacobian = jax.jacobian(model[0])(ray)
     component_jacobian = custom_jacobian_matrix(component_jacobian)
 
     model_ray_jacobians.append(component_jacobian)
@@ -91,13 +91,13 @@ def solve_model(ray: "Ray", model):
         ray = propagate(distance, ray)
 
         # Get the jacobian of the step function of the current component
-        component_jacobian = jax.jacobian(model[i].step)(ray)
+        component_jacobian = jax.jacobian(model[i])(ray)
         component_jacobian = custom_jacobian_matrix(component_jacobian)
 
         model_ray_jacobians.append(component_jacobian)
 
         # Step the ray
-        ray = model[i].step(ray)
+        ray = model[i](ray)
 
     ABCDs = jnp.array(model_ray_jacobians)  # ABCD matrices at each component
 
@@ -113,7 +113,7 @@ def get_z_vals(ray: "Ray", model):
         ray = propagate(distance, ray)
         # Step the ray
         z_vals.append(ray.z)
-        ray = model[i].step(ray)
+        ray = model[i](ray)
         z_vals.append(ray.z)
     return jnp.array(z_vals)
 

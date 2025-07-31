@@ -14,7 +14,7 @@ from .tree_utils import HasParamsMixin
 class Plane(HasParamsMixin):
     z: float
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         return ray
 
 
@@ -24,7 +24,7 @@ class PointSource(HasParamsMixin):
     semi_conv: float
     offset_xy: CoordsXY = (0.0, 0.0)
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         return ray
 
     def generate(self, num_rays: int, random: bool = False) -> np.ndarray:
@@ -53,7 +53,7 @@ class ParallelBeam(HasParamsMixin):
     radius: float
     offset_xy: CoordsXY = (0.0, 0.0)
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         return ray
 
     def generate(self, num_rays: int, random: bool = False) -> np.ndarray:
@@ -81,7 +81,7 @@ class Lens(HasParamsMixin):
     z: float
     focal_length: float
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         f = self.focal_length
 
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
@@ -120,7 +120,7 @@ class ScanGrid(HasParamsMixin, GridBase):
     def flip(self) -> CoordsXY:
         return False
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         return ray
 
     def from_pixels(self):
@@ -131,7 +131,7 @@ class ScanGrid(HasParamsMixin, GridBase):
 
 @jdc.pytree_dataclass
 class FromPixelsScanGrid(ScanGrid):
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         x_t, y_t = self.pixels_to_metres((ray.y, ray.x))
         ray = Ray(
             x_t,
@@ -141,7 +141,7 @@ class FromPixelsScanGrid(ScanGrid):
             z=ray.z,
             pathlength=ray.pathlength,
         )
-        return super().step(ray)
+        return super()(ray)
 
 
 @jdc.pytree_dataclass
@@ -151,7 +151,7 @@ class Descanner(HasParamsMixin):
     scan_pos_y: float
     descan_error: jnp.ndarray
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         """
         The traditional 5x5 linear ray transfer matrix of an optical system is
                [Axx, Axy, Bxx, Bxy, pos_offset_x],
@@ -235,7 +235,7 @@ class Detector(HasParamsMixin, GridBase):
     def flip(self) -> bool:
         return self.flip_y
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         return ray
 
     def to_pixels(self):
@@ -246,8 +246,8 @@ class Detector(HasParamsMixin, GridBase):
 
 @jdc.pytree_dataclass
 class ToPixelsDetector(Detector):
-    def step(self, ray: Ray):
-        ray = super().step(ray)
+    def __call__(self, ray: Ray):
+        ray = super()(ray)
         y_t, x_t = self.metres_to_pixels((ray.x, ray.y), cast=False)
         return PixelsRay(
             x_t,
@@ -265,7 +265,7 @@ class ThickLens(HasParamsMixin):
     z_pi: float
     focal_length: float
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         f = self.focal_length
 
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
@@ -294,7 +294,7 @@ class Deflector(HasParamsMixin):
     def_x: float
     def_y: float
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
         new_dx = dx + self.def_x
         new_dy = dy + self.def_y
@@ -317,7 +317,7 @@ class Rotator(HasParamsMixin):
     z: float
     angle: Degrees
 
-    def step(self, ray: Ray):
+    def __call__(self, ray: Ray):
         angle = jnp.deg2rad(self.angle)
 
         # Rotate the ray's position
@@ -346,11 +346,11 @@ class DoubleDeflector(HasParamsMixin):
     first: Deflector
     second: Deflector
 
-    def step(self, ray: Ray):
-        ray = self.first.step(ray)
+    def __call__(self, ray: Ray):
+        ray = self.first(ray)
         z_step = self.second.z - self.first.z
         ray = propagate(z_step, ray)
-        ray = self.second.step(ray)
+        ray = self.second(ray)
 
         return ray
 
@@ -362,7 +362,7 @@ class Biprism(HasParamsMixin):
     rotation: Degrees = 0.0
     deflection: float = 0.0
 
-    def step(
+    def __call__(
         self,
         ray: Ray,
     ) -> Ray:

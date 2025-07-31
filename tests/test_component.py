@@ -172,7 +172,7 @@ def test_descanner_random_descan_error():
     )
     desc = Descanner(z=0.0, scan_pos_x=sp_x, scan_pos_y=sp_y, descan_error=err)
     ray = Ray(x=x, y=y, dx=dx, dy=dy, _one=1.0, z=0.0, pathlength=0.0)
-    out = desc.step(ray)
+    out = desc(ray)
 
     # Expected values computed using the same formula as in the implementation
     exp_x = x + sp_x * err[0] + sp_y * err[1] + err[8] - sp_x
@@ -221,7 +221,7 @@ def test_descanner_offset_consistency():
     ]
 
     # pass all rays through the descanner
-    outputs = [desc.step(r) for r in rays]
+    outputs = [desc(r) for r in rays]
 
     # compute per-ray offsets [Δx, Δy, Δdx, Δdy]
     offsets = np.array(
@@ -238,7 +238,7 @@ def test_descanner_offset_consistency():
 
 
 def test_descanner_jacobian_matrix():
-    # Test that Jacobian of descanner.step yields correct 5x5 matrix when
+    # Test that Jacobian of descanner yields correct 5x5 matrix when
     # jax.jacobian is called on it.
     sp_x, sp_y = 1.5, -2.0
     err = np.random.rand(12)
@@ -260,7 +260,7 @@ def test_descanner_jacobian_matrix():
     ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, _one=1.0, z=0.0, pathlength=0.0)
 
     # Compute Jacobian wrt input ray
-    jac = jacobian(desc.step)(ray)
+    jac = jacobian(desc)(ray)
     J = custom_jacobian_matrix(jac)
 
     # Compute expected coefficients
@@ -311,7 +311,7 @@ def test_singular_component_jacobian():
     ray = Ray(x=0.0, y=0.0, dx=1.0, dy=1.0, _one=1.0, z=0.0, pathlength=0.0)
 
     # Compute Jacobian wrt input ray
-    jac = jacobian(singular_component.step)(ray)
+    jac = jacobian(singular_component)(ray)
     J = custom_jacobian_matrix(jac)
 
     inv = jnp.linalg.inv(J)
