@@ -42,6 +42,29 @@ class Ray(HasParamsMixin):
         }
         return type(self)(**params)
 
+    def derive(
+        self,
+        x: float | None = None,
+        y: float | None = None,
+        dx: float | None = None,
+        dy: float | None = None,
+        z: float | None = None,
+        pathlength: float | None = None
+    ) -> 'Ray':
+        """
+        Return a modified copy.
+        Use this to modify some parameters while keeping others as-is
+        """
+        return Ray(
+            x=x if x is not None else self.x,
+            y=y if y is not None else self.y,
+            dx=dx if dx is not None else self.dx,
+            dy=dy if dy is not None else self.dy,
+            z=z if z is not None else self.z,
+            pathlength=pathlength if pathlength is not None else self.pathlength,
+            _one=self._one,
+        )
+
 
 def propagate_dir_cosine(distance, ray):
     # This method implements propagation using direction cosines
