@@ -61,7 +61,7 @@ def create_stem_model(
     params_dict: ModelParameters, scan_pos_xy: CoordsXY = (0.0, 0.0)
 ) -> Model:
     # delay import to avoid circular dependency
-    from microscope_calibration import components as comp
+    from jaxgym import components as comp
 
     PointSource = comp.PointSource(z=jnp.zeros((1)), semi_conv=params_dict["semi_conv"])
 

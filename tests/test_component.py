@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from microscope_calibration.components import ScanGrid, Detector, Descanner
+from jaxgym.components import ScanGrid, Detector, Descanner
 from microscope_calibration.model import DescanErrorParameters
 from jaxgym.ray import Ray
 from jax import jacobian

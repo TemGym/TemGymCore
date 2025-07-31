@@ -13,7 +13,7 @@ from microscope_calibration.stemoverfocus import (
     project_coordinates_backward,
     inplace_sum
 )
-from microscope_calibration import components as comp
+from jaxgym import components as comp
 from microscope_calibration.generate import (
     compute_scan_grid_rays_and_intensities,
     do_shifted_sum,
