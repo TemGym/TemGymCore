@@ -48,8 +48,6 @@ class PathBuilder:
         self._key = key
 
     def __getattr__(self, name: str):
-        # if name in ("_parent", "_key", "_build", "_original_key"):
-        #     return super().__getattribute__(name)
         return type(self)(self, name, "attr")
 
     def __getitem__(self, idx: int):

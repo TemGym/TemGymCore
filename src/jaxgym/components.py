@@ -1,4 +1,5 @@
 import numpy as np
+from typing import NamedTuple
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
@@ -7,6 +8,36 @@ from .utils import random_coords, concentric_rings
 from .coordinate_transforms import GridBase
 from . import Degrees, CoordsXY, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
+
+
+class DescanError(NamedTuple):
+    pxo_pxi: float = 0.0  # How position x output scales with respect to scan x position
+    pxo_pyi: float = 0.0  # How position x output scales with respect to scan y position
+    pyo_pxi: float = 0.0  # How position y output scales with respect to scan x position
+    pyo_pyi: float = 0.0  # How position y output scales with respect to scan y position
+    sxo_pxi: float = 0.0  # How slope x output scales with respect to scan x position
+    sxo_pyi: float = 0.0  # How slope x output scales with respect to scan y position
+    syo_pxi: float = 0.0  # How slope y output scales with respect to scan x position
+    syo_pyi: float = 0.0  # How slope y output scales with respect to scan y position
+    offpxi: float = 0.0  # Constant additive error in x position
+    offpyi: float = 0.0  # Constant additive error in y position
+    offsxi: float = 0.0  # Constant additive error in x slope
+    offsyi: float = 0.0  # Constant additive error in y slope
+
+    def as_array(self) -> jnp.ndarray:
+        return jnp.array(self)
+
+    def as_matrix(self) -> jnp.ndarray:
+        # Not used but represents the equations in descanner()
+        return jnp.array(
+            [
+                [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],
+                [self.pyo_pxi, self.pyo_pyi, 0.0, 0.0, self.offpyi],
+                [self.sxo_pxi, self.sxo_pyi, 0.0, 0.0, self.offsyi],
+                [self.syo_pxi, self.syo_pyi, 0.0, 0.0, self.offsyi],
+                [0.0, 0.0, 0.0, 0.0, 1.0],
+            ]
+        )
 
 
 @jdc.pytree_dataclass
@@ -128,7 +159,9 @@ class Descanner(HasParamsMixin):
     z: float
     scan_pos_x: float
     scan_pos_y: float
-    descan_error: jnp.ndarray
+    scan_tilt_x: float = 0.
+    scan_tilt_y: float = 0.
+    descan_error: DescanError = DescanError()
 
     def __call__(self, ray: Ray):
         """
@@ -153,41 +186,35 @@ class Descanner(HasParamsMixin):
         with the total descan error included in the 5th column.
         """
 
+        de = self.descan_error
         sp_x, sp_y = self.scan_pos_x, self.scan_pos_y
+        st_x, st_y = self.scan_tilt_x, self.scan_tilt_y
 
-        (
-            pxo_pxi,  # How position x output scales with respect to scan x position
-            pxo_pyi,  # How position x output scales with respect to scan y position
-            pyo_pxi,  # How position y output scales with respect to scan x position
-            pyo_pyi,  # How position y output scales with respect to scan y position
-            sxo_pxi,  # How slope x output scales with respect to scan x position
-            sxo_pyi,  # How slope x output scales with respect to scan y position
-            syo_pxi,  # How slope y output scales with respect to scan x position
-            syo_pyi,  # How slope y output scales with respect to scan y position
-            offpxi,  # Constant additive error in x position
-            offpyi,  # Constant additive error in y position
-            offsxi,  # Constant additive error in x slope
-            offsyi,  # Constant additive error in y slope
-        ) = self.descan_error
-
-        x, y, dx, dy, _one = ray.x, ray.y, ray.dx, ray.dy, ray._one
-
-        new_x = x + (sp_x * pxo_pxi + sp_y * pxo_pyi + offpxi - sp_x) * _one
-        new_y = y + (sp_x * pyo_pxi + sp_y * pyo_pyi + offpyi - sp_y) * _one
-
-        new_dx = dx + (sp_x * sxo_pxi + sp_y * sxo_pyi + offsxi) * _one
-        new_dy = dy + (sp_x * syo_pxi + sp_y * syo_pyi + offsyi) * _one
-
-        one = _one
-
-        return Ray(
-            x=new_x,
-            y=new_y,
-            dx=new_dx,
-            dy=new_dy,
-            _one=one,
-            pathlength=ray.pathlength,
-            z=ray.z,
+        return ray.derive(
+            x=ray.x + (
+                sp_x * de.pxo_pxi
+                + sp_y * de.pxo_pyi
+                + de.offpxi
+                - sp_x
+            ) * ray._one,
+            y=ray.y + (
+                sp_x * de.pyo_pxi
+                + sp_y * de.pyo_pyi
+                + de.offpyi
+                - sp_y
+            ) * ray._one,
+            dx=ray.dx + (
+                sp_x * de.sxo_pxi
+                + sp_y * de.sxo_pyi
+                + de.offsxi
+                - st_x
+            ) * ray._one,
+            dy=ray.dy + (
+                sp_x * de.syo_pxi
+                + sp_y * de.syo_pyi
+                + de.offsyi
+                - st_y
+            ) * ray._one
         )
 
 

@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.optimize import curve_fit
 
-from microscope_calibration.model import DescanErrorParameters
+from microscope_calibration.model import DescanError
 from microscope_calibration.model import create_stem_model
 
 
@@ -75,7 +75,7 @@ def fit_descan_error_matrix(model_params, com_dict):
     )
     pyo_pxi, pyo_pyi, syo_pxi, syo_pyi, offpyi, offsyi = popt_y
 
-    return DescanErrorParameters(
+    return DescanError(
         pxo_pxi=pxo_pxi,
         pxo_pyi=pxo_pyi,
         pyo_pxi=pyo_pxi,

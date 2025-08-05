@@ -6,7 +6,7 @@ except ImportError:
     pytest.skip("libertem not installed, skipping tests", allow_module_level=True)
 
 import jax.numpy as jnp
-from microscope_calibration.model import ModelParameters, DescanErrorParameters
+from microscope_calibration.model import ModelParameters, DescanError
 from microscope_calibration.udf import ShiftedSumUDF
 
 
@@ -22,7 +22,7 @@ def test_functional():
     ds = ctx.load("memory", data=data, num_partitions=1)
 
     descanner_error = jnp.zeros((12,), dtype=jnp.float32)
-    descanner_error_params = DescanErrorParameters(*descanner_error)
+    descanner_error_params = DescanError(*descanner_error)
     parameters = ModelParameters(
         semi_conv=1,
         defocus=0.0,

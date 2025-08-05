@@ -21,7 +21,7 @@ from microscope_calibration.generate import (
 )
 from microscope_calibration.model import (
     ModelParameters,
-    DescanErrorParameters,
+    DescanError,
     create_stem_model
 )
 
@@ -37,7 +37,7 @@ def base_model():
         det_px_size=(0.001, 0.001),
         scan_rotation=0.0,
         flip_y=False,
-        descan_error=DescanErrorParameters(),
+        descan_error=DescanError(),
         )
 
 
@@ -283,7 +283,7 @@ def test_same_z_components():
     # and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
     err = jnp.zeros(12)
-    descan_error = DescanErrorParameters(*err)
+    descan_error = DescanError(*err)
 
     model_params = ModelParameters(
         semi_conv=0.001,
@@ -309,7 +309,7 @@ def test_out_of_order_z():
     # Test that if one places components at out of order z positions,
     # and try to run a ray through it,
     # it does not raise an error and returns the expected number of transfer matrices.
-    descan_error_params = DescanErrorParameters(*jnp.zeros(12))
+    descan_error_params = DescanError(*jnp.zeros(12))
     model_params = ModelParameters(
         semi_conv=0.001,
         defocus=0.1,
@@ -336,7 +336,7 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
     scan_rotation = np.random.uniform(-180, 180)
     grid_shape = np.random.randint(8, 20, size=2)
 
-    descan_error_params = DescanErrorParameters(*jnp.zeros(12))
+    descan_error_params = DescanError(*jnp.zeros(12))
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1.0
     test_image[4, 4] = 1.0
@@ -386,7 +386,7 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
     scan_rotation = np.random.uniform(-180, 180)
     grid_shape = np.random.randint(8, 20, size=2)
 
-    descan_error = DescanErrorParameters(*np.random.uniform(-0.01, 0.01, size=12))
+    descan_error = DescanError(*np.random.uniform(-0.01, 0.01, size=12))
 
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1.0
@@ -447,7 +447,7 @@ def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi,
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1
 
-    descan_error = DescanErrorParameters(pxo_pxi=pxo_pxi,
+    descan_error = DescanError(pxo_pxi=pxo_pxi,
                                          pxo_pyi=pxo_pyi,
                                          pyo_pxi=pyo_pxi,
                                          pyo_pyi=pyo_pyi)
@@ -492,7 +492,7 @@ def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi,
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1
 
-    descan_error = DescanErrorParameters(sxo_pxi=sxo_pxi,
+    descan_error = DescanError(sxo_pxi=sxo_pxi,
                                          sxo_pyi=sxo_pyi,
                                          syo_pxi=syo_pxi,
                                          syo_pyi=syo_pyi)
@@ -538,7 +538,7 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1
 
-    descan_error = DescanErrorParameters(offpxi=offpxi,
+    descan_error = DescanError(offpxi=offpxi,
                                          offpyi=offpyi,
                                          offsxi=offsxi,
                                          offsyi=offsyi)
@@ -578,7 +578,7 @@ def test_scan_rotation_90_flip(scan_rotation, flip_y):
         scan_step=(1e-2, 1e-2),  # YX!
         det_px_size=(1e-2, 1e-2),  # YX!
         scan_rotation=scan_rotation,
-        descan_error=DescanErrorParameters(),
+        descan_error=DescanError(),
         flip_y=flip_y,
     )
 
@@ -622,7 +622,7 @@ def test_scan_rotation_45(scan_rotation):
         scan_step=(1e-3, 1e-3),  # YX!
         det_px_size=(1e-2, 1e-2),  # YX!
         scan_rotation=scan_rotation,
-        descan_error=DescanErrorParameters(),
+        descan_error=DescanError(),
         flip_y=False,
     )
 

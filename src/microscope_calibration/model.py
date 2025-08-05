@@ -2,39 +2,10 @@ from typing import TypedDict, NamedTuple, TYPE_CHECKING
 import jax.numpy as jnp
 
 from jaxgym import CoordsXY
+from jaxgym.components import DescanError
 
 if TYPE_CHECKING:
     from jaxgym.components import PointSource, Descanner, ScanGrid, Detector
-
-
-class DescanErrorParameters(NamedTuple):
-    pxo_pxi: float = 0.0  # How position x output scales with respect to scan x position
-    pxo_pyi: float = 0.0  # How position x output scales with respect to scan y position
-    pyo_pxi: float = 0.0  # How position y output scales with respect to scan x position
-    pyo_pyi: float = 0.0  # How position y output scales with respect to scan y position
-    sxo_pxi: float = 0.0  # How slope x output scales with respect to scan x position
-    sxo_pyi: float = 0.0  # How slope x output scales with respect to scan y position
-    syo_pxi: float = 0.0  # How slope y output scales with respect to scan x position
-    syo_pyi: float = 0.0  # How slope y output scales with respect to scan y position
-    offpxi: float = 0.0  # Constant additive error in x position
-    offpyi: float = 0.0  # Constant additive error in y position
-    offsxi: float = 0.0  # Constant additive error in x slope
-    offsyi: float = 0.0  # Constant additive error in y slope
-
-    def as_array(self) -> jnp.ndarray:
-        return jnp.array(self)
-
-    def as_matrix(self) -> jnp.ndarray:
-        # Not used but represents the equations in descanner()
-        return jnp.array(
-            [
-                [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],
-                [self.pyo_pxi, self.pyo_pyi, 0.0, 0.0, self.offpyi],
-                [self.sxo_pxi, self.sxo_pyi, 0.0, 0.0, self.offsyi],
-                [self.syo_pxi, self.syo_pyi, 0.0, 0.0, self.offsyi],
-                [0.0, 0.0, 0.0, 0.0, 1.0],
-            ]
-        )
 
 
 class ModelParameters(TypedDict):
@@ -46,7 +17,7 @@ class ModelParameters(TypedDict):
     scan_step: tuple[float, float]
     det_px_size: tuple[float, float]
     scan_rotation: float
-    descan_error: DescanErrorParameters
+    descan_error: DescanError
     flip_y: bool
 
 

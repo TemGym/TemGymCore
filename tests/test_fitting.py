@@ -2,7 +2,7 @@ import numpy as np
 import copy
 
 from microscope_calibration.fitting import fit_descan_error_matrix
-from microscope_calibration.model import DescanErrorParameters, ModelParameters
+from microscope_calibration.model import DescanError, ModelParameters
 from microscope_calibration.generate import generate_dataset_from_image
 
 import pytest
@@ -15,10 +15,9 @@ except ImportError:
     pytest.skip("libertem not installed, skipping tests", allow_module_level=True)
 
 
-
 def descan_error_params_random():
     # Randomize descan error parameters
-    return DescanErrorParameters(
+    return DescanError(
         pxo_pxi=np.random.uniform(-0.2, 0.2),
         pxo_pyi=np.random.uniform(-0.2, 0.2),
         pyo_pxi=np.random.uniform(-0.2, -0.2),
@@ -45,7 +44,7 @@ def test_fit_descan_error_matrix():
 
     test_image = np.ones(scan_shape, dtype=np.uint8)
 
-    descan_error = DescanErrorParameters(
+    descan_error = DescanError(
         pxo_pxi=3,
         pxo_pyi=-3.,
         pyo_pxi=1.,
@@ -110,10 +109,8 @@ def test_fit_descan_error_matrix():
 
     err = fit_descan_error_matrix(params, com_r)
 
-    for key in err._fields:
-        fitted_val = getattr(err, key)
-        known_val = getattr(descan_error, key)
+    for known_val, fitted_val in zip(descan_error, err):
         np.testing.assert_allclose(
             fitted_val, known_val, atol=3e-1,
-            err_msg=f"Field {key} does not match: {fitted_val} vs {known_val}"
+            err_msg=f"Field does not match: {fitted_val} vs {known_val}"
         )
