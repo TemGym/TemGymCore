@@ -6,10 +6,10 @@ from microscope_calibration.model import DescanErrorParameters
 
 if __name__ == "__main__":
     model = (
-        (scan_grid := comp.ScanGrid(0., (0.001, 0.001), (64, 64), 0.)).from_pixels(),
+        (scan_grid := comp.ScanGrid(0., (0.001, 0.001), (64, 64), 0.)),
         (lens := comp.Lens(0.33, 0.1)),
         comp.Descanner(0.75, 0.2, 0.1, DescanErrorParameters()),
-        (det := comp.Detector(1., (0.001,) * 2, (128., 128.)).to_pixels())
+        (det := comp.Detector(1., (0.001,) * 2, (128., 128.)))
     )
 
     ray = PixelsRay(10, 30, 0., 0., 0., 0.)

@@ -1,9 +1,8 @@
 import numpy as np
 import jax_dataclasses as jdc
 import jax.numpy as jnp
-import dataclasses
 
-from .ray import Ray, PixelsRay, propagate
+from .ray import Ray, propagate
 from .utils import random_coords, concentric_rings
 from .coordinate_transforms import GridBase
 from . import Degrees, CoordsXY, ScaleYX, ShapeYX
@@ -123,26 +122,6 @@ class ScanGrid(HasParamsMixin, GridBase):
     def __call__(self, ray: Ray):
         return ray
 
-    def from_pixels(self):
-        return FromPixelsScanGrid(
-            **dataclasses.asdict(self)
-        )
-
-
-@jdc.pytree_dataclass
-class FromPixelsScanGrid(ScanGrid):
-    def __call__(self, ray: Ray):
-        x_t, y_t = self.pixels_to_metres((ray.y, ray.x))
-        ray = Ray(
-            x_t,
-            y_t,
-            dx=ray.dx,
-            dy=ray.dy,
-            z=ray.z,
-            pathlength=ray.pathlength,
-        )
-        return super()(ray)
-
 
 @jdc.pytree_dataclass
 class Descanner(HasParamsMixin):
@@ -237,26 +216,6 @@ class Detector(HasParamsMixin, GridBase):
 
     def __call__(self, ray: Ray):
         return ray
-
-    def to_pixels(self):
-        return ToPixelsDetector(
-            **dataclasses.asdict(self)
-        )
-
-
-@jdc.pytree_dataclass
-class ToPixelsDetector(Detector):
-    def __call__(self, ray: Ray):
-        ray = super()(ray)
-        y_t, x_t = self.metres_to_pixels((ray.x, ray.y), cast=False)
-        return PixelsRay(
-            x_t,
-            y_t,
-            dx=ray.dx,
-            dy=ray.dy,
-            z=ray.z,
-            pathlength=ray.pathlength,
-        )
 
 
 @jdc.pytree_dataclass
