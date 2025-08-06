@@ -8,7 +8,15 @@ from jax_dataclasses._dataclasses import (
     JDC_STATIC_MARKER,
     get_type_hints_partial,
 )
-from jax.tree_util import FlattenedIndexKey, SequenceKey, DictKey
+from jax.tree_util import FlattenedIndexKey, SequenceKey, DictKey, GetAttrKey
+
+
+def isnamedtuple(obj) -> bool:
+    return (
+        isinstance(obj, tuple)
+        and hasattr(obj, '_asdict')
+        and hasattr(obj, '_fields')
+    )
 
 
 def get_key(k):
@@ -94,7 +102,10 @@ class PathBuilder:
         root = this_path[0]
         for idx, el in enumerate(tree):
             if el is root:
-                idx = SequenceKey(idx)
+                if isnamedtuple(tree):
+                    idx = GetAttrKey(tree._fields[idx])
+                else:
+                    idx = SequenceKey(idx)
                 break
         assert el is root, f"First item {root} not found in model"
         node_path = (idx,) + this_path[1:]
@@ -102,12 +113,12 @@ class PathBuilder:
         param_idxs = {}
         paths_vals, _ = jax.tree.flatten_with_path(tree)
         all_paths = list(p[0] for p in paths_vals)
-        for idx, param_path in enumerate(all_paths):
+        for path_idx, param_path in enumerate(all_paths):
             if param_path[: len(node_path)] == node_path:
                 param_idxs[
                     original_path
                     + tuple(get_key(k) for k in param_path[len(node_path):])
-                ] = idx
+                ] = path_idx
         return param_idxs
 
 

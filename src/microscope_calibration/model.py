@@ -1,5 +1,4 @@
 from typing import TypedDict, NamedTuple, TYPE_CHECKING
-import jax.numpy as jnp
 
 from jaxgym import CoordsXY
 from jaxgym.components import DescanError
@@ -34,24 +33,24 @@ def create_stem_model(
     # delay import to avoid circular dependency
     from jaxgym import components as comp
 
-    PointSource = comp.PointSource(z=jnp.zeros((1)), semi_conv=params_dict["semi_conv"])
+    PointSource = comp.PointSource(z=0., semi_conv=params_dict["semi_conv"])
 
     ScanGrid = comp.ScanGrid(
-        z=jnp.array([params_dict["defocus"]]),
+        z=params_dict["defocus"],
         scan_step=tuple(params_dict["scan_step"]),
         scan_shape=tuple(params_dict["scan_shape"]),
         scan_rotation=params_dict["scan_rotation"],
     )
 
     Descanner = comp.Descanner(
-        z=jnp.array([params_dict["defocus"]]),
+        z=params_dict["defocus"],
         descan_error=params_dict["descan_error"],
         scan_pos_x=scan_pos_xy[0],
         scan_pos_y=scan_pos_xy[1],
     )
 
     Detector = comp.Detector(
-        z=jnp.array([params_dict["camera_length"] + params_dict["defocus"]]),
+        z=params_dict["camera_length"] + params_dict["defocus"],
         det_shape=tuple(params_dict["det_shape"]),
         det_pixel_size=tuple(params_dict["det_px_size"]),
         flip_y=params_dict["flip_y"],
