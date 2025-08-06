@@ -11,7 +11,8 @@ from microscope_calibration.stemoverfocus import (
     ray_coords_at_plane,
     mask_rays,
     project_coordinates_backward,
-    inplace_sum
+    inplace_sum,
+    create_scan_pos_transfer_matrix
 )
 from jaxgym import components as comp
 from microscope_calibration.generate import (
@@ -242,11 +243,15 @@ def test_solve_model_fourdstem_wrapper():
     model_params = base_model()
     stem_model = create_stem_model(model_params)
 
-    scan_pos = [-0.1, -0.1]
+    scan_pos = [-0.1, -0.1, 0.0, 0.0]
 
-    transfer_matrices, total_transfer_matrix, _ = solve_model_fourdstem_wrapper(
-        stem_model, scan_pos
-    )
+    total_tm_and_grad, scangrid_tm_and_grad = solve_model_fourdstem_wrapper(stem_model)
+
+    total_transfer_matrix = create_scan_pos_transfer_matrix(*scan_pos, *total_tm_and_grad)
+
+    # transfer_matrices, total_transfer_matrix, _ = solve_model_fourdstem_wrapper(
+    #     stem_model, scan_pos
+    # )
 
     point_source_tm = np.eye(5)
     prop_to_scan_tm = np.eye(5)
@@ -275,7 +280,6 @@ def test_solve_model_fourdstem_wrapper():
     total_manual_tm = accumulate_transfer_matrices(manual_transfer_matrices, 0, 3)
 
     np.testing.assert_allclose(total_transfer_matrix, total_manual_tm, rtol=1e-5)
-    np.testing.assert_allclose(transfer_matrices, manual_transfer_matrices, rtol=1e-5)
 
 
 def test_same_z_components():
@@ -448,9 +452,9 @@ def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi,
     test_image[0, 0] = 1
 
     descan_error = DescanError(pxo_pxi=pxo_pxi,
-                                         pxo_pyi=pxo_pyi,
-                                         pyo_pxi=pyo_pxi,
-                                         pyo_pyi=pyo_pyi)
+                               pxo_pyi=pxo_pyi,
+                               pyo_pxi=pyo_pxi,
+                               pyo_pyi=pyo_pyi)
 
     params = ModelParameters(
         semi_conv=1e-4,
@@ -493,9 +497,9 @@ def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi,
     test_image[0, 0] = 1
 
     descan_error = DescanError(sxo_pxi=sxo_pxi,
-                                         sxo_pyi=sxo_pyi,
-                                         syo_pxi=syo_pxi,
-                                         syo_pyi=syo_pyi)
+                               sxo_pyi=sxo_pyi,
+                               syo_pxi=syo_pxi,
+                               syo_pyi=syo_pyi)
 
     params = ModelParameters(
         semi_conv=1e-4,
@@ -539,9 +543,9 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
     test_image[0, 0] = 1
 
     descan_error = DescanError(offpxi=offpxi,
-                                         offpyi=offpyi,
-                                         offsxi=offsxi,
-                                         offsyi=offsyi)
+                               offpyi=offpyi,
+                               offsxi=offsxi,
+                               offsyi=offsyi)
 
     params = ModelParameters(
         semi_conv=1e-4,
@@ -590,7 +594,14 @@ def test_scan_rotation_90_flip(scan_rotation, flip_y):
     scan_pos = [0.0, 0.0]  # No scan position offset
 
     # back-projection with wrong descan error
-    px_y, px_x, mask = project_coordinates_backward(model, det_coords, scan_pos)
+    total_tm_and_grad, scangrid_tm_and_grad = solve_model_fourdstem_wrapper(model)
+
+    px_y, px_x, mask = project_coordinates_backward(model,
+                                                    total_tm_and_grad,
+                                                    scangrid_tm_and_grad,
+                                                    det_coords,
+                                                    scan_pos)
+
     scan_image = np.zeros(params['scan_shape'])
 
     inplace_sum(np.array(px_y), np.array(px_x), np.array(mask), test_image.ravel(), scan_image)
@@ -635,7 +646,13 @@ def test_scan_rotation_45(scan_rotation):
     scan_pos = [0.0, 0.0]  # No scan position offset
 
     # back-projection with wrong descan error
-    px_y, px_x, mask = project_coordinates_backward(model, det_coords, scan_pos)
+    total_tm_and_grad, scangrid_tm_and_grad = solve_model_fourdstem_wrapper(model)
+
+    px_y, px_x, mask = project_coordinates_backward(model,
+                                                    total_tm_and_grad,
+                                                    scangrid_tm_and_grad,
+                                                    det_coords,
+                                                    scan_pos)
     scan_image = np.zeros(params['scan_shape'])
 
     inplace_sum(np.array(px_y), np.array(px_x), np.array(mask), test_image.ravel(), scan_image)

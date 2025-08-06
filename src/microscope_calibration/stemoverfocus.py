@@ -1,3 +1,4 @@
+from ast import Tuple
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -199,68 +200,95 @@ def mask_rays(input_slopes, det_px_size, camera_length, semi_conv):
     )
 
 
-def solve_model_fourdstem_wrapper(model: Model, scan_pos_m: CoordsXY) -> tuple:
-    # Unpack model components.
-    PointSource = model.source
-    ScanGrid = model.scan_grid
-    Descanner = model.descanner
-    Detector = model.detector
+def create_scan_pos_transfer_matrix(sp_x, sp_y, sp_tilt_x, sp_tilt_y, tm, tm_grad):
+    return (
+        sp_x * tm_grad[0]
+        + sp_y * tm_grad[1]
+        + sp_tilt_x * tm_grad[2]
+        + sp_tilt_y * tm_grad[3]
+        + tm
+    )
 
-    scan_x, scan_y = scan_pos_m[0], scan_pos_m[1]
+
+def solve_model_fourdstem_wrapper(model: Model) -> tuple:
+    # Unpack model components.
+    pointsource = model.source
+    scangrid = model.scan_grid
+    descanner = model.descanner
+    detector = model.detector
 
     ray = Ray(
-        x=scan_x,
-        y=scan_y,
+        x=0.0,
+        y=0.0,
         dx=0.0,
         dy=0.0,
         _one=1.0,
-        z=PointSource.z,
+        z=pointsource.z,
         pathlength=jnp.zeros(1),
     )
 
-    # Create a new Descanner with the current scan offsets.
-    new_Descanner = comp.Descanner(
-        z=ScanGrid.z,
-        descan_error=Descanner.descan_error,
-        scan_pos_x=scan_x,
-        scan_pos_y=scan_y,
-    )
+    scan_coords = (0.0, 0.0, 0.0, 0.0)  # (scan_pos_x, scan_pos_y, scan_tilt_x, scan_tilt_y)
 
-    # Make a new model each time:
-    current_model = Model(PointSource, ScanGrid, new_Descanner, Detector)
+    def _solve_model(scan_pos, descanner, idx_one, idx_two):
+        # Create a new Descanner with the current scan offsets.
+        wrapped_descanner = comp.Descanner(
+            z=scangrid.z,
+            descan_error=descanner.descan_error,
+            scan_pos_x=scan_pos[0],
+            scan_pos_y=scan_pos[1],
+            scan_tilt_x=scan_pos[2],
+            scan_tilt_y=scan_pos[3],
+        )
 
-    # Index and name the model components
-    PointSource_idx, ScanGrid_idx, _, Detector_idx = 0, 1, 2, 3
+        # Make a new model each time:
+        current_model = Model(pointsource, scangrid, wrapped_descanner, detector)
 
-    # via a single ray and it's jacobian, get the transfer matrices for the model
-    transfer_matrices = solve_model(ray, current_model)
+        # via a single ray and it's jacobian, get the transfer matrices for the model
+        transfer_matrices = solve_model(ray, current_model)
 
-    total_transfer_matrix = accumulate_transfer_matrices(
-        transfer_matrices, PointSource_idx, Detector_idx
-    )
+        total_tm = accumulate_transfer_matrices(
+            transfer_matrices, idx_one, idx_two
+        )
+        return total_tm, total_tm
 
-    scan_grid_to_detector = accumulate_transfer_matrices(
-        transfer_matrices, ScanGrid_idx, Detector_idx
-    )
+    model_jac_fn = jax.jacobian(_solve_model, has_aux=True)
 
-    detector_to_scan_grid = jnp.linalg.inv(scan_grid_to_detector)
+    total_grad_tm, total_tm = model_jac_fn(scan_coords, descanner, 0, 3)
+    scangrid_to_det_grad_tm, scangrid_to_det_tm = model_jac_fn(scan_coords, descanner, 1, 3)
 
-    return transfer_matrices, total_transfer_matrix, detector_to_scan_grid
+    return (total_tm, total_grad_tm), (scangrid_to_det_tm, scangrid_to_det_grad_tm)
 
 
 @jax.jit
 def project_coordinates_backward(
-    model: Model, det_coords: np.ndarray, scan_pos: CoordsXY
+    model: Model,
+    total_matrix_and_grad: Tuple,
+    scangrid_to_det_matrix_and_grad: Tuple,
+    det_coords: np.ndarray,
+    scan_pos: CoordsXY
 ) -> np.ndarray:
     PointSource = model.source
     ScanGrid = model.scan_grid
     Detector = model.detector
     semi_conv = PointSource.semi_conv
 
-    # Return all the transfer matrices necessary for us to propagate rays through the system
-    # We do this by propagating a single ray through the system, and finding it's gradients
-    _, total_transfer_matrix, det_to_scan = solve_model_fourdstem_wrapper(
-        model, scan_pos
+    total_transfer_matrix = create_scan_pos_transfer_matrix(scan_pos[0],
+                                                            scan_pos[1],
+                                                            0,
+                                                            0,
+                                                            *total_matrix_and_grad)
+
+    scan_to_det_matrix = create_scan_pos_transfer_matrix(scan_pos[0],
+                                                         scan_pos[1],
+                                                         0,
+                                                         0,
+                                                         *scangrid_to_det_matrix_and_grad)
+
+    # Compute the inverse of the scan to detector matrix - avoiding the use of np.linalg.inv
+    # which can be less accurate.
+    det_to_scan_matrix = jnp.linalg.solve(
+        scan_to_det_matrix,
+        jnp.eye(scan_to_det_matrix.shape[0], dtype=scan_to_det_matrix.dtype)
     )
 
     # Get ray coordinates at the scan from the det
@@ -269,7 +297,7 @@ def project_coordinates_backward(
         scan_pos,
         det_coords,
         total_transfer_matrix,
-        det_to_scan,
+        det_to_scan_matrix,
         Detector.det_pixel_size,
     )
 
