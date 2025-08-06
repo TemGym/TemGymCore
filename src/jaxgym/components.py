@@ -155,6 +155,23 @@ class ScanGrid(HasParamsMixin, GridBase):
 
 
 @jdc.pytree_dataclass
+class Scanner(HasParamsMixin):
+    z: float
+    scan_pos_x: float
+    scan_pos_y: float
+    scan_tilt_x: float = 0.
+    scan_tilt_y: float = 0.
+
+    def __call__(self, ray: Ray):
+        return ray.derive(
+            x=ray.x + self.scan_pos_x * ray._one,
+            y=ray.y + self.scan_pos_y * ray._one,
+            dx=ray.dx + self.scan_tilt_x * ray._one,
+            dy=ray.dy + self.scan_tilt_y * ray._one,
+        )
+
+
+@jdc.pytree_dataclass
 class Descanner(HasParamsMixin):
     z: float
     scan_pos_x: float
