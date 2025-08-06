@@ -127,6 +127,7 @@ def run_with_grads(
     grad_idxs = {}
     grad_ray_idxs = {}
     for var in grad_vars:
+        num_vars = len(grad_idxs) + len(grad_ray_idxs)
         if var is input_ray:
             for field in dataclasses.fields(var):
                 builder = getattr(var.params, field.name)
@@ -139,6 +140,8 @@ def run_with_grads(
             grad_ray_idxs[path] = idx
         else:
             grad_idxs.update(var._find_in(model))
+        if (len(grad_idxs) + len(grad_ray_idxs)) == num_vars:
+            raise RuntimeError(f"Cannot find {var._build(original=True)} in parameters")
 
     def run_wrap(num_ray_params: int, *grad_params):
         # build the input ray from the params
