@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Sequence
 
 import jax
 import jax.numpy as jnp
-import jaxgym.components as comp
 from .utils import custom_jacobian_matrix
 from .ray import propagate
 
@@ -23,26 +22,6 @@ def run_to_end(ray: "Ray", components):
         distance = component.z - ray.z
         ray = propagate(distance, ray)
         ray = component(ray)
-    return ray
-
-
-def run_to_end_with_history(ray: "Ray", components):
-    rays = [ray]
-    for component in components:
-        if isinstance(component, comp.ODE):
-            ray = component(ray)
-        else:
-            distance = (component.z - ray.z).squeeze()
-            ray = propagate(distance, ray)
-            ray = component(ray)
-        rays.append(ray)
-    return rays
-
-
-def run_to_component(ray: "Ray", component):
-    distance = (component.z - ray.z).squeeze()
-    ray = propagate(distance, ray)
-    ray = component(ray)
     return ray
 
 
@@ -66,6 +45,12 @@ def solve_model(ray: "Ray", model):
 
     model_ray_jacobians.append(component_jacobian)
 
+    def prop_aux(distance, ray):
+        prop_ray = propagate(distance, ray)
+        return prop_ray, prop_ray
+
+    prop_jac_val_fn = jax.jacobian(prop_aux, argnums=1, has_aux=True)
+
     for i in range(1, len(model)):
         distance = (model[i].z - ray.z).squeeze()
 
@@ -83,21 +68,18 @@ def solve_model(ray: "Ray", model):
         """
         # Get the jacobian of the ray propagation
         # from the previous component to the current component
-        propagate_jacobian = jax.jacobian(propagate, argnums=1)(distance, ray)
+        propagate_jacobian, ray = prop_jac_val_fn(distance, ray)
         propagate_jacobian = custom_jacobian_matrix(propagate_jacobian)
         model_ray_jacobians.append(propagate_jacobian)
 
-        # Propagate the ray
-        ray = propagate(distance, ray)
-
         # Get the jacobian of the step function of the current component
-        component_jacobian = jax.jacobian(model[i])(ray)
+        def _step_val(ray):
+            step_ray = model[i](ray)
+            return step_ray, step_ray
+
+        component_jacobian, ray = jax.jacobian(_step_val, has_aux=True)(ray)
         component_jacobian = custom_jacobian_matrix(component_jacobian)
-
         model_ray_jacobians.append(component_jacobian)
-
-        # Step the ray
-        ray = model[i](ray)
 
     ABCDs = jnp.array(model_ray_jacobians)  # ABCD matrices at each component
 
