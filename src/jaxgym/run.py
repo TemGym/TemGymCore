@@ -54,18 +54,6 @@ def solve_model(ray: "Ray", model):
     for i in range(1, len(model)):
         distance = (model[i].z - ray.z).squeeze()
 
-        """
-        This block of code here is akin to calling value_and_grad on a function in jax
-        to get it's gradients, except we are doing instead value_and_jacobian to get the
-        ray transfer matrix.
-        First we call the jacobian on the propagation step to get the transfer matrix. This
-        does not actually propagate the ray, it only gets its derivatives, so to get the
-        rays "value" from the
-        propagation function, we then call the propagate step on the ray without calling
-        the jacobian.
-        Thus once the same function has been called with and without the jacobian, we have
-        calculated the "value_and_jacobian" of the ray.
-        """
         # Get the jacobian of the ray propagation
         # from the previous component to the current component
         propagate_jacobian, ray = prop_jac_val_fn(distance, ray)
