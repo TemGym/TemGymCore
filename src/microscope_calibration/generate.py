@@ -1,3 +1,4 @@
+from ast import Tuple
 from typing_extensions import Literal
 import numpy as np
 import jax
@@ -14,24 +15,38 @@ from .stemoverfocus import (
     ray_coords_at_plane,
     solve_model_fourdstem_wrapper,
     project_coordinates_backward,
+    create_scan_pos_transfer_matrix
 )
 from .model import ModelParameters, create_stem_model
 
 
 def project_frame_forward(
     model: Model,
+    total_matrix_and_grad: Tuple,
+    scangrid_to_det_matrix_and_grad: Tuple,
     det_coords: np.ndarray,
-    sample_interpolant: callable,
     scan_pos: CoordsXY,
+    sample_interpolant: callable,
 ) -> np.ndarray:
     PointSource = model.source
     Detector = model.detector
     semi_conv = PointSource.semi_conv
 
-    # Return all the transfer matrices necessary for us to propagate rays through the system
-    # We do this by propagating a single ray through the system, and finding it's gradients
-    _, total_transfer_matrix, detector_to_scan = solve_model_fourdstem_wrapper(
-        model, scan_pos
+    total_transfer_matrix = create_scan_pos_transfer_matrix(scan_pos[0],
+                                                            scan_pos[1],
+                                                            0,
+                                                            0,
+                                                            *total_matrix_and_grad)
+
+    scan_to_det_matrix = create_scan_pos_transfer_matrix(scan_pos[0],
+                                                         scan_pos[1],
+                                                         0,
+                                                         0,
+                                                         *scangrid_to_det_matrix_and_grad)
+
+    det_to_scan_matrix = jnp.linalg.solve(
+        scan_to_det_matrix,
+        jnp.eye(scan_to_det_matrix.shape[0], dtype=scan_to_det_matrix.dtype)
     )
 
     # Get ray coordinates at the scan from the detector
@@ -40,7 +55,7 @@ def project_frame_forward(
         scan_pos,
         det_coords,
         total_transfer_matrix,
-        detector_to_scan,
+        det_to_scan_matrix,
         Detector.det_pixel_size,
     )
 
@@ -97,11 +112,13 @@ def compute_fourdstem_dataset(
     idxs = range(np.prod(ScanGrid.scan_shape).astype(int))
     pbar = tqdm.tqdm if progress else lambda it, **kw: it
 
+    total_tm_and_grad, scangrid_tm_and_grad = solve_model_fourdstem_wrapper(model)
+
     for idx in pbar(idxs):
         iy, ix = np.unravel_index(idx, ScanGrid.scan_shape)
         scan_pos = scan_coords[idx]
         det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(
-            model, det_coords, sample_interpolant, scan_pos
+            model, total_tm_and_grad, scangrid_tm_and_grad, det_coords, scan_pos, sample_interpolant
         )
         fourdstem_array[iy, ix, det_pixels_y, det_pixels_x] = sample_vals
 
@@ -138,17 +155,24 @@ def compute_scan_grid_rays_and_intensities(
     sample_px_xs = []
     detector_intensities = []
 
+    scan_coords = model.scan_grid.coords
+
+    total_tm_and_grad, scangrid_tm_and_grad = solve_model_fourdstem_wrapper(model)
+
     for iy in tqdm.trange(fourdstem_array.shape[0], desc="Scan Y"):
         for ix in tqdm.trange(fourdstem_array.shape[1], desc="Scan X", leave=False):
             idx = iy * fourdstem_array.shape[1] + ix
             scan_pos = scan_coords[idx]
 
-            # Compute the backward projection for this scan position.
-            sample_px_y, sample_px_x, mask = project_coordinates_backward(
-                model, det_coords, scan_pos
+            px_y, px_x, mask = project_coordinates_backward(
+                model,
+                total_tm_and_grad,
+                scangrid_tm_and_grad,
+                det_coords,
+                scan_pos,
             )
-            sample_px_ys.append(sample_px_y)
-            sample_px_xs.append(sample_px_x)
+            sample_px_ys.append(px_y)
+            sample_px_xs.append(px_x)
             detector_intensities.append(fourdstem_array[iy, ix].ravel() * mask)
 
     return sample_px_ys, sample_px_xs, detector_intensities
