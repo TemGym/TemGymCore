@@ -1,22 +1,33 @@
 from jaxgym.run import run_with_grads
 from jaxgym.ray import PixelsRay
-import jaxgym.components as comp
-from microscope_calibration.model import DescanError
+from microscope_calibration.model import DescanError, create_stem_model, Parameters4DSTEM
 
 
 if __name__ == "__main__":
-    model = (
-        (scan_grid := comp.ScanGrid(0., (0.001, 0.001), (64, 64), 0.)),
-        (lens := comp.Lens(0.33, 0.1)),
-        comp.Descanner(0.75, 0.2, 0.1, DescanError()),
-        (det := comp.Detector(1., (0.001,) * 2, (128., 128.)))
+    params = Parameters4DSTEM(
+        overfocus=0.001,
+        scan_pixel_pitch=0.001,
+        scan_cy=0.0,
+        scan_cx=0.0,
+        scan_shape=(11, 11),
+        scan_rotation=0.0,
+        camera_length=0.1,
+        detector_pixel_pitch=0.001,
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=(11, 11),
+        semiconv=1e-12,
+        flip_y=False,
+        descan_error=DescanError(),
     )
+
+    model = create_stem_model(params, (0., 0.))
 
     ray = PixelsRay(10, 30, 0., 0., 0., 0.)
     out_ray, grads = run_with_grads(
         ray,
         model,
-        (lens.params.focal_length, (det.params.z)),
+        (model.detector.params.z,),
     )
     print("Output")
     print(f"\t{out_ray.item()}")

@@ -10,18 +10,18 @@ import numba
 
 from jaxgym import CoordsXY
 from jaxgym.components import ScanGrid
-from .model import Model
+from .model import Model4DSTEM
 from .stemoverfocus import (
     ray_coords_at_plane,
     solve_model_fourdstem_wrapper,
     project_coordinates_backward,
     create_scan_pos_transfer_matrix
 )
-from .model import ModelParameters, create_stem_model
+from .model import Parameters4DSTEM, create_stem_model
 
 
 def project_frame_forward(
-    model: Model,
+    model: Model4DSTEM,
     total_matrix_and_grad: Tuple,
     scangrid_to_det_matrix_and_grad: Tuple,
     det_coords: np.ndarray,
@@ -74,7 +74,7 @@ def project_frame_forward(
 
 
 def compute_fourdstem_dataset_vmap(
-    model: Model, fourdstem_array: jnp.ndarray, sample_interpolant: callable
+    model: Model4DSTEM, fourdstem_array: jnp.ndarray, sample_interpolant: callable
 ) -> jnp.ndarray:
     Detector = model.detector
     ScanGrid = model.scan_grid
@@ -99,7 +99,7 @@ def compute_fourdstem_dataset_vmap(
 
 
 def compute_fourdstem_dataset(
-    model: Model,
+    model: Model4DSTEM,
     fourdstem_array: np.ndarray,
     sample_interpolant: callable,
     progress: bool = False,
@@ -144,7 +144,7 @@ def do_shifted_sum(
 
 
 def compute_scan_grid_rays_and_intensities(
-    model: Model, fourdstem_array: np.ndarray
+    model: Model4DSTEM, fourdstem_array: np.ndarray
 ) -> np.ndarray:
     ScanGrid = model.scan_grid
     Detector = model.detector
@@ -179,7 +179,7 @@ def compute_scan_grid_rays_and_intensities(
 
 
 def generate_dataset_from_image(
-    params: ModelParameters,
+    params: Parameters4DSTEM,
     image: np.ndarray,
     method: Literal["nearest", "linear"] = "nearest",
     sample_scale: float = 2,

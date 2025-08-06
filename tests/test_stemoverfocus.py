@@ -21,25 +21,10 @@ from microscope_calibration.generate import (
     generate_dataset_from_image,
 )
 from microscope_calibration.model import (
-    ModelParameters,
     DescanError,
-    create_stem_model
+    create_stem_model,
+    Parameters4DSTEM,
 )
-
-
-def base_model():
-    return ModelParameters(
-        semi_conv=1e-12,
-        defocus=0.001,
-        camera_length=0.1,
-        scan_shape=(11, 11),
-        det_shape=(11, 11),
-        scan_step=(0.001, 0.001),
-        det_px_size=(0.001, 0.001),
-        scan_rotation=0.0,
-        flip_y=False,
-        descan_error=DescanError(),
-        )
 
 
 def test_find_input_slopes_single_on_axis_pixel():
@@ -240,7 +225,22 @@ def test_mask_rays_selects_only_last_true_when_semi_conv_small():
 def test_solve_model_fourdstem_wrapper():
     # Test that the transfer matrices returned by the
     # fourdstem wrapper match the manually constructed ones
-    model_params = base_model()
+    model_params = Parameters4DSTEM(
+        overfocus=0.001,
+        scan_pixel_pitch=0.001,
+        scan_cy=0.0,
+        scan_cx=0.0,
+        scan_shape=(11, 11),
+        scan_rotation=0.0,
+        camera_length=0.1,
+        detector_pixel_pitch=0.001,
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=(11, 11),
+        semiconv=1e-12,
+        flip_y=False,
+        descan_error=DescanError(),
+    )
     stem_model = create_stem_model(model_params)
 
     scan_pos = [-0.1, -0.1, 0.0, 0.0]
@@ -255,16 +255,16 @@ def test_solve_model_fourdstem_wrapper():
 
     point_source_tm = np.eye(5)
     prop_to_scan_tm = np.eye(5)
-    prop_to_scan_tm[0, 2] = model_params["defocus"]
-    prop_to_scan_tm[1, 3] = model_params["defocus"]
+    prop_to_scan_tm[0, 2] = model_params.overfocus
+    prop_to_scan_tm[1, 3] = model_params.overfocus
     scan_tm = np.eye(5)
     prop_scan_to_descanner_tm = np.eye(5)
     descan_tm = np.eye(5)
     descan_tm[0, -1] = -scan_pos[0]
     descan_tm[1, -1] = -scan_pos[1]
     prop_descan_to_det_tm = np.eye(5)
-    prop_descan_to_det_tm[0, 2] = model_params["camera_length"]
-    prop_descan_to_det_tm[1, 3] = model_params["camera_length"]
+    prop_descan_to_det_tm[0, 2] = model_params.camera_length
+    prop_descan_to_det_tm[1, 3] = model_params.camera_length
     detector_tm = np.eye(5)
 
     manual_transfer_matrices = [
@@ -288,7 +288,6 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
     scan_rotation = np.random.uniform(-180, 180)
     grid_shape = np.random.randint(8, 20, size=2)
 
-    descan_error_params = DescanError(*jnp.zeros(12))
     test_image = np.zeros(grid_shape, dtype=np.uint8)
     test_image[0, 0] = 1.0
     test_image[4, 4] = 1.0
@@ -297,17 +296,21 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
     test_image[5, 4] = 1.0
     test_image[4, 5] = 1.0
 
-    params_dict = ModelParameters(
-        semi_conv=1e-4,
-        defocus=0.0,
-        camera_length=0.5,
+    params_dict = Parameters4DSTEM(
+        overfocus=0.0,
+        scan_pixel_pitch=0.01,
+        scan_cy=0.0,
+        scan_cx=0.0,
         scan_shape=grid_shape,
-        det_shape=grid_shape,
-        scan_step=(0.01, 0.01),
-        det_px_size=(0.01, 0.01),
         scan_rotation=scan_rotation,
-        descan_error=descan_error_params,
+        camera_length=0.5,
+        detector_pixel_pitch=0.01,
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=grid_shape,
+        semiconv=0.0001,
         flip_y=False,
+        descan_error=DescanError()
     )
 
     model = create_stem_model(params_dict)
@@ -348,21 +351,28 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
     test_image[5, 4] = 1.0
     test_image[4, 5] = 1.0
 
-    params_dict = ModelParameters(
-        semi_conv=1e-4,
-        defocus=0.0,
-        camera_length=0.5,
+    scan_step = (0.01, 0.01)
+    det_px_size = (0.01, 0.01)
+
+    params = Parameters4DSTEM(
+        overfocus=0.,
+        scan_pixel_pitch=scan_step[0],
+        scan_cy=0.0,
+        scan_cx=0.0,
         scan_shape=grid_shape,
-        det_shape=grid_shape,
-        scan_step=(0.01, 0.01),
-        det_px_size=(0.01, 0.01),
         scan_rotation=scan_rotation,
-        descan_error=descan_error,
+        camera_length=0.5,
+        detector_pixel_pitch=det_px_size[0],
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=grid_shape,
+        semiconv=1e-4,
         flip_y=False,
+        descan_error=descan_error,
     )
 
-    model = create_stem_model(params_dict)
-    fourdstem_array = generate_dataset_from_image(params_dict, test_image, sample_scale=1.)
+    model = create_stem_model(params)
+    fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
 
     sample_px_ys, sample_px_xs, detector_intensities = (
         compute_scan_grid_rays_and_intensities(model, fourdstem_array)
@@ -404,17 +414,21 @@ def test_project_frame_forward_and_backward_with_descan_scale(pxo_pxi,
                                pyo_pxi=pyo_pxi,
                                pyo_pyi=pyo_pyi)
 
-    params = ModelParameters(
-        semi_conv=1e-4,
-        defocus=0.0,
-        camera_length=0.5,
+    params = Parameters4DSTEM(
+        overfocus=0.,
+        scan_pixel_pitch=scan_step[0],
+        scan_cy=0.0,
+        scan_cx=0.0,
         scan_shape=grid_shape,
-        det_shape=grid_shape,
-        scan_step=scan_step,
-        det_px_size=det_px_size,
-        scan_rotation=0.0,
+        scan_rotation=0.,
+        camera_length=0.5,
+        detector_pixel_pitch=det_px_size[0],
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=grid_shape,
+        semiconv=1e-4,
+        flip_y=False,
         descan_error=descan_error,
-        flip_y=False
     )
 
     fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
@@ -449,15 +463,19 @@ def test_project_frame_forward_and_backward_with_descan_slope(sxo_pxi,
                                syo_pxi=syo_pxi,
                                syo_pyi=syo_pyi)
 
-    params = ModelParameters(
-        semi_conv=1e-4,
-        defocus=0.0,
-        camera_length=0.5,
+    params = Parameters4DSTEM(
+        overfocus=0.,
+        scan_pixel_pitch=scan_step[0],
+        scan_cy=0.0,
+        scan_cx=0.0,
         scan_shape=grid_shape,
-        det_shape=grid_shape,
-        scan_step=scan_step,
-        det_px_size=det_px_size,
-        scan_rotation=0.0,
+        scan_rotation=0.,
+        camera_length=0.5,
+        detector_pixel_pitch=det_px_size[0],
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=grid_shape,
+        semiconv=1e-4,
         flip_y=False,
         descan_error=descan_error,
     )
@@ -495,17 +513,21 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
                                offsxi=offsxi,
                                offsyi=offsyi)
 
-    params = ModelParameters(
-        semi_conv=1e-4,
-        defocus=0.0,
-        camera_length=0.5,
+    params = Parameters4DSTEM(
+        overfocus=0.,
+        scan_pixel_pitch=scan_step[0],
+        scan_cy=0.0,
+        scan_cx=0.0,
         scan_shape=grid_shape,
-        det_shape=grid_shape,
-        scan_step=scan_step,
-        det_px_size=det_px_size,
-        scan_rotation=0.0,
-        descan_error=descan_error,
+        scan_rotation=0.,
+        camera_length=0.5,
+        detector_pixel_pitch=det_px_size[0],
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=grid_shape,
+        semiconv=1e-4,
         flip_y=False,
+        descan_error=descan_error,
     )
 
     fourdstem_array = generate_dataset_from_image(params, test_image, sample_scale=1.)
@@ -521,20 +543,24 @@ def test_project_frame_forward_and_backward_with_descan_offset_single_pixel(offp
 @pytest.mark.parametrize("flip_y", [False, True])
 def test_scan_rotation_90_flip(scan_rotation, flip_y):
 
-    params = ModelParameters(
-        semi_conv=1,
-        defocus=0.5,  # Distance from the crossover to the sample
-        camera_length=0.5,  # Distance from the point source to the detector
-        scan_shape=(16, 16),  # YX!
-        det_shape=(32, 32),  # YX!
-        scan_step=(1e-2, 1e-2),  # YX!
-        det_px_size=(1e-2, 1e-2),  # YX!
+    params = Parameters4DSTEM(
+        overfocus=0.5,
+        scan_pixel_pitch=0.01,
+        scan_cy=0.0,
+        scan_cx=0.0,
+        scan_shape=(16, 16),
         scan_rotation=scan_rotation,
-        descan_error=DescanError(),
+        camera_length=0.5,
+        detector_pixel_pitch=0.01,
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=(32, 32),
+        semiconv=1,
         flip_y=flip_y,
+        descan_error=DescanError()
     )
 
-    test_image = np.random.randint(0, 8, size=params['det_shape'])
+    test_image = np.random.randint(0, 8, size=params.detector_shape)
 
     model = create_stem_model(params)
     det_coords = model.detector.get_coords()
@@ -550,7 +576,7 @@ def test_scan_rotation_90_flip(scan_rotation, flip_y):
                                                     det_coords,
                                                     scan_pos)
 
-    scan_image = np.zeros(params['scan_shape'])
+    scan_image = np.zeros(params.scan_shape)
 
     inplace_sum(np.array(px_y), np.array(px_x), np.array(mask), test_image.ravel(), scan_image)
 
@@ -572,21 +598,25 @@ def test_scan_rotation_90_flip(scan_rotation, flip_y):
 @pytest.mark.parametrize("scan_rotation", [0, 45, -45])
 def test_scan_rotation_45(scan_rotation):
 
-    params = ModelParameters(
-        semi_conv=1,
-        defocus=0.5,  # Distance from the crossover to the sample
-        camera_length=0.5,  # Distance from the point source to the detector
-        scan_shape=(17, 17),  # YX!
-        det_shape=(33, 33),  # YX!
-        scan_step=(1e-3, 1e-3),  # YX!
-        det_px_size=(1e-2, 1e-2),  # YX!
+    params = Parameters4DSTEM(
+        overfocus=0.5,
+        scan_pixel_pitch=0.001,
+        scan_cy=0.0,
+        scan_cx=0.0,
+        scan_shape=(17, 17),
         scan_rotation=scan_rotation,
-        descan_error=DescanError(),
+        camera_length=0.5,
+        detector_pixel_pitch=0.01,
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=(33, 33),
+        semiconv=1,
         flip_y=False,
+        descan_error=DescanError(),
     )
 
-    test_image = np.zeros(params['det_shape'], dtype=np.uint8)
-    test_image[params['det_shape'][0] // 2, :] = 1
+    test_image = np.zeros(params.detector_shape, dtype=np.uint8)
+    test_image[params.detector_shape[0] // 2, :] = 1
 
     model = create_stem_model(params)
     det_coords = model.detector.get_coords()
@@ -601,14 +631,14 @@ def test_scan_rotation_45(scan_rotation):
                                                     scangrid_tm_and_grad,
                                                     det_coords,
                                                     scan_pos)
-    scan_image = np.zeros(params['scan_shape'])
+    scan_image = np.zeros(params.scan_shape)
 
     inplace_sum(np.array(px_y), np.array(px_x), np.array(mask), test_image.ravel(), scan_image)
 
     if scan_rotation == -45:
-        diagonal_image = np.eye(params['scan_shape'][0], dtype=np.uint8)
+        diagonal_image = np.eye(params.scan_shape[0], dtype=np.uint8)
     elif scan_rotation == 45:
-        diagonal_image = np.fliplr(np.eye(params['scan_shape'][0], dtype=np.uint8))
+        diagonal_image = np.fliplr(np.eye(params.scan_shape[0], dtype=np.uint8))
     else:
         diagonal_image = scan_image.copy()
 

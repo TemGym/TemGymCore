@@ -10,7 +10,7 @@ from jaxgym.transfer import accumulate_transfer_matrices, transfer_rays_pt_src
 from jaxgym import CoordsXY, ScaleYX
 import jaxgym.components as comp
 
-from .model import Model
+from .model import Model4DSTEM
 from jax import lax
 
 
@@ -210,7 +210,7 @@ def create_scan_pos_transfer_matrix(sp_x, sp_y, sp_tilt_x, sp_tilt_y, tm, tm_gra
     )
 
 
-def solve_model_fourdstem_wrapper(model: Model) -> tuple:
+def solve_model_fourdstem_wrapper(model: Model4DSTEM) -> tuple:
     # Unpack model components.
     pointsource = model.source
     scangrid = model.scan_grid
@@ -241,7 +241,7 @@ def solve_model_fourdstem_wrapper(model: Model) -> tuple:
         )
 
         # Make a new model each time:
-        current_model = Model(pointsource, scangrid, wrapped_descanner, detector)
+        current_model = Model4DSTEM(pointsource, scangrid, wrapped_descanner, detector)
 
         # via a single ray and it's jacobian, get the transfer matrices for the model
         transfer_matrices = solve_model(ray, current_model)
@@ -261,7 +261,7 @@ def solve_model_fourdstem_wrapper(model: Model) -> tuple:
 
 @jax.jit
 def project_coordinates_backward(
-    model: Model,
+    model: Model4DSTEM,
     total_matrix_and_grad: Tuple,
     scangrid_to_det_matrix_and_grad: Tuple,
     det_coords: np.ndarray,

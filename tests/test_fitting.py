@@ -1,8 +1,7 @@
 import numpy as np
-import copy
 
 from microscope_calibration.fitting import fit_descan_error_matrix
-from microscope_calibration.model import DescanError, ModelParameters
+from microscope_calibration.model import DescanError, Parameters4DSTEM
 from microscope_calibration.generate import generate_dataset_from_image
 
 import pytest
@@ -59,24 +58,29 @@ def test_fit_descan_error_matrix():
         offsyi=0.,
     )
 
-    params = ModelParameters(
-        semi_conv=1e-4,
-        defocus=0.01,
-        camera_length=0.5,
+    params = Parameters4DSTEM(
+        overfocus=0.01,
+        scan_pixel_pitch=scan_step[0],
+        scan_cy=0.0,
+        scan_cx=0.0,
         scan_shape=scan_shape,
-        det_shape=det_shape,
-        scan_step=scan_step,
-        det_px_size=det_px_size,
-        scan_rotation=0.0,
-        descan_error=descan_error,
+        scan_rotation=0.,
+        camera_length=0.5,
+        detector_pixel_pitch=det_px_size[0],
+        detector_cy=0.0,
+        detector_cx=0.0,
+        detector_shape=det_shape,
+        semiconv=1e-4,
         flip_y=False,
+        descan_error=descan_error
     )
 
     datasets = {}
     clengths = (0.5, 1.0, 1.5)
     for cl in clengths:
-        _params = copy.deepcopy(params)
+        _params = params._asdict()
         _params["camera_length"] = cl
+        _params = Parameters4DSTEM(**_params)
         data = generate_dataset_from_image(
             _params,
             test_image,

@@ -2,22 +2,22 @@ import numpy as np
 from libertem.udf import UDF
 from libertem.common.buffers import AuxBufferWrapper
 
-from .model import ModelParameters, create_stem_model
+from .model import Parameters4DSTEM, create_stem_model
 from .stemoverfocus import project_coordinates_backward, inplace_sum, solve_model_fourdstem_wrapper
 
 
 class ShiftedSumUDF(UDF):
     def __init__(
         self,
-        model_parameters: ModelParameters,
+        model_parameters: Parameters4DSTEM,
         shifts: AuxBufferWrapper | None = None,
     ):
         super().__init__(model_parameters=model_parameters, shifts=shifts)
 
     def get_task_data(self):
         # Ran once per-partition and re-used
-        params_dict = ModelParameters(**self.params.model_parameters)
-        model = create_stem_model(params_dict)
+        params = Parameters4DSTEM(*self.params.model_parameters)
+        model = create_stem_model(params)
         scan_coords = model.scan_grid.coords
         detector_coords = model.detector.coords
 
