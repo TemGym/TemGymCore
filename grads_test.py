@@ -1,5 +1,5 @@
 from jaxgym.run import run_with_grads
-from jaxgym.ray import PixelsRay
+from jaxgym.ray import Ray
 from microscope_calibration.model import DescanError, create_stem_model, Parameters4DSTEM
 
 
@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
     model = create_stem_model(params, (0., 0.))
 
-    ray = PixelsRay(10, 30, 0., 0., 0., 0.)
+    ray = Ray(10, 30, 0., 0., 0., 0.)
     out_ray, grads = run_with_grads(
         ray,
         model,

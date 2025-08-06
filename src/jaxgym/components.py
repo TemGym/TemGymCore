@@ -299,19 +299,10 @@ class Deflector(HasParamsMixin):
 
     def __call__(self, ray: Ray):
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-        new_dx = dx + self.def_x
-        new_dy = dy + self.def_y
-
-        pathlength = ray.pathlength + dx * x + dy * y
-
-        return Ray(
-            x=x,
-            y=y,
-            dx=new_dx,
-            dy=new_dy,
-            _one=ray._one,
-            pathlength=pathlength,
-            z=ray.z,
+        return ray.derive(
+            dx=dx + self.def_x,
+            dy=dy + self.def_y,
+            pathlength=ray.pathlength + dx * x + dy * y,
         )
 
 

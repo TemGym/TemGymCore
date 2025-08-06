@@ -99,8 +99,3 @@ def propagate(distance, ray):
         pathlength=ray.pathlength + distance,
     )
     return new_ray
-
-
-@jdc.pytree_dataclass
-class PixelsRay(Ray):
-    ...
