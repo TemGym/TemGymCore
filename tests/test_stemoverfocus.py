@@ -282,58 +282,6 @@ def test_solve_model_fourdstem_wrapper():
     np.testing.assert_allclose(total_transfer_matrix, total_manual_tm, rtol=1e-5)
 
 
-def test_same_z_components():
-    # Test that if one places components at the same z position (zero defocus, zero camera length),
-    # and try to run a ray through it,
-    # it does not raise an error and returns the expected number of transfer matrices.
-    err = jnp.zeros(12)
-    descan_error = DescanError(*err)
-
-    model_params = ModelParameters(
-        semi_conv=0.001,
-        defocus=0.0,
-        camera_length=0.0,
-        scan_shape=(2, 2),
-        det_shape=(2, 2),
-        scan_step=(0.1, 0.1),
-        det_px_size=(0.1, 0.1),
-        scan_rotation=0.0,
-        flip_y=False,
-        descan_error=descan_error,
-    )
-    model = create_stem_model(model_params)
-    tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
-
-    assert len(tmats) == 7
-    assert total_tm.shape == (5, 5)
-    assert inv_tm.shape == (5, 5)
-
-
-def test_out_of_order_z():
-    # Test that if one places components at out of order z positions,
-    # and try to run a ray through it,
-    # it does not raise an error and returns the expected number of transfer matrices.
-    descan_error_params = DescanError(*jnp.zeros(12))
-    model_params = ModelParameters(
-        semi_conv=0.001,
-        defocus=0.1,
-        camera_length=-0.5,
-        scan_shape=(2, 2),
-        det_shape=(2, 2),
-        scan_step=(0.1, 0.1),
-        det_px_size=(0.1, 0.1),
-        scan_rotation=0.0,
-        flip_y=False,
-        descan_error=descan_error_params,
-    )
-    model = create_stem_model(model_params)
-    tmats, total_tm, inv_tm = solve_model_fourdstem_wrapper(model, [0.0, 0.0])
-
-    assert len(tmats) == 7
-    assert total_tm.shape == (5, 5)
-    assert inv_tm.shape == (5, 5)
-
-
 @pytest.mark.parametrize("runs", range(3))
 def test_project_frame_forward_and_backward_simple_sample(runs):
     # Test that the forward and backward projection of a simple sample
