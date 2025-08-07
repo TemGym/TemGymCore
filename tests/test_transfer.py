@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
-from jaxgym.transfer import transfer_rays, transfer_rays_pt_src, accumulate_transfer_matrices
+from jaxgym.transfer import transfer_rays, transfer_rays_pt_src, accumulate_matrices
 
 
 def test_transfer_pt_src_free_space():
@@ -141,12 +141,12 @@ def test_accumulate_transfer_matrices():
         M[4, :] = [0, 0, 0, 0, 1]
     mats = [jnp.array(A), jnp.array(B), jnp.array(C)]
 
-    total = accumulate_transfer_matrices(mats, 0, 2)
+    total = accumulate_matrices(mats)
     expected = C @ B @ A
     np.testing.assert_allclose(np.array(total), expected)
 
     # Sub-range from index 1 to 2: only C
     # (since i_start=2, i_end=4 → mats[2:5] == [C])
-    sub = accumulate_transfer_matrices(mats, 1, 2)
+    sub = accumulate_matrices(mats[2:3])
     expected_sub = C
     np.testing.assert_allclose(np.array(sub), expected_sub)

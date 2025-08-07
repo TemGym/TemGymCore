@@ -6,7 +6,7 @@ from numba import njit
 
 from jaxgym.ray import Ray
 from jaxgym.run import solve_model
-from jaxgym.transfer import accumulate_transfer_matrices, transfer_rays_pt_src
+from jaxgym.transfer import accumulate_matrices, transfer_rays_pt_src
 from jaxgym import CoordsXY, ScaleYX
 import jaxgym.components as comp
 
@@ -229,7 +229,7 @@ def solve_model_fourdstem_wrapper(model: Model4DSTEM) -> tuple:
 
     scan_coords = (0.0, 0.0, 0.0, 0.0)  # (scan_pos_x, scan_pos_y, scan_tilt_x, scan_tilt_y)
 
-    def _solve_model(scan_pos, descanner, idx_one, idx_two):
+    def _solve_model(scan_pos, descanner, transfer_slice):
         # Create a new Descanner with the current scan offsets.
         wrapped_descanner = comp.Descanner(
             z=scangrid.z,
@@ -246,15 +246,15 @@ def solve_model_fourdstem_wrapper(model: Model4DSTEM) -> tuple:
         # via a single ray and it's jacobian, get the transfer matrices for the model
         transfer_matrices = solve_model(ray, current_model)
 
-        total_tm = accumulate_transfer_matrices(
-            transfer_matrices, idx_one, idx_two
+        total_tm = accumulate_matrices(
+            transfer_matrices[transfer_slice]
         )
         return total_tm, total_tm
 
     model_jac_fn = jax.jacobian(_solve_model, has_aux=True)
 
-    total_grad_tm, total_tm = model_jac_fn(scan_coords, descanner, 0, 3)
-    scangrid_to_det_grad_tm, scangrid_to_det_tm = model_jac_fn(scan_coords, descanner, 1, 3)
+    total_grad_tm, total_tm = model_jac_fn(scan_coords, descanner, jnp.s_[:])
+    scangrid_to_det_grad_tm, scangrid_to_det_tm = model_jac_fn(scan_coords, descanner, jnp.s_[2:])
 
     return (total_tm, total_grad_tm), (scangrid_to_det_tm, scangrid_to_det_grad_tm)
 

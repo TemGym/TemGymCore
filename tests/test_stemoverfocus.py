@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import jax.numpy as jnp
 import sympy as sp
-from jaxgym.transfer import accumulate_transfer_matrices
+from jaxgym.transfer import accumulate_matrices
 from skimage.util import view_as_blocks
 
 from microscope_calibration.stemoverfocus import (
@@ -249,10 +249,6 @@ def test_solve_model_fourdstem_wrapper():
 
     total_transfer_matrix = create_scan_pos_transfer_matrix(*scan_pos, *total_tm_and_grad)
 
-    # transfer_matrices, total_transfer_matrix, _ = solve_model_fourdstem_wrapper(
-    #     stem_model, scan_pos
-    # )
-
     point_source_tm = np.eye(5)
     prop_to_scan_tm = np.eye(5)
     prop_to_scan_tm[0, 2] = model_params.overfocus
@@ -277,7 +273,9 @@ def test_solve_model_fourdstem_wrapper():
         detector_tm,
     ]
 
-    total_manual_tm = accumulate_transfer_matrices(manual_transfer_matrices, 0, 3)
+    total_manual_tm = accumulate_matrices(
+        manual_transfer_matrices
+    )
 
     np.testing.assert_allclose(total_transfer_matrix, total_manual_tm, rtol=1e-5)
 

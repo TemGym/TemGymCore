@@ -22,7 +22,7 @@ def transfer_rays(ray_coords, transfer_matrices):
         A 3D array of shape (N, M, 5): ray coords at each of the M planes.
     """
 
-    cumulative_matrices = accumulate_all_transfer_matrices_cumulative(transfer_matrices)
+    cumulative_matrices = accumulate_matrices_cumulative(transfer_matrices)
 
     # propagate all N rays through each of the M cumulative matrices
     # result[n, m, i] = sum_j cum_tms[m, i, j] * ray_coords[n, j]
@@ -88,33 +88,30 @@ def transfer_rays_pt_src(input_pos_xy, input_slopes_xy, transfer_matrix):
     return coords
 
 
-def accumulate_transfer_matrices(transfer_matrices, start: int, end: int):
-    """Compute the total transfer matrix between component indices [start, end]
-    by multiplying in right-to-left order.
-
-    Given that the transfer_matrices list contains both component and
-    intermediate propagation matrices, where each component appears at even indices (0, 2, 4, ...),
-    this function multiplies the matrices from index 2*start up to index 2*end using reversed order.
+def accumulate_matrices(matrices):
     """
-    i_start = 2 * start
-    i_end = 2 * end
-    matrices = transfer_matrices[i_start: i_end + 1]
+    Compute the total transfer matrix by
+    multiplying in right-to-left order
+    """
     total = matrices[-1]
     for tm in reversed(matrices[:-1]):
         total = total @ tm
     return total
 
 
-def accumulate_all_transfer_matrices_cumulative(transfer_matrices):
-    """Compute cumulative products in reverse order:
-    start with the last matrix, then multiply by the one before it, and so on."""
+def accumulate_matrices_cumulative(matrices):
+    """
+    Compute cumulative products in reverse order:
+    start with the last matrix, then multiply by
+    the one before it, and so on, return all
+    intermediate matrices in a stack
+    """
     all_matrices = []
     # Begin with the last matrix
-    total = transfer_matrices[-1]
+    total = matrices[-1]
     all_matrices.append(total)
     # Multiply backwards through the list
-    for tm in reversed(transfer_matrices[:-1]):
+    for tm in reversed(matrices[:-1]):
         total = tm @ total
         all_matrices.append(total)
-
     return jnp.stack(all_matrices, axis=0)
