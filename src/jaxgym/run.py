@@ -1,31 +1,71 @@
 from itertools import chain
 import dataclasses
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Sequence, Union, Any, Callable
 
 import jax
 import jax.numpy as jnp
 from .utils import custom_jacobian_matrix
-from .ray import propagate
+from .propagator import Propagator
 
 if TYPE_CHECKING:
     from .tree_utils import PathBuilder
     from .ray import Ray
+    from .components import Component
+    from .source import Source
 
 
-def run_to_end(ray: "Ray", components):
+def jacobian_and_value(fn, argnums: int = 0, **jac_kwargs):
+
+    def inner(*args, **kwargs):
+        out = fn(*args, **kwargs)
+        return out, out
+
+    return jax.jacobian(inner, argnums=argnums, has_aux=True, **jac_kwargs)
+
+
+def passthrough_transform(component: Union["Component", "Source"]):
+
+    def inner(ray: "Ray") -> tuple["Ray", "Ray"]:
+        out = component(ray)
+        return out, out
+
+    return inner
+
+
+def jacobian_transform(component: Union["Component", "Source"]):
+
+    def inner(ray: "Ray") -> tuple["Ray", Any]:
+        jac, out = jacobian_and_value(component)(ray)
+        return out, jac
+
+    return inner
+
+
+TransformT = Callable[[Union["Component", "Source"]], Callable[["Ray"], tuple["Ray", Any]]]
+
+
+def run_iter(
+    ray: "Ray",
+    components: Sequence[Union["Component", "Source"]],
+    transform: TransformT = passthrough_transform
+):
     for component in components:
-        # # if the component is an ODE component, then just run the step
-        # # function of the component, otherwise run the propagation function first
-        # if isinstance(component, comp.ODE):
-        #     ray = component(ray)
-        # else:
         distance = component.z - ray.z
-        ray = propagate(distance, ray)
-        ray = component(ray)
+        if distance != 0.:
+            propagator = Propagator.free_space(distance)
+            ray, out = transform(propagator)(ray)
+            yield propagator, out
+        ray, out = transform(component)(ray)
+        yield component, out
+
+
+def run_to_end(ray: "Ray", components: Sequence[Union["Component", "Source"]]) -> "Ray":
+    for _, ray in run_iter(ray, components):
+        pass
     return ray
 
 
-def calculate_derivatives(ray: "Ray", model, order):
+def calculate_derivatives(ray: "Ray", model: Sequence[Union["Component", "Source"]], order: int):
     derivs = []
     current_func = run_to_end
     for _ in range(order):
@@ -35,61 +75,18 @@ def calculate_derivatives(ray: "Ray", model, order):
     return derivs
 
 
-@jax.jit
-def solve_model(ray: "Ray", model):
+def solve_model(ray: "Ray", model: Sequence[Union["Component", "Source"]]):
     model_ray_jacobians = []
-
-    # Run the step function of the first component at the starting plane
-    component_jacobian = jax.jacobian(model[0])(ray)
-    component_jacobian = custom_jacobian_matrix(component_jacobian)
-
-    model_ray_jacobians.append(component_jacobian)
-
-    def prop_aux(distance, ray):
-        prop_ray = propagate(distance, ray)
-        return prop_ray, prop_ray
-
-    prop_jac_val_fn = jax.jacobian(prop_aux, argnums=1, has_aux=True)
-
-    for i in range(1, len(model)):
-        distance = (model[i].z - ray.z).squeeze()
-
-        # Get the jacobian of the ray propagation
-        # from the previous component to the current component
-        propagate_jacobian, ray = prop_jac_val_fn(distance, ray)
-        propagate_jacobian = custom_jacobian_matrix(propagate_jacobian)
-        model_ray_jacobians.append(propagate_jacobian)
-
-        # Get the jacobian of the step function of the current component
-        def _step_val(ray):
-            step_ray = model[i](ray)
-            return step_ray, step_ray
-
-        component_jacobian, ray = jax.jacobian(_step_val, has_aux=True)(ray)
-        component_jacobian = custom_jacobian_matrix(component_jacobian)
-        model_ray_jacobians.append(component_jacobian)
-
-    ABCDs = jnp.array(model_ray_jacobians)  # ABCD matrices at each component
-
-    return ABCDs
-
-
-@jax.jit
-def get_z_vals(ray: "Ray", model):
-    z_vals = [ray.z]
-    for i in range(1, len(model)):
-        distance = (model[i].z - ray.z).squeeze()
-        # Propagate the ray
-        ray = propagate(distance, ray)
-        # Step the ray
-        z_vals.append(ray.z)
-        ray = model[i](ray)
-        z_vals.append(ray.z)
-    return jnp.array(z_vals)
+    for _, jac in run_iter(ray, model, transform=jacobian_transform):
+        jac = custom_jacobian_matrix(jac)
+        model_ray_jacobians.append(jac)
+    return jnp.array(model_ray_jacobians)  # ABCD matrices at each component
 
 
 def run_with_grads(
-    input_ray: "Ray", model: Sequence, grad_vars: Sequence["PathBuilder"]
+    input_ray: "Ray",
+    model: Sequence[Union["Component", "Source"]],
+    grad_vars: Sequence["PathBuilder"],
 ):
     ray_params, ray_tree = jax.tree.flatten(input_ray)
     model_params, model_tree = jax.tree.flatten(model)

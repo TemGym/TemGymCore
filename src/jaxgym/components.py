@@ -9,7 +9,8 @@ from .tree_utils import HasParamsMixin
 
 
 class Component(HasParamsMixin):
-    ...
+    def __call__(self, ray: Ray) -> Ray:
+        raise NotImplementedError
 
 
 class DescanError(NamedTuple):

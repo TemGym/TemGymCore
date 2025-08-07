@@ -25,7 +25,7 @@ from .widgets import GLImageItem, MyDockLabel
 from microscope_calibration.stemoverfocus import inplace_sum
 
 from jaxgym.ray import Ray
-from jaxgym.run import solve_model, get_z_vals
+from jaxgym.run import solve_model, run_iter
 from jaxgym.transfer import transfer_rays
 
 if TYPE_CHECKING:
@@ -290,8 +290,10 @@ class TemGymWindow(QMainWindow):
     def update_rays(self, model, num_rays: int):
         optical_axis_ray = Ray(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         transfer_matrices = solve_model(optical_axis_ray, model)
-        z_vals = get_z_vals(optical_axis_ray, model)
-        input_rays = model[0].generate(num_rays, random=False)
+        z_vals = np.asarray(
+            tuple(ray.z for _, ray in run_iter(optical_axis_ray, model))
+        )
+        input_rays = model[0].generate_array(num_rays, random=False)
 
         xy_coords = transfer_rays(input_rays, transfer_matrices)
 

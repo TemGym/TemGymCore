@@ -10,7 +10,7 @@ from . import CoordsXY
 class Source(HasParamsMixin):
     z: float
 
-    def __call__(self, ray: Ray):
+    def __call__(self, ray: Ray) -> Ray:
         # No-op for API uniformity with Component
         return ray
 
