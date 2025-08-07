@@ -66,9 +66,11 @@ def create_stem_model(
 
     scangrid = comp.ScanGrid(
         z=params.overfocus,
-        scan_step=(params.scan_pixel_pitch, params.scan_pixel_pitch),
-        scan_shape=tuple(params.scan_shape),
-        scan_rotation=params.scan_rotation,
+        pixel_size=(params.scan_pixel_pitch, params.scan_pixel_pitch),
+        shape=tuple(params.scan_shape),
+        rotation=params.scan_rotation,
+        centre=(params.scan_cx, params.scan_cy),
+        flip_y=False,
     )
 
     descanner = comp.Descanner(
@@ -80,8 +82,10 @@ def create_stem_model(
 
     detector = comp.Detector(
         z=params.camera_length + params.overfocus,
-        det_shape=tuple(params.detector_shape),
-        det_pixel_size=(params.detector_pixel_pitch, params.detector_pixel_pitch),
+        pixel_size=(params.detector_pixel_pitch, params.detector_pixel_pitch),
+        shape=tuple(params.detector_shape),
+        rotation=0.,
+        centre=(params.detector_cx, params.detector_cy),
         flip_y=params.flip_y,
     )
 

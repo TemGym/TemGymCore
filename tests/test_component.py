@@ -20,9 +20,9 @@ def test_scan_grid_coords_symmetry(scan_shape):
     h, w = scan_shape
     scan_grid = ScanGrid(
         z=0.0,
-        scan_rotation=0.0,
-        scan_step=(0.1, 0.1),
-        scan_shape=scan_shape,
+        rotation=0.0,
+        pixel_size=(0.1, 0.1),
+        shape=scan_shape,
     )
     ycoords, xcoords = np.arange(h), np.arange(w)
     _, yvals = scan_grid.pixels_to_metres((ycoords, np.zeros_like(ycoords)))
@@ -64,9 +64,9 @@ def test_scan_grid_coords_symmetry(scan_shape):
 def test_scan_grid_metres_to_pixels(xy, rotation, expected_pixel_coords):
     scan_grid = ScanGrid(
         z=0.0,
-        scan_rotation=rotation,
-        scan_step=(0.1, 0.1),
-        scan_shape=(11, 11),
+        rotation=rotation,
+        pixel_size=(0.1, 0.1),
+        shape=(11, 11),
     )
     pixel_coords_y, pixel_coords_x = scan_grid.metres_to_pixels(xy)
     np.testing.assert_allclose(pixel_coords_y, expected_pixel_coords[0], atol=1e-6)
@@ -93,9 +93,9 @@ def test_scan_grid_metres_to_pixels(xy, rotation, expected_pixel_coords):
 def test_scan_grid_pixels_to_metres(pixel_coords, rotation, expected_xy):
     scan_grid = ScanGrid(
         z=0.0,
-        scan_rotation=rotation,
-        scan_step=(0.1, 0.1),
-        scan_shape=(11, 11),
+        rotation=rotation,
+        pixel_size=(0.1, 0.1),
+        shape=(11, 11),
     )
     metres_coords_x, metres_coords_y = scan_grid.pixels_to_metres(pixel_coords)
     np.testing.assert_allclose(metres_coords_x, expected_xy[0], atol=1e-6)
@@ -115,8 +115,8 @@ def test_scan_grid_pixels_to_metres(pixel_coords, rotation, expected_xy):
 def test_detector_metres_to_pixels(xy, expected_pixel_coords):
     detector = Detector(
         z=0.0,
-        det_pixel_size=(0.1, 0.1),
-        det_shape=(11, 11),
+        pixel_size=(0.1, 0.1),
+        shape=(11, 11),
         flip_y=False,
     )
     pixel_coords_y, pixel_coords_x = detector.metres_to_pixels(xy)
@@ -139,8 +139,8 @@ def test_detector_metres_to_pixels(xy, expected_pixel_coords):
 def test_detector_pixels_to_metres(pixel_coords, expected_xy):
     detector = Detector(
         z=0.0,
-        det_pixel_size=(0.1, 0.1),
-        det_shape=(11, 11),
+        pixel_size=(0.1, 0.1),
+        shape=(11, 11),
         flip_y=False,
     )
     metres_coords_x, metres_coords_y = detector.pixels_to_metres(pixel_coords)
@@ -290,9 +290,9 @@ def test_scan_grid_rotation_random(repeat):
     scan_rot = np.random.uniform(-180.0, 180.0)
     scan_grid = ScanGrid(
         z=0.0,
-        scan_rotation=scan_rot,
-        scan_step=step,
-        scan_shape=shape,
+        rotation=scan_rot,
+        pixel_size=step,
+        shape=shape,
     )
     # world‐space vector for one pixel step in scan‐grid x
     mx0, my0 = scan_grid.pixels_to_metres(centre_pix)
@@ -316,6 +316,7 @@ def test_singular_component_jacobian():
 
     inv = jnp.linalg.inv(J)
 
-    # Check that jax.jacobian called on a singular component and used with our custom_jacobian_matrix
+    # Check that jax.jacobian called on a singular component
+    # and used with our custom_jacobian_matrix
     # returns a matrix that is singular (i.e., has NaN or Inf values)
     assert np.isnan(inv).any() or np.isinf(inv).any()

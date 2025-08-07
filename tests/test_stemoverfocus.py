@@ -48,7 +48,7 @@ def test_find_input_slopes_single_on_axis_pixel():
     det_px_size = (0.0, 0.0)
 
     detector = comp.Detector(
-        z=1.0, det_shape=det_shape, det_pixel_size=det_px_size, flip_y=False
+        z=1.0, shape=det_shape, pixel_size=det_px_size, flip_y=False
     )
     detector_coords = detector.coords
 
@@ -323,7 +323,7 @@ def test_project_frame_forward_and_backward_simple_sample(runs):
     sample_px_xs = np.array(sample_px_xs, dtype=np.int32).flatten()
     detector_intensities = np.array(detector_intensities, dtype=np.float32).flatten()
 
-    shifted_sum_image = np.zeros(model.scan_grid.scan_shape, dtype=np.float32)
+    shifted_sum_image = np.zeros(model.scan_grid.shape, dtype=np.float32)
 
     shifted_sum_image = do_shifted_sum(
         shifted_sum_image, sample_px_ys, sample_px_xs, detector_intensities
@@ -380,7 +380,7 @@ def test_project_frame_forward_and_backward_with_descan_random(runs):
     sample_px_xs = np.array(sample_px_xs, dtype=np.int32).flatten()
     detector_intensities = np.array(detector_intensities, dtype=np.float32).flatten()
 
-    shifted_sum_image = np.zeros(model.scan_grid.scan_shape, dtype=np.float32)
+    shifted_sum_image = np.zeros(model.scan_grid.shape, dtype=np.float32)
 
     shifted_sum_image = do_shifted_sum(
         shifted_sum_image, sample_px_ys, sample_px_xs, detector_intensities

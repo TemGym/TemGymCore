@@ -1,7 +1,6 @@
 from ast import Tuple
 from typing_extensions import Literal
 import numpy as np
-import jax
 from functools import partial
 from scipy.interpolate import NearestNDInterpolator, LinearNDInterpolator
 import jax.numpy as jnp
@@ -56,46 +55,16 @@ def project_frame_forward(
         det_coords,
         total_transfer_matrix,
         det_to_scan_matrix,
-        Detector.det_pixel_size,
+        Detector.pixel_size,
     )
 
     mask = np.asarray(mask, dtype=bool)
 
     sample_vals = sample_interpolant((scan_rays_y, scan_rays_x))
     sample_vals = np.where(mask, sample_vals, 0.0)
-
-    # compute detector pixel indices for all rays
-    det_rays_x = det_coords[:, 0]
-    det_rays_y = det_coords[:, 1]
-
-    det_pixels_y, det_pixels_x = Detector.metres_to_pixels([det_rays_x, det_rays_y])
+    det_pixels_y, det_pixels_x = Detector.metres_to_pixels(det_coords.T)
 
     return det_pixels_y, det_pixels_x, sample_vals
-
-
-def compute_fourdstem_dataset_vmap(
-    model: Model4DSTEM, fourdstem_array: jnp.ndarray, sample_interpolant: callable
-) -> jnp.ndarray:
-    Detector = model.detector
-    ScanGrid = model.scan_grid
-    scan_coords = ScanGrid.coords  # shape (n_scan, 2)
-    det_coords = Detector.coords  # shape (n_rays, 2)
-
-    det_y, det_x, vals = jax.vmap(
-        lambda sp: project_frame_forward(model, det_coords, sample_interpolant, sp),
-        in_axes=0,
-        out_axes=0,
-    )(scan_coords)
-
-    scan_idx = jnp.arange(scan_coords.shape[0])[:, None]
-
-    fourdstem_array = fourdstem_array.at[scan_idx, det_y, det_x].set(vals)
-
-    fourdstem_array = fourdstem_array.reshape(
-        ScanGrid.scan_shape[0], ScanGrid.scan_shape[1], *Detector.det_shape
-    )
-
-    return fourdstem_array
 
 
 def compute_fourdstem_dataset(
@@ -109,13 +78,13 @@ def compute_fourdstem_dataset(
     scan_coords = ScanGrid.coords
     det_coords = Detector.coords
 
-    idxs = range(np.prod(ScanGrid.scan_shape).astype(int))
+    idxs = range(np.prod(ScanGrid.shape).astype(int))
     pbar = tqdm.tqdm if progress else lambda it, **kw: it
 
     total_tm_and_grad, scangrid_tm_and_grad = solve_model_fourdstem_wrapper(model)
 
     for idx in pbar(idxs):
-        iy, ix = np.unravel_index(idx, ScanGrid.scan_shape)
+        iy, ix = np.unravel_index(idx, ScanGrid.shape)
         scan_pos = scan_coords[idx]
         det_pixels_y, det_pixels_x, sample_vals = project_frame_forward(
             model, total_tm_and_grad, scangrid_tm_and_grad, det_coords, scan_pos, sample_interpolant
@@ -155,8 +124,6 @@ def compute_scan_grid_rays_and_intensities(
     sample_px_xs = []
     detector_intensities = []
 
-    scan_coords = model.scan_grid.coords
-
     total_tm_and_grad, scangrid_tm_and_grad = solve_model_fourdstem_wrapper(model)
 
     for iy in tqdm.trange(fourdstem_array.shape[0], desc="Scan Y"):
@@ -188,16 +155,16 @@ def generate_dataset_from_image(
     assert method in ("nearest", "linear")
     model = create_stem_model(params)
     scan_shape = model.scan_grid.shape
-    scan_step = model.scan_grid.scan_step
+    scan_step = model.scan_grid.pixel_size
     grid_extent = tuple(s * scale for s, scale in zip(scan_shape, scan_step))
     image_shape = image.shape
     image_scale = tuple(extent / size for extent, size in zip(grid_extent, image_shape))
 
     interpolant_grid = ScanGrid(
         z=model.scan_grid.z,
-        scan_shape=image_shape,
-        scan_step=image_scale,
-        scan_rotation=model.scan_grid.scan_rotation,
+        shape=image_shape,
+        pixel_size=image_scale,
+        rotation=model.scan_grid.rotation,
     )
     x, y = interpolant_grid.get_coords().T
     interp_t = (
@@ -211,7 +178,7 @@ def generate_dataset_from_image(
     )
 
     fourdstem_array = np.zeros(
-        (*model.scan_grid.scan_shape, *model.detector.det_shape),
+        (*model.scan_grid.shape, *model.detector.shape),
         dtype=jnp.float32,
     )
 

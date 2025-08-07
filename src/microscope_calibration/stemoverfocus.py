@@ -16,7 +16,7 @@ from jax import lax
 
 def find_input_slopes(
     pos: CoordsXY,
-    detector_coords: CoordsXY,
+    detector_coords: np.ndarray,
     transformation_matrix: np.ndarray,
 ):
     """
@@ -298,7 +298,7 @@ def project_coordinates_backward(
         det_coords,
         total_transfer_matrix,
         det_to_scan_matrix,
-        Detector.det_pixel_size,
+        Detector.pixel_size,
     )
 
     # Convert the ray coordinates to pixel indices.

@@ -1,44 +1,29 @@
-import abc
 from jax.numpy import ndarray as NDArray
 import jax.numpy as jnp
 import jax.lax as lax
 from . import Degrees, Radians, ShapeYX, CoordsXY, ScaleYX, PixelsYX
 
 
-class GridBase(abc.ABC):
+class Grid:
+    centre: CoordsXY
+    shape: ShapeYX
+    pixel_size: ScaleYX
+    rotation: Degrees
+    flip_y: bool
+
     @property
     def pixels_to_metres_mat(self) -> NDArray:
         return pixels_to_metres_transform(
-            self.centre, self.pixel_size, self.shape, self.flip, self.rotation
+            self.centre, self.pixel_size, self.shape, self.flip_y, self.rotation
         )
 
     @property
     def metres_to_pixels_mat(self) -> NDArray:
         return jnp.linalg.inv(
             pixels_to_metres_transform(
-                self.centre, self.pixel_size, self.shape, self.flip, self.rotation
+                self.centre, self.pixel_size, self.shape, self.flip_y, self.rotation
             )
         )
-
-    @property
-    @abc.abstractmethod
-    def pixel_size(self) -> ScaleYX: ...
-
-    @property
-    @abc.abstractmethod
-    def shape(self) -> ShapeYX: ...
-
-    @property
-    @abc.abstractmethod
-    def rotation(self) -> Degrees: ...
-
-    @property
-    def centre(self) -> CoordsXY:
-        return (0.0, 0.0)
-
-    @property
-    @abc.abstractmethod
-    def flip(self) -> bool: ...
 
     def get_coords(self) -> NDArray:
         shape = self.shape
@@ -190,3 +175,17 @@ def apply_transformation(y, x, transformation):
     r_transformed = transformation @ r.T
     y_transformed, x_transformed, _ = r_transformed
     return y_transformed, x_transformed
+
+
+def try_ravel(val):
+    try:
+        return val.ravel()
+    except AttributeError:
+        return val
+
+
+def try_reshape(val, maybe_has_shape):
+    try:
+        return val.reshape(maybe_has_shape.shape)
+    except AttributeError:
+        return val

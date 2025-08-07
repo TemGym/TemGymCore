@@ -3,7 +3,7 @@ import jax_dataclasses as jdc
 import jax.numpy as jnp
 
 from .ray import Ray
-from .coordinate_transforms import GridBase
+from .coordinate_transforms import Grid
 from . import Degrees, CoordsXY, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
 
@@ -73,27 +73,13 @@ class Lens(Component):
 
 
 @jdc.pytree_dataclass
-class ScanGrid(Component, GridBase):
+class ScanGrid(Component, Grid):
     z: float
-    scan_step: ScaleYX
-    scan_shape: ShapeYX
-    scan_rotation: Degrees
-
-    @property
-    def pixel_size(self) -> ScaleYX:
-        return self.scan_step
-
-    @property
-    def shape(self) -> ShapeYX:
-        return self.scan_shape
-
-    @property
-    def rotation(self) -> Degrees:
-        return self.scan_rotation
-
-    @property
-    def flip(self) -> CoordsXY:
-        return False
+    pixel_size: ScaleYX
+    shape: ShapeYX
+    rotation: Degrees = 0.
+    centre: CoordsXY = (0., 0)
+    flip_y: bool = False
 
     def __call__(self, ray: Ray):
         return ray
@@ -181,27 +167,13 @@ class Descanner(Component):
 
 
 @jdc.pytree_dataclass
-class Detector(Component, GridBase):
+class Detector(Component, Grid):
     z: float
-    det_pixel_size: ScaleYX
-    det_shape: ShapeYX
+    pixel_size: ScaleYX
+    shape: ShapeYX
+    rotation: Degrees = 0.
+    centre: CoordsXY = (0., 0)
     flip_y: bool = False
-
-    @property
-    def pixel_size(self) -> ScaleYX:
-        return self.det_pixel_size
-
-    @property
-    def shape(self) -> ShapeYX:
-        return self.det_shape
-
-    @property
-    def rotation(self) -> Degrees:
-        return 0.0
-
-    @property
-    def flip(self) -> bool:
-        return self.flip_y
 
     def __call__(self, ray: Ray):
         return ray

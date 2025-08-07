@@ -306,7 +306,7 @@ class TemGymWindow(QMainWindow):
         y_px, x_px = model[-1].metres_to_pixels(
             xy_coords[:, -1, :2].T,
         )
-        image = np.zeros(model[-1].det_shape, dtype=np.float32)
+        image = np.zeros(model[-1].shape, dtype=np.float32)
         inplace_sum(
             np.asarray(y_px),
             np.asarray(x_px),
