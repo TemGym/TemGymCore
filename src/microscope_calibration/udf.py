@@ -2,8 +2,9 @@ import numpy as np
 from libertem.udf import UDF
 from libertem.common.buffers import AuxBufferWrapper
 
+from jaxgym.utils import inplace_sum
 from .model import Parameters4DSTEM, create_stem_model
-from .stemoverfocus import project_coordinates_backward, inplace_sum, solve_model_fourdstem_wrapper
+from .stemoverfocus import project_coordinates_backward, solve_model_fourdstem_wrapper
 
 
 class ShiftedSumUDF(UDF):

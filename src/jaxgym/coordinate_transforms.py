@@ -1,7 +1,11 @@
+from typing import Union
+import numpy as np
 from jax.numpy import ndarray as NDArray
 import jax.numpy as jnp
 import jax.lax as lax
 from . import Degrees, Radians, ShapeYX, CoordsXY, ScaleYX, PixelsYX
+from .ray import Ray
+from .utils import inplace_sum
 
 
 class Grid:
@@ -41,20 +45,39 @@ class Grid:
         coords_x, coords_y = coords
         metres_to_pixels_mat = self.metres_to_pixels_mat
         pixels_y, pixels_x = apply_transformation(
-            coords_y, coords_x, metres_to_pixels_mat
+            try_ravel(coords_y), try_ravel(coords_x), metres_to_pixels_mat
         )
         if cast:
             pixels_y = jnp.round(pixels_y).astype(jnp.int32)
             pixels_x = jnp.round(pixels_x).astype(jnp.int32)
-        return pixels_y, pixels_x
+        return try_reshape(pixels_y, coords_y), try_reshape(pixels_x, coords_x)
 
     def pixels_to_metres(self, pixels: PixelsYX) -> CoordsXY:
         pixels_y, pixels_x = pixels
         pixels_to_metres_mat = self.pixels_to_metres_mat
         metres_y, metres_x = apply_transformation(
-            pixels_y, pixels_x, pixels_to_metres_mat
+            try_ravel(pixels_y), try_ravel(pixels_x), pixels_to_metres_mat
         )
-        return metres_x, metres_y
+        return try_reshape(metres_x, pixels_x), try_reshape(metres_y, pixels_y)
+
+    def ray_to_grid(self, ray: "Ray", cast: bool = False) -> jnp.ndarray:
+        return self.metres_to_pixels((ray.x, ray.y), cast=cast)
+
+    def into_image(self, ray: Union[Ray, PixelsYX], acc: np.ndarray | None = None):
+        if isinstance(ray, Ray):
+            yy, xx = self.ray_to_grid(ray, cast=True)
+        else:
+            yy, xx = ray
+        if acc is None:
+            acc = np.zeros(self.shape, dtype=int)
+        inplace_sum(
+            np.asarray(yy),
+            np.asarray(xx),
+            np.ones(yy.shape, dtype=bool),
+            np.ones(xx.shape, dtype=np.float32),
+            acc,
+        )
+        return acc
 
 
 def _rotate_with_deg_to_rad(degrees: "Degrees"):

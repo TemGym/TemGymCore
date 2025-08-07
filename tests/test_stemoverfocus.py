@@ -3,6 +3,7 @@ import numpy as np
 import jax.numpy as jnp
 import sympy as sp
 from jaxgym.transfer import accumulate_matrices
+from jaxgym.utils import inplace_sum
 from skimage.util import view_as_blocks
 
 from microscope_calibration.stemoverfocus import (
@@ -11,7 +12,6 @@ from microscope_calibration.stemoverfocus import (
     ray_coords_at_plane,
     mask_rays,
     project_coordinates_backward,
-    inplace_sum,
     create_scan_pos_transfer_matrix
 )
 from jaxgym import components as comp

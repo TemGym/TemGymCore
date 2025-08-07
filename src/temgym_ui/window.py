@@ -22,7 +22,6 @@ import numpy as np
 from . import shapes as comp_geom
 from .utils import P2R, R2P, as_gl_lines
 from .widgets import GLImageItem, MyDockLabel
-from microscope_calibration.stemoverfocus import inplace_sum
 
 from jaxgym.ray import Ray
 from jaxgym.run import solve_model, run_iter
@@ -303,17 +302,12 @@ class TemGymWindow(QMainWindow):
             color=RAY_COLOR + (0.05,),
         )
 
-        y_px, x_px = model[-1].metres_to_pixels(
+        detector = model[-1]
+        y_px, x_px = detector.metres_to_pixels(
             xy_coords[:, -1, :2].T,
         )
         image = np.zeros(model[-1].shape, dtype=np.float32)
-        inplace_sum(
-            np.asarray(y_px),
-            np.asarray(x_px),
-            np.ones(y_px.shape, dtype=bool),
-            np.ones(y_px.shape, dtype=np.float32),
-            image,
-        )
+        detector.into_image((y_px, x_px), acc=image)
         self.spot_img.setImage(image)
 
     @staticmethod

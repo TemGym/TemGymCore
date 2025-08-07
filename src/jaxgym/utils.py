@@ -41,6 +41,17 @@ def multi_cumsum_inplace(values, partitions, start):
             part_count += 1
 
 
+@njit
+def inplace_sum(px_y, px_x, mask, frame, buffer):
+    h, w = buffer.shape
+    n = px_y.size
+    for i in range(n):
+        py = px_y[i]
+        px = px_x[i]
+        if mask[i] and (0 <= px_y[i] < h) and (0 <= px_x[i] < w):
+            buffer[py, px] += frame[i]
+
+
 def concentric_rings(
     num_points_approx: int,
     radius: float,

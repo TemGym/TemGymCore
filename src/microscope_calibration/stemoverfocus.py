@@ -2,7 +2,6 @@ from ast import Tuple
 import numpy as np
 import jax
 import jax.numpy as jnp
-from numba import njit
 
 from jaxgym.ray import Ray
 from jaxgym.run import solve_model
@@ -305,17 +304,6 @@ def project_coordinates_backward(
     scan_y_px, scan_x_px = ScanGrid.metres_to_pixels([scan_rays_x, scan_rays_y])
 
     return scan_y_px, scan_x_px, detector_mask
-
-
-@njit
-def inplace_sum(px_y, px_x, mask, frame, buffer):
-    h, w = buffer.shape
-    n = px_y.size
-    for i in range(n):
-        py = px_y[i]
-        px = px_x[i]
-        if mask[i] and (0 <= px_y[i] < h) and (0 <= px_x[i] < w):
-            buffer[py, px] += frame[i]
 
 
 def check_diameter_on_scan_and_det(params):
