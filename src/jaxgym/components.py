@@ -1,13 +1,15 @@
-import numpy as np
 from typing import NamedTuple
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
 from .ray import Ray, propagate
-from .utils import random_coords, concentric_rings
 from .coordinate_transforms import GridBase
 from . import Degrees, CoordsXY, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
+
+
+class Component(HasParamsMixin):
+    ...
 
 
 class DescanError(NamedTuple):
@@ -41,7 +43,7 @@ class DescanError(NamedTuple):
 
 
 @jdc.pytree_dataclass
-class Plane(HasParamsMixin):
+class Plane(Component):
     z: float
 
     def __call__(self, ray: Ray):
@@ -49,65 +51,7 @@ class Plane(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class PointSource(HasParamsMixin):
-    z: float
-    semi_conv: float
-    offset_xy: CoordsXY = (0.0, 0.0)
-
-    def __call__(self, ray: Ray):
-        return ray
-
-    def generate(self, num: int, random: bool = False) -> np.ndarray:
-        semi_conv = self.semi_conv
-        offset_xy = self.offset_xy
-
-        if random:
-            y, x = random_coords(num) * semi_conv
-        else:
-            y, x = concentric_rings(num, semi_conv)
-
-        r = np.zeros((x.size, 5), dtype=jnp.float64)  # x, y, theta_x, theta_y, 1
-
-        r[:, 0] += offset_xy[0]
-        r[:, 1] += offset_xy[1]
-        r[:, 2] = x
-        r[:, 3] = y
-        r[:, 4] = 1.0
-
-        return r
-
-
-@jdc.pytree_dataclass
-class ParallelBeam(HasParamsMixin):
-    z: float
-    radius: float
-    offset_xy: CoordsXY = (0.0, 0.0)
-
-    def __call__(self, ray: Ray):
-        return ray
-
-    def generate(self, num: int, random: bool = False) -> np.ndarray:
-        radius = self.radius
-        offset_xy = self.offset_xy
-
-        if random:
-            y, x = random_coords(num) * radius
-        else:
-            y, x = concentric_rings(num, radius)
-
-        r = np.zeros((x.size, 5), dtype=jnp.float64)  # x, y, theta_x, theta_y, 1
-
-        r[:, 0] = (x + offset_xy[0])
-        r[:, 1] = (y + offset_xy[1])
-        r[:, 2] = 0.
-        r[:, 3] = 0.
-        r[:, 4] = 1.0
-
-        return r
-
-
-@jdc.pytree_dataclass
-class Lens(HasParamsMixin):
+class Lens(Component):
     z: float
     focal_length: float
 
@@ -128,7 +72,7 @@ class Lens(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class ScanGrid(HasParamsMixin, GridBase):
+class ScanGrid(Component, GridBase):
     z: float
     scan_step: ScaleYX
     scan_shape: ShapeYX
@@ -155,7 +99,7 @@ class ScanGrid(HasParamsMixin, GridBase):
 
 
 @jdc.pytree_dataclass
-class Scanner(HasParamsMixin):
+class Scanner(Component):
     z: float
     scan_pos_x: float
     scan_pos_y: float
@@ -172,7 +116,7 @@ class Scanner(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class Descanner(HasParamsMixin):
+class Descanner(Component):
     z: float
     scan_pos_x: float
     scan_pos_y: float
@@ -236,7 +180,7 @@ class Descanner(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class Detector(HasParamsMixin, GridBase):
+class Detector(Component, GridBase):
     z: float
     det_pixel_size: ScaleYX
     det_shape: ShapeYX
@@ -263,7 +207,7 @@ class Detector(HasParamsMixin, GridBase):
 
 
 @jdc.pytree_dataclass
-class ThickLens(HasParamsMixin):
+class ThickLens(Component):
     z_po: float
     z_pi: float
     focal_length: float
@@ -292,7 +236,7 @@ class ThickLens(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class Deflector(HasParamsMixin):
+class Deflector(Component):
     z: float
     def_x: float
     def_y: float
@@ -307,7 +251,7 @@ class Deflector(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class Rotator(HasParamsMixin):
+class Rotator(Component):
     z: float
     angle: Degrees
 
@@ -335,7 +279,7 @@ class Rotator(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class DoubleDeflector(HasParamsMixin):
+class DoubleDeflector(Component):
     z: float
     first: Deflector
     second: Deflector
@@ -350,7 +294,7 @@ class DoubleDeflector(HasParamsMixin):
 
 
 @jdc.pytree_dataclass
-class Biprism(HasParamsMixin):
+class Biprism(Component):
     z: float
     offset: float = 0.0
     rotation: Degrees = 0.0

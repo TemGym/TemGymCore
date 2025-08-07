@@ -1,13 +1,11 @@
-from typing import NamedTuple, TYPE_CHECKING
+from typing import NamedTuple
 
 from jaxgym import CoordsXY
 from jaxgym.components import DescanError
 from jaxgym import components as comp
+from jaxgym.source import PointSource
 from jaxgym.ray import Ray
 from jaxgym.run import run_to_end
-
-if TYPE_CHECKING:
-    from jaxgym.components import PointSource, Descanner, ScanGrid, Detector
 
 
 class Parameters4DSTEM(NamedTuple):
@@ -28,10 +26,10 @@ class Parameters4DSTEM(NamedTuple):
 
 
 class Model4DSTEM(NamedTuple):
-    source: "PointSource"
-    scan_grid: "ScanGrid"
-    descanner: "Descanner"
-    detector: "Detector"
+    source: PointSource
+    scan_grid: comp.ScanGrid
+    descanner: comp.Descanner
+    detector: comp.Detector
 
     def at_scan_pos(
         self,
@@ -70,31 +68,31 @@ def create_stem_model(
     params: Parameters4DSTEM, scan_pos_xy: CoordsXY = (0.0, 0.0)
 ) -> Model4DSTEM:
 
-    PointSource = comp.PointSource(
+    pointsource = PointSource(
         z=0.,
         semi_conv=params.semiconv,
         offset_xy=scan_pos_xy,
     )
 
-    ScanGrid = comp.ScanGrid(
+    scangrid = comp.ScanGrid(
         z=params.overfocus,
         scan_step=(params.scan_pixel_pitch, params.scan_pixel_pitch),
         scan_shape=tuple(params.scan_shape),
         scan_rotation=params.scan_rotation,
     )
 
-    Descanner = comp.Descanner(
+    descanner = comp.Descanner(
         z=params.overfocus,
         descan_error=params.descan_error,
         scan_pos_x=scan_pos_xy[0],
         scan_pos_y=scan_pos_xy[1],
     )
 
-    Detector = comp.Detector(
+    detector = comp.Detector(
         z=params.camera_length + params.overfocus,
         det_shape=tuple(params.detector_shape),
         det_pixel_size=(params.detector_pixel_pitch, params.detector_pixel_pitch),
         flip_y=params.flip_y,
     )
 
-    return Model4DSTEM(PointSource, ScanGrid, Descanner, Detector)
+    return Model4DSTEM(pointsource, scangrid, descanner, detector)
