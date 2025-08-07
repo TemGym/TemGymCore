@@ -25,7 +25,8 @@ class Grid:
             )
         )
 
-    def get_coords(self) -> NDArray:
+    @property
+    def coords(self) -> NDArray:
         shape = self.shape
         y_px = jnp.arange(shape[0])
         x_px = jnp.arange(shape[1])
@@ -35,17 +36,6 @@ class Grid:
         coords_x, coords_y = self.pixels_to_metres((yy_px, xx_px))
         coords_xy = jnp.stack((coords_x, coords_y), axis=-1).reshape(-1, 2)
         return coords_xy
-
-    def get_metres_to_pixels_transform(self) -> NDArray:
-        pixels_to_metres_mat = pixels_to_metres_transform(
-            self.centre, self.pixel_size, self.shape, self.flip, self.rotation
-        )
-        return jnp.linalg.inv(pixels_to_metres_mat)
-
-    def get_pixels_to_metres_transform(self) -> NDArray:
-        return pixels_to_metres_transform(
-            self.centre, self.pixel_size, self.shape, self.flip, self.rotation
-        )
 
     def metres_to_pixels(self, coords: CoordsXY, cast: bool = True) -> PixelsYX:
         coords_x, coords_y = coords
@@ -65,10 +55,6 @@ class Grid:
             pixels_y, pixels_x, pixels_to_metres_mat
         )
         return metres_x, metres_y
-
-    @property
-    def coords(self) -> NDArray:
-        return self.get_coords()
 
 
 def _rotate_with_deg_to_rad(degrees: "Degrees"):

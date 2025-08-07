@@ -166,7 +166,7 @@ def generate_dataset_from_image(
         pixel_size=image_scale,
         rotation=model.scan_grid.rotation,
     )
-    x, y = interpolant_grid.get_coords().T
+    x, y = interpolant_grid.coords.T
     interp_t = (
         NearestNDInterpolator
         if method == "nearest"

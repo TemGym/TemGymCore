@@ -561,7 +561,7 @@ def test_scan_rotation_90_flip(scan_rotation, flip_y):
     test_image = np.random.randint(0, 8, size=params.detector_shape)
 
     model = create_stem_model(params)
-    det_coords = model.detector.get_coords()
+    det_coords = model.detector.coords
 
     scan_pos = [0.0, 0.0]  # No scan position offset
 
@@ -617,7 +617,7 @@ def test_scan_rotation_45(scan_rotation):
     test_image[params.detector_shape[0] // 2, :] = 1
 
     model = create_stem_model(params)
-    det_coords = model.detector.get_coords()
+    det_coords = model.detector.coords
 
     scan_pos = [0.0, 0.0]  # No scan position offset
 
