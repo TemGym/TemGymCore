@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Sequence, Union, Any, Callable
 import jax
 import jax.numpy as jnp
 from .utils import custom_jacobian_matrix
-from .propagator import Propagator
+from .propagator import FreeSpaceParaxial, BasePropagator
 
 if TYPE_CHECKING:
     from .tree_utils import PathBuilder
@@ -47,20 +47,25 @@ TransformT = Callable[[Union["Component", "Source"]], Callable[["Ray"], tuple["R
 def run_iter(
     ray: "Ray",
     components: Sequence[Union["Component", "Source"]],
-    transform: TransformT = passthrough_transform
+    transform: TransformT = passthrough_transform,
+    propagator: BasePropagator = FreeSpaceParaxial(),
 ):
     for component in components:
         distance = component.z - ray.z
         if distance != 0.:
-            propagator = Propagator.free_space(distance)
-            ray, out = transform(propagator)(ray)
+            propagator_d = propagator.with_distance(distance)
+            ray, out = transform(propagator_d)(ray)
             yield propagator, out
         ray, out = transform(component)(ray)
         yield component, out
 
 
-def run_to_end(ray: "Ray", components: Sequence[Union["Component", "Source"]]) -> "Ray":
-    for _, ray in run_iter(ray, components):
+def run_to_end(
+    ray: "Ray",
+    components: Sequence[Union["Component", "Source"]],
+    propagator: BasePropagator = FreeSpaceParaxial(),
+) -> "Ray":
+    for _, ray in run_iter(ray, components, propagator=propagator):
         pass
     return ray
 
@@ -75,9 +80,13 @@ def calculate_derivatives(ray: "Ray", model: Sequence[Union["Component", "Source
     return derivs
 
 
-def solve_model(ray: "Ray", model: Sequence[Union["Component", "Source"]]):
+def solve_model(
+    ray: "Ray",
+    model: Sequence[Union["Component", "Source"]],
+    propagator: BasePropagator = FreeSpaceParaxial(),
+):
     model_ray_jacobians = []
-    for _, jac in run_iter(ray, model, transform=jacobian_transform):
+    for _, jac in run_iter(ray, model, transform=jacobian_transform, propagator=propagator):
         jac = custom_jacobian_matrix(jac)
         model_ray_jacobians.append(jac)
     return jnp.array(model_ray_jacobians)  # ABCD matrices at each component

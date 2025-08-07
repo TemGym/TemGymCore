@@ -4,13 +4,13 @@ import math
 from jax import jacobian
 
 from jaxgym.ray import Ray
-from jaxgym.propagator import FreeSpace, FreeSpaceDirCosine
+from jaxgym.propagator import FreeSpaceParaxial, FreeSpaceDirCosine
 from jaxgym.utils import custom_jacobian_matrix
 
 
 def test_propagate_zero_distance():
     ray = Ray(x=1.0, y=-1.0, dx=0.5, dy=0.5, z=2.0, pathlength=1.0)
-    new = FreeSpace()(ray, 0.)
+    new = FreeSpaceParaxial()(ray, 0.)
     np.testing.assert_allclose(new.x, ray.x, atol=1e-6)
     np.testing.assert_allclose(new.y, ray.y, atol=1e-6)
     np.testing.assert_allclose(new.dx, ray.dx, atol=1e-6)
@@ -26,7 +26,7 @@ def test_propagate_paraxial(runs):
     d = random_camera_length
 
     ray = Ray(x=x0, y=y0, dx=dx0, dy=dy0, z=z0, pathlength=pl0)
-    new = FreeSpace()(ray, d)
+    new = FreeSpaceParaxial()(ray, d)
     np.testing.assert_allclose(new.x, x0 + dx0 * d, atol=1e-6)
     np.testing.assert_allclose(new.y, y0 + dy0 * d, atol=1e-6)
     np.testing.assert_allclose(new.dx, dx0, atol=1e-6)
@@ -65,7 +65,7 @@ def test_propagate_jacobian_matrix():
     d = np.random.uniform(-10.0, 10.0)
 
     # Compute jacobian of propagate wrt ray input
-    jac = jacobian(FreeSpace(), argnums=0)(ray, d)
+    jac = jacobian(FreeSpaceParaxial(), argnums=0)(ray, d)
     J = custom_jacobian_matrix(jac)
 
     # Expected homogeneous 5x5 propagation matrix

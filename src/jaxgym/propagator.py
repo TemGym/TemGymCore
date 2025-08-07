@@ -9,8 +9,21 @@ class BasePropagator:
     def __call__(self, ray: "Ray", distance: float) -> "Ray":
         raise NotImplementedError
 
+    def with_distance(self, distance: float) -> "Propagator":
+        return Propagator(
+            distance, self
+        )
 
-class FreeSpace(BasePropagator):
+
+class Propagator(NamedTuple):
+    distance: float
+    propagator: BasePropagator
+
+    def __call__(self, ray: "Ray") -> "Ray":
+        return self.propagator(ray, self.distance)
+
+
+class FreeSpaceParaxial(BasePropagator):
     @staticmethod
     def propagate(ray: "Ray", distance: float):
         return ray.derive(
@@ -44,15 +57,3 @@ class FreeSpaceDirCosine(BasePropagator):
     @classmethod
     def __call__(cls, ray: "Ray", distance: float):
         return cls.propagate(ray, distance)
-
-
-class Propagator(NamedTuple):
-    distance: float
-    propagator: BasePropagator
-
-    @classmethod
-    def free_space(cls, distance):
-        return cls(distance, FreeSpace())
-
-    def __call__(self, ray: "Ray") -> "Ray":
-        return self.propagator(ray, self.distance)
