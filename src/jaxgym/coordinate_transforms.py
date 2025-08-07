@@ -60,7 +60,7 @@ class Grid:
         )
         return try_reshape(metres_x, pixels_x), try_reshape(metres_y, pixels_y)
 
-    def ray_to_grid(self, ray: "Ray", cast: bool = False) -> jnp.ndarray:
+    def ray_to_grid(self, ray: "Ray", cast: bool = False) -> PixelsYX:
         return self.metres_to_pixels((ray.x, ray.y), cast=cast)
 
     def into_image(self, ray: Union[Ray, PixelsYX], acc: np.ndarray | None = None):

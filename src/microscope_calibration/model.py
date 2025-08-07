@@ -50,8 +50,11 @@ class Model4DSTEM(NamedTuple):
     def make_rays(self, num: int = 1, random: bool = False):
         return self.source.make_rays(num, random=random)
 
-    def trace(self, ray: Ray):
-        return run_to_end(ray, self)
+    def trace(self, ray: Ray, as_pixels: bool = False):
+        ray = run_to_end(ray, self)
+        if as_pixels:
+            return self.detector.ray_to_grid(ray)
+        return ray
 
 
 def create_stem_model(
