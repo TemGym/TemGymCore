@@ -61,10 +61,14 @@ class Grid:
         )
         return try_reshape(metres_x, pixels_x), try_reshape(metres_y, pixels_y)
 
-    def ray_at_grid(self, px_y: float, px_x: float, dx: float = 0., dy: float = 0.):
+    def ray_at_grid(
+        self, px_y: float, px_x: float, dx: float = 0., dy: float = 0., z: float | None = None
+    ):
+        if z is None:
+            z = self.z
         x, y = self.pixels_to_metres((px_y, px_x))
         return Ray(
-            x=x, y=y, dx=dx, dy=dy, z=self.z, pathlength=0.,
+            x=x, y=y, dx=dx, dy=dy, z=z, pathlength=0.,
         )
 
     def ray_to_grid(self, ray: "Ray", cast: bool = False) -> PixelsYX:
