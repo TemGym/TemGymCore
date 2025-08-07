@@ -57,14 +57,14 @@ class PointSource(HasParamsMixin):
     def __call__(self, ray: Ray):
         return ray
 
-    def generate(self, num_rays: int, random: bool = False) -> np.ndarray:
+    def generate(self, num: int, random: bool = False) -> np.ndarray:
         semi_conv = self.semi_conv
         offset_xy = self.offset_xy
 
         if random:
-            y, x = random_coords(num_rays) * semi_conv
+            y, x = random_coords(num) * semi_conv
         else:
-            y, x = concentric_rings(num_rays, semi_conv)
+            y, x = concentric_rings(num, semi_conv)
 
         r = np.zeros((x.size, 5), dtype=jnp.float64)  # x, y, theta_x, theta_y, 1
 
@@ -86,14 +86,14 @@ class ParallelBeam(HasParamsMixin):
     def __call__(self, ray: Ray):
         return ray
 
-    def generate(self, num_rays: int, random: bool = False) -> np.ndarray:
+    def generate(self, num: int, random: bool = False) -> np.ndarray:
         radius = self.radius
         offset_xy = self.offset_xy
 
         if random:
-            y, x = random_coords(num_rays) * radius
+            y, x = random_coords(num) * radius
         else:
-            y, x = concentric_rings(num_rays, radius)
+            y, x = concentric_rings(num, radius)
 
         r = np.zeros((x.size, 5), dtype=jnp.float64)  # x, y, theta_x, theta_y, 1
 

@@ -166,6 +166,11 @@ def get_field_info(cls) -> FieldInfo:
 
 
 class HasParamsMixin:
+    def new_with(self, **kwargs):
+        fields = dataclasses.asdict(self)
+        fields.update(kwargs)
+        return type(self)(**fields)
+
     @property
     def params(self):
         # could be @classproperty if this existed or could write own descriptor
