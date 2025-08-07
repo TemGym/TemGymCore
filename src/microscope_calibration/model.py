@@ -32,9 +32,7 @@ class Model4DSTEM(NamedTuple):
     detector: comp.Detector
 
     def at_scan_pos(
-        self,
-        scan_px_y: int,
-        scan_px_x: int,
+        self, scan_px_y: int, scan_px_x: int,
     ):
         scan_pos = self.scan_grid.pixels_to_metres(
             (scan_px_y, scan_px_x)
@@ -50,15 +48,7 @@ class Model4DSTEM(NamedTuple):
         )
 
     def make_rays(self, num: int = 1, random: bool = False):
-        r = self.source.generate(num, random=random)
-        return Ray(
-            x=r[:, 0],
-            y=r[:, 1],
-            dx=r[:, 2],
-            dy=r[:, 3],
-            z=self.source.z,
-            pathlength=0.,
-        )
+        return self.source.make_rays(num, random=random)
 
     def trace(self, ray: Ray):
         return run_to_end(ray, self)
