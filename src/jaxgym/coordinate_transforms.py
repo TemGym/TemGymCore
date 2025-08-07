@@ -9,6 +9,7 @@ from .utils import inplace_sum
 
 
 class Grid:
+    z: float
     centre: CoordsXY
     shape: ShapeYX
     pixel_size: ScaleYX
@@ -59,6 +60,12 @@ class Grid:
             try_ravel(pixels_y), try_ravel(pixels_x), pixels_to_metres_mat
         )
         return try_reshape(metres_x, pixels_x), try_reshape(metres_y, pixels_y)
+
+    def ray_at_grid(self, px_y: float, px_x: float, dx: float = 0., dy: float = 0.):
+        x, y = self.pixels_to_metres((px_y, px_x))
+        return Ray(
+            x=x, y=y, dx=dx, dy=dy, z=self.z, pathlength=0.,
+        )
 
     def ray_to_grid(self, ray: "Ray", cast: bool = False) -> PixelsYX:
         return self.metres_to_pixels((ray.x, ray.y), cast=cast)
