@@ -24,6 +24,11 @@ class Parameters4DSTEM(NamedTuple):
     flip_y: bool
     descan_error: DescanError
 
+    def new_with(self, **kwargs):
+        fields = self._asdict()
+        fields.update(kwargs)
+        return type(self)(**fields)
+
 
 class Model4DSTEM(NamedTuple):
     source: PointSource
