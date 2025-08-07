@@ -29,7 +29,7 @@ class FreeSpaceParaxial(BasePropagator):
         return ray.derive(
             x=ray.x + ray.dx * distance,
             y=ray.y + ray.dy * distance,
-            z=ray.z + distance,
+            z=ray.z * ray._one + distance,
             pathlength=ray.pathlength + distance,
         )
 
