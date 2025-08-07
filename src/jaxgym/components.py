@@ -2,7 +2,7 @@ from typing import NamedTuple
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
-from .ray import Ray, propagate
+from .ray import Ray
 from .coordinate_transforms import GridBase
 from . import Degrees, CoordsXY, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
@@ -276,21 +276,6 @@ class Rotator(Component):
             pathlength=pathlength,
             z=ray.z,
         )
-
-
-@jdc.pytree_dataclass
-class DoubleDeflector(Component):
-    z: float
-    first: Deflector
-    second: Deflector
-
-    def __call__(self, ray: Ray):
-        ray = self.first(ray)
-        z_step = self.second.z - self.first.z
-        ray = propagate(z_step, ray)
-        ray = self.second(ray)
-
-        return ray
 
 
 @jdc.pytree_dataclass
