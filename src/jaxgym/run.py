@@ -97,7 +97,7 @@ def run_with_grads(
     input_ray: Ray,
     model: Sequence[Union[Component, Source]],
     grad_vars: Sequence["PathBuilder"],
-):
+) -> tuple[Ray, dict[Sequence[Any], Ray]]:
     ray_params, ray_tree = jax.tree.flatten(input_ray)
     model_params, model_tree = jax.tree.flatten(model)
 

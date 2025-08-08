@@ -1,12 +1,15 @@
-from typing import NamedTuple, Generator, Any, overload, Literal
+from typing import NamedTuple, Generator, Any, overload, Literal, TYPE_CHECKING, Sequence
 
 from jaxgym import CoordsXY, PixelsYX
 from jaxgym.components import DescanError, Component
 from jaxgym import components as comp
 from jaxgym.source import PointSource
 from jaxgym.ray import Ray
-from jaxgym.run import run_to_end, run_iter
+from jaxgym.run import run_to_end, run_iter, run_with_grads
 from jaxgym.propagator import Propagator
+
+if TYPE_CHECKING:
+    from jaxgym.tree_utils import PathBuilder
 
 
 class Parameters4DSTEM(NamedTuple):
@@ -53,7 +56,7 @@ class Model4DSTEM(NamedTuple):
             self.detector,
         )
 
-    def make_rays(self, num: int = 1, random: bool = False):
+    def make_rays_at_source(self, num: int = 1, random: bool = False):
         return self.source.make_rays(num, random=random)
 
     @overload
@@ -63,10 +66,21 @@ class Model4DSTEM(NamedTuple):
     def trace(self, ray: Ray, output_as_pixels: Literal[False]) -> Ray: ...
 
     def trace(self, ray: Ray, output_as_pixels: bool = False):
-        ray = run_to_end(ray, self)
+        to_run = self
         if output_as_pixels:
-            return self.detector.ray_to_grid(ray)
-        return ray
+            to_run = to_run + (self.detector.ray_to_grid,)
+        return run_to_end(ray, to_run)
+
+    def trace_with_grads(
+        self,
+        ray: Ray,
+        grad_vars: Sequence["PathBuilder"],
+        output_as_pixels: bool = False,
+    ) -> tuple[Ray, dict[Sequence[Any], Ray]]:
+        to_run = self
+        if output_as_pixels:
+            to_run = to_run + (self.detector.ray_to_grid,)
+        return run_with_grads(ray, to_run, grad_vars)
 
     def trace_iter(
         self, ray: Ray
