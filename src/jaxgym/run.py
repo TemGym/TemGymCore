@@ -51,11 +51,12 @@ def run_iter(
     propagator: BasePropagator = FreeSpaceParaxial(),
 ) -> Generator[tuple[Propagator | Source | Component, Ray], Any, None]:
     for component in components:
-        distance = component.z - ray.z
-        if distance != 0.:
-            propagator_d = propagator.with_distance(distance)
-            ray, out = transform(propagator_d)(ray)
-            yield propagator_d, out
+        if isinstance(component, (Source, Component)):
+            distance = component.z - ray.z
+            if distance != 0.:
+                propagator_d = propagator.with_distance(distance)
+                ray, out = transform(propagator_d)(ray)
+                yield propagator_d, out
         ray, out = transform(component)(ray)
         yield component, out
 
