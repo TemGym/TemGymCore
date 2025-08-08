@@ -228,3 +228,17 @@ def smiley(size):
     obj = np.abs(obj)
 
     return obj
+
+
+def try_ravel(val):
+    try:
+        return val.ravel()
+    except AttributeError:
+        return val
+
+
+def try_reshape(val, maybe_has_shape):
+    try:
+        return val.reshape(maybe_has_shape.shape)
+    except AttributeError:
+        return val
