@@ -1,7 +1,7 @@
 from typing import Union
 import numpy as np
-from jax.numpy import ndarray as NDArray
 import jax.numpy as jnp
+
 from . import Degrees, ShapeYX, CoordsXY, ScaleYX, PixelsYX
 from .ray import Ray
 from .utils import inplace_sum, try_ravel, try_reshape
@@ -17,13 +17,13 @@ class Grid:
     flip_y: bool
 
     @property
-    def pixels_to_metres_mat(self) -> NDArray:
+    def pixels_to_metres_mat(self) -> jnp.ndarray:
         return pixels_to_metres_transform(
             self.centre, self.pixel_size, self.shape, self.flip_y, self.rotation
         )
 
     @property
-    def metres_to_pixels_mat(self) -> NDArray:
+    def metres_to_pixels_mat(self) -> jnp.ndarray:
         return jnp.linalg.inv(
             pixels_to_metres_transform(
                 self.centre, self.pixel_size, self.shape, self.flip_y, self.rotation
@@ -31,11 +31,16 @@ class Grid:
         )
 
     @property
-    def coords(self) -> NDArray:
+    def coords_px(self) -> PixelsYX:
         shape = self.shape
         y_px = jnp.arange(shape[0])
         x_px = jnp.arange(shape[1])
         yy_px, xx_px = jnp.meshgrid(y_px, x_px, indexing="ij")
+        return yy_px, xx_px
+
+    @property
+    def coords(self) -> jnp.ndarray:
+        yy_px, xx_px = self.coords_px
         yy_px = yy_px.ravel()
         xx_px = xx_px.ravel()
         coords_x, coords_y = self.pixels_to_metres((yy_px, xx_px))
