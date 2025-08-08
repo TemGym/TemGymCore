@@ -3,7 +3,7 @@ import jax_dataclasses as jdc
 import jax.numpy as jnp
 
 from .ray import Ray
-from .coordinate_transforms import Grid
+from .grid import Grid
 from . import Degrees, CoordsXY, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
 
