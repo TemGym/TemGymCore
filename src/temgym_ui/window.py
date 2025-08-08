@@ -278,10 +278,9 @@ class TemGymWindow(QMainWindow):
                 comp_row.appendRow(
                     [
                         key,
-                        (param := QStandardItem(f"{val}")),
+                        QStandardItem(f"{val}"),
                     ]
                 )
-                param.setCheckable(False)
         self.params_tree.setModel(params_model)
         self.params_tree.expandAll()
 
@@ -369,11 +368,15 @@ class TemGymWindow(QMainWindow):
     def createDetectorDisplay(self):
         """Create the detector display"""
         # Create the detector window, which shows where rays land at the bottom
-        self.spot_img = pg.ImageView(
-            parent=self.detector_dock,
-        )
-        self.spot_img.setImage(
-            np.random.uniform(size=(128, 128)).astype(np.float32)
-        )
-        self.spot_img.adjustSize()
-        self.detector_dock.addWidget(self.spot_img)
+        self.detector_window = pg.GraphicsLayoutWidget()
+        self.detector_window.setBackground(BKG_COLOR_3D)
+        self.detector_window.setAspectLocked(1.0)
+        self.spot_img = pg.ImageItem(border=None)
+        v2 = self.detector_window.addViewBox()
+        v2.setAspectLocked()
+
+        # Invert coordinate system so spot moves up when it should
+        v2.invertY()
+        v2.addItem(self.spot_img)
+
+        self.detector_dock.addWidget(self.detector_window)
