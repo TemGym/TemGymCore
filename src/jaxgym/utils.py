@@ -55,7 +55,7 @@ def inplace_sum(px_y, px_x, mask, frame, buffer):
 def concentric_rings(
     num_points_approx: int,
     radius: float,
-):
+) -> np.ndarray:
     num_rings = max(
         1, int(np.floor((-1 + np.sqrt(1 + 4 * num_points_approx / np.pi)) / 2))
     )
@@ -86,9 +86,12 @@ def concentric_rings(
     all_radii = all_params[0, :]
     all_angles = all_params[1, :]
 
-    return (
-        all_radii * np.sin(all_angles),
-        all_radii * np.cos(all_angles),
+    return np.stack(
+        (
+            all_radii * np.sin(all_angles),
+            all_radii * np.cos(all_angles),
+        ),
+        axis=-1,
     )
 
 
@@ -123,7 +126,7 @@ def fibonacci_spiral(
     return y, x
 
 
-def random_coords(num: int):
+def random_coords(num: int) -> np.ndarray:
     # generate random points uniformly sampled in x/y
     # within a centred circle of radius 0.5
     # return (y, x)
@@ -135,10 +138,7 @@ def random_coords(num: int):
     radii = np.sqrt((yx**2).sum(axis=1))
     mask = radii < 1
     yx = yx[mask, :]
-    return (
-        yx[:, 0],
-        yx[:, 1],
-    )
+    return yx
 
 
 def calculate_wavelength(phi_0: float):

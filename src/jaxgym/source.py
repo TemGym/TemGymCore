@@ -38,15 +38,17 @@ class PointSource(Source):
         offset_xy = self.offset_xy
 
         if random:
-            y, x = random_coords(num) * semi_conv
+            dyx = random_coords(num) * semi_conv
         else:
-            y, x = concentric_rings(num, semi_conv)
+            dyx = concentric_rings(num, semi_conv)
 
-        r = np.zeros((x.size, 5), dtype=np.float64)  # x, y, theta_x, theta_y, 1
+        dy, dx = dyx.T
+
+        r = np.zeros((dx.size, 5), dtype=np.float64)  # x, y, theta_x, theta_y, 1
         r[:, 0] += offset_xy[0]
         r[:, 1] += offset_xy[1]
-        r[:, 2] = x
-        r[:, 3] = y
+        r[:, 2] = dx
+        r[:, 3] = dy
         r[:, 4] = 1.0
         return r
 
@@ -62,9 +64,11 @@ class ParallelBeam(Source):
         offset_xy = self.offset_xy
 
         if random:
-            y, x = random_coords(num) * radius
+            yx = random_coords(num) * radius
         else:
-            y, x = concentric_rings(num, radius)
+            yx = concentric_rings(num, radius)
+
+        y, x = yx.T
 
         r = np.zeros((x.size, 5), dtype=np.float64)  # x, y, theta_x, theta_y, 1
         r[:, 0] = (x + offset_xy[0])
