@@ -1,17 +1,17 @@
 from itertools import chain
 import dataclasses
-from typing import TYPE_CHECKING, Sequence, Union, Any, Callable
+from typing import TYPE_CHECKING, Sequence, Union, Any, Callable, Generator
 
 import jax
 import jax.numpy as jnp
 from .utils import custom_jacobian_matrix
-from .propagator import FreeSpaceParaxial, BasePropagator
+from .propagator import FreeSpaceParaxial, BasePropagator, Propagator
+from .components import Component
+from .source import Source
+from .ray import Ray
 
 if TYPE_CHECKING:
     from .tree_utils import PathBuilder
-    from .ray import Ray
-    from .components import Component
-    from .source import Source
 
 
 def jacobian_and_value(fn, argnums: int = 0, **jac_kwargs):
@@ -23,54 +23,54 @@ def jacobian_and_value(fn, argnums: int = 0, **jac_kwargs):
     return jax.jacobian(inner, argnums=argnums, has_aux=True, **jac_kwargs)
 
 
-def passthrough_transform(component: Union["Component", "Source"]):
+def passthrough_transform(component: Union[Component, Source]):
 
-    def inner(ray: "Ray") -> tuple["Ray", "Ray"]:
+    def inner(ray: Ray) -> tuple[Ray, Ray]:
         out = component(ray)
         return out, out
 
     return inner
 
 
-def jacobian_transform(component: Union["Component", "Source"]):
+def jacobian_transform(component: Union[Component, Source]):
 
-    def inner(ray: "Ray") -> tuple["Ray", Any]:
+    def inner(ray: Ray) -> tuple[Ray, Any]:
         jac, out = jacobian_and_value(component)(ray)
         return out, jac
 
     return inner
 
 
-TransformT = Callable[[Union["Component", "Source"]], Callable[["Ray"], tuple["Ray", Any]]]
+TransformT = Callable[[Union[Component, Source]], Callable[[Ray], tuple[Ray, Any]]]
 
 
 def run_iter(
-    ray: "Ray",
-    components: Sequence[Union["Component", "Source"]],
+    ray: Ray,
+    components: Sequence[Union[Component, Source]],
     transform: TransformT = passthrough_transform,
     propagator: BasePropagator = FreeSpaceParaxial(),
-):
+) -> Generator[tuple[Propagator | Source | Component, Ray], Any, None]:
     for component in components:
         distance = component.z - ray.z
         if distance != 0.:
             propagator_d = propagator.with_distance(distance)
             ray, out = transform(propagator_d)(ray)
-            yield propagator, out
+            yield propagator_d, out
         ray, out = transform(component)(ray)
         yield component, out
 
 
 def run_to_end(
-    ray: "Ray",
-    components: Sequence[Union["Component", "Source"]],
+    ray: Ray,
+    components: Sequence[Union[Component, Source]],
     propagator: BasePropagator = FreeSpaceParaxial(),
-) -> "Ray":
+) -> Ray:
     for _, ray in run_iter(ray, components, propagator=propagator):
         pass
     return ray
 
 
-def calculate_derivatives(ray: "Ray", model: Sequence[Union["Component", "Source"]], order: int):
+def calculate_derivatives(ray: Ray, model: Sequence[Union[Component, Source]], order: int):
     derivs = []
     current_func = run_to_end
     for _ in range(order):
@@ -81,8 +81,8 @@ def calculate_derivatives(ray: "Ray", model: Sequence[Union["Component", "Source
 
 
 def solve_model(
-    ray: "Ray",
-    model: Sequence[Union["Component", "Source"]],
+    ray: Ray,
+    model: Sequence[Union[Component, Source]],
     propagator: BasePropagator = FreeSpaceParaxial(),
 ):
     model_ray_jacobians = []
@@ -93,8 +93,8 @@ def solve_model(
 
 
 def run_with_grads(
-    input_ray: "Ray",
-    model: Sequence[Union["Component", "Source"]],
+    input_ray: Ray,
+    model: Sequence[Union[Component, Source]],
     grad_vars: Sequence["PathBuilder"],
 ):
     ray_params, ray_tree = jax.tree.flatten(input_ray)

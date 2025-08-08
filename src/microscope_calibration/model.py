@@ -1,11 +1,12 @@
-from typing import NamedTuple
+from typing import NamedTuple, Generator, Any, overload, Literal
 
-from jaxgym import CoordsXY
-from jaxgym.components import DescanError
+from jaxgym import CoordsXY, PixelsYX
+from jaxgym.components import DescanError, Component
 from jaxgym import components as comp
 from jaxgym.source import PointSource
 from jaxgym.ray import Ray
-from jaxgym.run import run_to_end
+from jaxgym.run import run_to_end, run_iter
+from jaxgym.propagator import Propagator
 
 
 class Parameters4DSTEM(NamedTuple):
@@ -55,11 +56,22 @@ class Model4DSTEM(NamedTuple):
     def make_rays(self, num: int = 1, random: bool = False):
         return self.source.make_rays(num, random=random)
 
-    def trace(self, ray: Ray, as_pixels: bool = False):
+    @overload
+    def trace(self, ray: Ray, output_as_pixels: Literal[True]) -> PixelsYX: ...
+
+    @overload
+    def trace(self, ray: Ray, output_as_pixels: Literal[False]) -> Ray: ...
+
+    def trace(self, ray: Ray, output_as_pixels: bool = False):
         ray = run_to_end(ray, self)
-        if as_pixels:
+        if output_as_pixels:
             return self.detector.ray_to_grid(ray)
         return ray
+
+    def trace_iter(
+        self, ray: Ray
+    ) -> Generator[tuple[Propagator | PointSource | Component, Ray], Any, None]:
+        yield from run_iter(ray, self)
 
 
 def create_stem_model(
