@@ -1,4 +1,4 @@
-# Jax Tem Gym
+# TemGymCore
 
 A ray tracing package that uses the automatic differentiation tools of jax to solve optical systems
 via a Taylor Expansion of a "ray" representing the optical axis. 
