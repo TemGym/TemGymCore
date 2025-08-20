@@ -33,7 +33,6 @@ junit.xml
 examples/generated/
 dist/
 *.lprof
-*.txt
 *.png
 *nsys-rep
 *.npy
