@@ -28,7 +28,7 @@ from temgym_core.ray import Ray
 from temgym_core.components import Lens, Detector
 from temgym_core.run import run_to_end
 
-# Define an input ray (paraxial coordinates)
+# Define an input ray
 ray_in = Ray(x=0.1, y=0.2, dx=0.3, dy=0.4, z=0.0, pathlength=0.0, _one=1.0)
 
 # Define a simple model: a lens at z=0.5, then a detector at z=1.0
@@ -36,7 +36,7 @@ lens = Lens(z=0.5, focal_length=1.0)
 detector = Detector(z=1.0, pixel_size=(0.01, 0.01), shape=(128, 128))
 model = [lens, detector]
 
-# Run the ray through the model
+# Run the ray through the model and query the output coordinates
 ray_out = run_to_end(ray_in, model)
 print(ray_out.x, ray_out.y, ray_out.dx, ray_out.dy, ray_out.z)
 ```
