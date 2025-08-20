@@ -2,7 +2,7 @@
 
 A ray tracing package that uses the automatic differentiation tools of jax to solve optical systems
 via a Taylor Expansion of a "ray" representing the optical axis. 
-In JaxGym, Linear optical systems are represented via the ABCD values of a ray 
+In TemGym, Linear optical systems are represented via the ABCD values of a ray 
 transfer matrix determined using the Jacobian of the ray coordinates through the optical system, and non-linear optical systems are represented via 
 coefficients of a Taylor Expansion polynomial of the ray coordinates through the optical system, calculated either via repeated Jacobian calls, 
 or via the experimental library jax.jet.

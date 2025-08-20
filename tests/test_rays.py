@@ -3,9 +3,9 @@ import numpy as np
 import math
 from jax import jacobian
 
-from jaxgym.ray import Ray
-from jaxgym.propagator import FreeSpaceParaxial, FreeSpaceDirCosine
-from jaxgym.utils import custom_jacobian_matrix
+from temgym_core.ray import Ray
+from temgym_core.propagator import FreeSpaceParaxial, FreeSpaceDirCosine
+from temgym_core.utils import custom_jacobian_matrix
 
 
 def test_propagate_zero_distance():

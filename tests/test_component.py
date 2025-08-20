@@ -1,12 +1,11 @@
 import pytest
 import numpy as np
-
-from jaxgym.components import ScanGrid, Detector, Descanner
-from microscope_calibration.model import DescanError
-from jaxgym.ray import Ray
 from jax import jacobian
-from jaxgym.utils import custom_jacobian_matrix, SingularComponent
 import jax.numpy as jnp
+
+from temgym_core.components import ScanGrid, Detector, Descanner, DescanError
+from temgym_core.ray import Ray
+from temgym_core.utils import custom_jacobian_matrix, SingularComponent
 
 
 @pytest.mark.parametrize(
