@@ -43,7 +43,7 @@ class FreeSpaceDirCosine(BasePropagator):
     def propagate(ray: "Ray", distance: float):
         # This method implements propagation using direction cosines
         # and should be accurate to higher angles, but needs modification
-        # to work with the rest of jaxgym transfer matrices
+        # to work with the rest of temgym transfer matrices
         N = np.sqrt(1 + ray.dx**2 + ray.dy**2)
         L = ray.dx / N
         M = ray.dy / N

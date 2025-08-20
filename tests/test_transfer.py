@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
-from jaxgym.transfer import transfer_rays, transfer_rays_pt_src, accumulate_matrices
+from temgym_core.transfer import transfer_rays, transfer_rays_pt_src, accumulate_matrices
 
 
 def test_transfer_pt_src_free_space():

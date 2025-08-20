@@ -2,7 +2,7 @@ import itertools
 import jax.numpy as jnp
 import numpy as np
 from jax.scipy.special import factorial
-from jaxgym.ray import Ray
+from temgym_core.ray import Ray
 import sympy as sp
 
 

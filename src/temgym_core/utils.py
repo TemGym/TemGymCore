@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import numpy as np
 from scipy.constants import e, m_e, h
-from jaxgym.ray import Ray
+from temgym_core.ray import Ray
 import jax_dataclasses as jdc
 from numba import njit
 
