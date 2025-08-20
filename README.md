@@ -27,38 +27,45 @@ import jax
 from temgym_core.ray import Ray
 from temgym_core.components import Lens, Detector
 from temgym_core.run import run_to_end
+```
 
-# Define an input ray
+Define an input ray
+
+```python
 ray_in = Ray(x=0.1, y=0.2, dx=0.3, dy=0.4, z=0.0, pathlength=0.0, _one=1.0)
+```
 
-# Define a simple model: a lens at z=0.5, then a detector at z=1.0
+Define a simple model: a lens at z=0.5, then a detector at z=1.0
+
+```python
 lens = Lens(z=0.5, focal_length=1.0)
 detector = Detector(z=1.0, pixel_size=(0.01, 0.01), shape=(128, 128))
 model = [lens, detector]
-
-# Run the ray through the model and query the output coordinates
-ray_out = run_to_end(ray_in, model)
-print(ray_out.x, ray_out.y, ray_out.dx, ray_out.dy, ray_out.z)
 ```
-
-## Gradients through the model (w.r.t. parameters)
-
-Use `run_with_grads` to get the output ray and the derivatives of the output w.r.t. selected parameters. Keys in the returned dict are tuples like `(component, 'parameter')` and map to a `Ray` of partial derivatives.
+Run the ray through the model and query the output coordinates
 
 ```python
-from temgym_core.run import run_with_grads
+ray_out = run_to_end(ray_in, model)
+print(ray_out.x, ray_out.y, ray_out.dx, ray_out.dy, ray_out.z)
+>>> 0.275 0.4 0.04999999999999999 0.0 1.0
+```
+## Gradients through the model (w.r.t. parameters)
 
-# Choose which parameters to differentiate with respect to
-grad_vars = (lens.params.z, lens.params.focal_length, )
+Write a wrapper to get gradients of a ray through the model with respect to a specific parameter. 
 
-ray_out, d_ray_out_d_params = run_with_grads(ray_in, model, grad_vars)
+```python
+## Gradients of rays through the model with a wrapper + jax.jacobian
+def run_with_params(f, z):
+    # Rebuild the lens with differentiable parameters and run the model
+    lens_local = Lens(z=z, focal_length=f)
+    return run_to_end(ray_in, [lens_local, detector])
 
-# Access derivatives using tuple keys
-d_out__d_f = d_ray_out_d_params[(lens, 'focal_length')]  # a Ray of d(output)/d(focal_length)
-d_out__d_z = d_ray_out_d_params[(lens, 'z')]
+# Jacobians of the output ray w.r.t. lens parameters
+deriv_func = jax.jacobian(run_with_params, argnums=(0, 1))
+grads = deriv_func(lens.focal_length, lens.z)
 
-# Example: derivative of output x w.r.t lens focal_length
-print(d_out__d_f.x)
+print(grads.x)
+>>> (Array(0.125, dtype=float32, weak_type=True), Array(0.09999999, dtype=float32, weak_type=True))
 ```
 
 
@@ -67,13 +74,22 @@ print(d_out__d_f.x)
 You can also request derivatives w.r.t. the input ray fields.
 
 ```python
-# Single input field
-_, grads_in = run_with_grads(ray_in, model, grad_vars=(ray_in.params.x,))
-print(grads_in[(ray_in, 'x')].x)  # d(output.x)/d(input.x)
+# Gradients of a specific coordinate of the output ray w.r.t. a single input ray parameter using jax.grad directly
+def run_with_params(x):
+    ray_in = Ray(x=x, y=0.2, dx=0.3, dy=0.4, z=0.0, pathlength=0.6, _one=1.0)
+    return run_to_end(ray_in, model).dx
 
-# Or all input fields at once by passing the ray itself
-_, grads_all_in = run_with_grads(ray_in, model, grad_vars=(ray_in,))
-print(grads_all_in[(ray_in, 'dx')].y)  # d(output.y)/d(input.dx)
+d_dx_d_x = jax.grad(run_with_params)(0.01)
+print(d_dx_d_x)  # d(output.dx)/d(input.x)
+>>> -1.0
+
+# Gradients w.r.t. all of the input ray parameters using jax.jacobian directly
+# We can query a specific gradient then from the dataclass
+d_out_d_in = jax.jacobian(run_to_end)(ray_in, model)
+
+# Query a specific value in the ray dataclass
+print(d_out_d_in.dy.x)  # d(output.dy)/d(input.x)
+>>> 0.0
 ```
 
 
@@ -87,6 +103,11 @@ from temgym_core.utils import custom_jacobian_matrix
 ray_jac = jax.jacobian(run_to_end, argnums=0)(ray_in, model)
 ABCD = custom_jacobian_matrix(ray_jac)
 print(ABCD)  # 5x5 matrix
+>>> [[ 0.5   0.    0.75  0.    0.  ]
+ [ 0.    0.5   0.    0.75  0.  ]
+ [-1.    0.    0.5   0.    0.  ]
+ [ 0.   -1.    0.    0.5   0.  ]
+ [ 0.    0.    0.    0.    1.  ]]
 ```
 
 Or get the ABCD matrices at each propagation/component step:
@@ -95,6 +116,30 @@ Or get the ABCD matrices at each propagation/component step:
 from temgym_core.run import solve_model
 
 per_step_ABCD = solve_model(ray_in, model)  # shape: (num_steps, 5, 5)
+
+>>> [[[ 1.   0.   0.5  0.   0. ]
+  [ 0.   1.   0.   0.5  0. ]
+  [ 0.   0.   1.   0.   0. ]
+  [ 0.   0.   0.   1.   0. ]
+  [ 0.   0.   0.   0.   1. ]]
+
+ [[ 1.   0.   0.   0.   0. ]
+  [ 0.   1.   0.   0.   0. ]
+  [-1.   0.   1.   0.   0. ]
+  [ 0.  -1.   0.   1.   0. ]
+  [ 0.   0.   0.   0.   1. ]]
+
+ [[ 1.   0.   0.5  0.   0. ]
+  [ 0.   1.   0.   0.5  0. ]
+  [ 0.   0.   1.   0.   0. ]
+  [ 0.   0.   0.   1.   0. ]
+  [ 0.   0.   0.   0.   1. ]]
+
+ [[ 1.   0.   0.   0.   0. ]
+  [ 0.   1.   0.   0.   0. ]
+  [ 0.   0.   1.   0.   0. ]
+  [ 0.   0.   0.   1.   0. ]
+  [ 0.   0.   0.   0.   1. ]]]
 ```
 
 
@@ -109,12 +154,11 @@ src = PointSource(z=0.0, semi_conv=0.01)
 rays = src.make_rays(num=256, random=False)  # returns a Ray with vector fields
 
 rays_out = run_to_end(rays, model)
-print(rays_out.x.shape)  # (256,) for this example
 ```
 
 ## Iterative ray tracing with `run_iter`
 
-The `run_iter` function allows you to trace rays step-by-step through the model, returning intermediate results at each component. This is useful for analyzing the behavior of rays at each stage of the optical system.
+The `run_iter` function allows you to trace rays step-by-step through the model, returning intermediate results at each component. This is useful for analyzing individually the behavior of rays at each stage of the optical system.
 
 ```python
 from temgym_core.run import run_iter
