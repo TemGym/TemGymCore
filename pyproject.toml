@@ -4,21 +4,21 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = [
-  "src/jaxgym",
+  "src/temgym_core",
 ]
 only-packages = true
 
 [project]
-name = "jaxgym"
+name = "temgym-core"
 version = "0.0.1"
 authors = [
   { name="David Landers", email="davidlandersresearch@gmail.com" },
   { name="Matthew Bryan", email="matthewbryan52@gmail.com" },
   { name="Dieter Weber", email="d.weber@fz-juelich.de" },
 ]
-description = "An educational TEM ray tracing matrix package"
+description = "An differentiable TEM ray tracing package"
 readme = "README.md"
-keywords=["electron microscopy", "virtual twin", "gui"]
+keywords=["electron microscopy", "virtual twin"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.7",
