@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 from jax import jacobian
 import jax.numpy as jnp
+import jax_dataclasses as jdc
 
 from temgym_core.components import ScanGrid, Detector, Descanner, DescanError, Component
 from temgym_core.ray import Ray
