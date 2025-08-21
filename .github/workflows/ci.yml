@@ -35,3 +35,35 @@ jobs:
       #   uses: codecov/codecov-action@v4
       #   env:
       #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  mc-tests:
+  tests:
+    strategy:
+      matrix:
+        python_version: ["3.12"]
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Choose Python version ${{ matrix.python_version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '${{ matrix.python_version }}'
+          cache: 'pip'
+      - name: install uv
+        run: python3 -m pip install uv
+      - name: install core
+        run: uv pip install .
+      - name: add deploy key
+        run: |
+          eval `ssh-agent -s`
+          ssh-add - <<< '${{ secrets.MC_DEPLOY_KEY }}'
+      - name: checkout mc
+        run: |
+          git checkout git@github.com:TemGym/MicroscopeCalibration.git    
+          cd MicroscopeCalibration
+      - name: install mc
+        run: uv pip install .
+      - name: install test_requirements
+        run: uv pip install -r test_requirements.txt
+      - name: install test_requirements
+        run: pytest tests/
