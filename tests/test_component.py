@@ -3,9 +3,26 @@ import numpy as np
 from jax import jacobian
 import jax.numpy as jnp
 
-from temgym_core.components import ScanGrid, Detector, Descanner, DescanError
+from temgym_core.components import ScanGrid, Detector, Descanner, DescanError, Component
 from temgym_core.ray import Ray
-from temgym_core.utils import custom_jacobian_matrix, SingularComponent
+from temgym_core.utils import custom_jacobian_matrix
+
+
+@jdc.pytree_dataclass
+# A component that should give a singular jacobian used for testing
+class SingularComponent(Component):
+    def __call__(self, ray: Ray):
+        new_x = ray.x
+        new_y = ray.x
+        return Ray(
+            x=new_x,
+            y=new_y,
+            dx=ray.dx,
+            dy=ray.dy,
+            _one=ray._one,
+            pathlength=ray.pathlength,
+            z=ray.z,
+        )
 
 
 @pytest.mark.parametrize(
