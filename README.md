@@ -32,22 +32,24 @@ from temgym_core.run import run_to_end
 Define an input ray
 
 ```python
-ray_in = Ray(x=0.1, y=0.2, dx=0.3, dy=0.4, z=0.0, pathlength=0.0, _one=1.0)
+>>> ray_in = Ray(x=0.1, y=0.2, dx=0.3, dy=0.4, z=0.0, pathlength=0.0)
+Ray(x=0.1, y=0.2, dx=0.3, dy=0.4, z=0.0, pathlength=0.0)
 ```
 
-Define a simple model: a lens at z=0.5, then a detector at z=1.0
+Define a simple model: a lens at `z=0.5`, then a detector at `z=1.0`
 
 ```python
 lens = Lens(z=0.5, focal_length=1.0)
 detector = Detector(z=1.0, pixel_size=(0.01, 0.01), shape=(128, 128))
-model = [lens, detector]
+model = (lens, detector)
 ```
+
 Run the ray through the model and query the output coordinates
 
 ```python
-ray_out = run_to_end(ray_in, model)
-print(ray_out.x, ray_out.y, ray_out.dx, ray_out.dy, ray_out.z)
->>> 0.275 0.4 0.04999999999999999 0.0 1.0
+>>> ray_out = run_to_end(ray_in, model)
+>>> print(ray_out)
+Ray(x=0.275, y=0.4, dx=0.05, dy=0.0, z=1.0, pathlength=0.89)
 ```
 ## Gradients through the model (w.r.t. parameters)
 
@@ -60,38 +62,36 @@ def run_with_params(f, z):
     lens_local = Lens(z=z, focal_length=f)
     return run_to_end(ray_in, [lens_local, detector])
 
-# Jacobians of the output ray w.r.t. lens parameters
-deriv_func = jax.jacobian(run_with_params, argnums=(0, 1))
-grads = deriv_func(lens.focal_length, lens.z)
+# Jacobians of the output ray w.r.t. lens parameters f and z
+>>> deriv_func = jax.jacobian(run_with_params, argnums=(0, 1))
+>>> grads = deriv_func(lens.focal_length, lens.z)
 
-print(grads.x)
->>> (Array(0.125, dtype=float32, weak_type=True), Array(0.09999999, dtype=float32, weak_type=True))
+>>> print(grads.x)  # derivative of output x-coordinate wrt. (f, z)
+(0.125, 0.09999999)
 ```
-
 
 ## Gradients w.r.t. the input ray
 
-You can also request derivatives w.r.t. the input ray fields.
+You can also take derivatives w.r.t. the input ray fields.
 
 ```python
 # Gradients of a specific coordinate of the output ray w.r.t. a single input ray parameter using jax.grad directly
 def run_with_params(x):
-    ray_in = Ray(x=x, y=0.2, dx=0.3, dy=0.4, z=0.0, pathlength=0.6, _one=1.0)
-    return run_to_end(ray_in, model).dx
+    ray_in = Ray(x=x, y=0.2, dx=0.3, dy=0.4, z=0.0, pathlength=0.6)
+    return run_to_end(ray_in, model).dx  # return only the output slope in x
 
-d_dx_d_x = jax.grad(run_with_params)(0.01)
-print(d_dx_d_x)  # d(output.dx)/d(input.x)
->>> -1.0
+>>> d_dx_d_x = jax.grad(run_with_params)(0.01)
+>>> print(d_dx_d_x)  # d(output.dx)/d(input.x)
+-1.0
 
 # Gradients w.r.t. all of the input ray parameters using jax.jacobian directly
 # We can query a specific gradient then from the dataclass
-d_out_d_in = jax.jacobian(run_to_end)(ray_in, model)
+>>> d_out_d_in = jax.jacobian(run_to_end)(ray_in, model)
 
 # Query a specific value in the ray dataclass
-print(d_out_d_in.dy.x)  # d(output.dy)/d(input.x)
->>> 0.0
+>>> print(d_out_d_in.dy.x)  # d(output.dy)/d(input.x)
+0.0
 ```
-
 
 ## Jacobian and ABCD matrix
 
@@ -115,9 +115,10 @@ Or get the ABCD matrices at each propagation/component step:
 ```python
 from temgym_core.run import solve_model
 
-per_step_ABCD = solve_model(ray_in, model)  # shape: (num_steps, 5, 5)
+>>> per_step_ABCD = solve_model(ray_in, model)  # shape: (num_steps, 5, 5)
+print(per_step_ABCD)
 
->>> [[[ 1.   0.   0.5  0.   0. ]
+[[[ 1.   0.   0.5  0.   0. ]
   [ 0.   1.   0.   0.5  0. ]
   [ 0.   0.   1.   0.   0. ]
   [ 0.   0.   0.   1.   0. ]
@@ -150,10 +151,12 @@ per_step_ABCD = solve_model(ray_in, model)  # shape: (num_steps, 5, 5)
 ```python
 from temgym_core.source import PointSource
 
-src = PointSource(z=0.0, semi_conv=0.01)
-rays = src.make_rays(num=256, random=False)  # returns a Ray with vector fields
+>>> src = PointSource(z=0.0, semi_conv=0.01)
+>>> rays = src.make_rays(num=256, random=False)  # returns a Ray with vector fields
 
-rays_out = run_to_end(rays, model)
+>>> rays_out = run_to_end(rays, model)
+>>> print(rays_out.size)
+256
 ```
 
 ## Iterative ray tracing with `run_iter`
@@ -164,7 +167,6 @@ The `run_iter` function allows you to trace rays step-by-step through the model,
 from temgym_core.run import run_iter
 
 # Run the ray iteratively through the model
-for step, (component, ray) in enumerate(run_iter(ray_in, model)):
-    print(f"Step {step}: x={ray.x}, y={ray.y}, dx={ray.dx}, dy={ray.dy}, z={ray.z}")
-
+for step_idx, (component, ray) in enumerate(run_iter(ray_in, model)):
+    print(f"Step {step_idx}: {ray}")
 ```
