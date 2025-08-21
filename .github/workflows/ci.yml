@@ -51,7 +51,7 @@ jobs:
       - name: install uv
         run: python3 -m pip install uv
       - name: install core
-        run: uv pip install .
+        run: uv pip install --system .
       - name: add deploy key
         run: |
           eval `ssh-agent -s`
@@ -61,8 +61,8 @@ jobs:
           git checkout git@github.com:TemGym/MicroscopeCalibration.git    
           cd MicroscopeCalibration
       - name: install mc
-        run: uv pip install .
+        run: uv pip install --system .
       - name: install test_requirements
-        run: uv pip install -r test_requirements.txt
+        run: uv pip install --system -r test_requirements.txt
       - name: install test_requirements
         run: pytest tests/
