@@ -6,6 +6,10 @@ if TYPE_CHECKING:
 
 
 class BasePropagator:
+    """Abstract base for ray propagators.
+
+    Implement `__call__(ray, distance)` in subclasses to return a new ray.
+    """
     def __call__(self, ray: "Ray", distance: float) -> "Ray":
         raise NotImplementedError
 
@@ -16,6 +20,19 @@ class BasePropagator:
 
 
 class Propagator(NamedTuple):
+    """Callable pair of (distance, propagator) that acts on a ray.
+
+    Parameters
+    ----------
+    distance : float
+        Distance to propagate, metres.
+    propagator : BasePropagator
+        The underlying propagation model to use.
+
+    Notes
+    -----
+    Calling `Propagator(ray)` returns the propagated ray.
+    """
     distance: float
     propagator: BasePropagator
 
@@ -24,8 +41,29 @@ class Propagator(NamedTuple):
 
 
 class FreeSpaceParaxial(BasePropagator):
+    """Paraxial free-space propagation with constant slopes.
+
+    Notes
+    -----
+    Updates: x += dx*d, y += dy*d, z += d, pathlength += d. Pure and
+    differentiable.
+    """
     @staticmethod
     def propagate(ray: "Ray", distance: float):
+        """Propagate a ray by `distance` assuming small angles.
+
+        Parameters
+        ----------
+        ray : Ray
+            Input ray.
+        distance : float
+            Propagation distance, metres.
+
+        Returns
+        -------
+        ray : Ray
+            Propagated ray.
+        """
         return ray.derive(
             x=ray.x + ray.dx * distance,
             y=ray.y + ray.dy * distance,
@@ -39,11 +77,30 @@ class FreeSpaceParaxial(BasePropagator):
 
 
 class FreeSpaceDirCosine(BasePropagator):
+    """Free-space propagation using direction cosines (L, M, N).
+
+    Notes
+    -----
+    Handles larger angles than paraxial model. Updates: x += (L/N)*d,
+    y += (M/N)*d, z += d, pathlength += N*d. Not currently integrated with
+    ABCD-based matrices in this repo.
+    """
     @staticmethod
     def propagate(ray: "Ray", distance: float):
-        # This method implements propagation using direction cosines
-        # and should be accurate to higher angles, but needs modification
-        # to work with the rest of temgym transfer matrices
+        """Propagate using direction cosines.
+
+        Parameters
+        ----------
+        ray : Ray
+            Input ray.
+        distance : float
+            Propagation distance, metres.
+
+        Returns
+        -------
+        ray : Ray
+            Propagated ray with direction-cosine model.
+        """
         N = np.sqrt(1 + ray.dx**2 + ray.dy**2)
         L = ray.dx / N
         M = ray.dy / N

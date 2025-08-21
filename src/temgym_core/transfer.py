@@ -4,22 +4,44 @@ import numpy as np
 
 def transfer_rays(ray_coords, transfer_matrices):
     """
-    Propagate rays through an optical system using the provided transfer matrices.
-    This version first builds the cumulative product of the transfer matrices so
-    that each plane’s matrix is the product of all preceding ones, then applies
-    each to the input rays via einsum.
+    Apply cumulative transfer matrices to a batch of rays.
+
+    This first builds cumulative products of the 5×5 matrices so that the
+    m-th matrix equals the product of all up to m, then applies each to
+    all input rays.
 
     Parameters
     ----------
-    ray_coords : numpy.ndarray
-        A 2D array of shape (N, 5) for N rays: [x, y, dx, dy, 1].
-    transfer_matrices : numpy.ndarray
-        A 3D array of shape (M, 5, 5) for M sequential transfer matrices.
+    ray_coords : numpy.ndarray, shape (N, 5), float64
+        Rays as rows [x, y, dx, dy, 1].
+    transfer_matrices : numpy.ndarray, shape (M, 5, 5), float64
+        Sequence of transfer matrices applied in order.
 
     Returns
     -------
-    numpy.ndarray
-        A 3D array of shape (N, M, 5): ray coords at each of the M planes.
+    coords : numpy.ndarray, shape (N, M, 5), float64
+        Transformed ray coordinates at each plane.
+
+    Raises
+    ------
+    IndexError
+        If `transfer_matrices` is empty.
+    ValueError
+        If shapes are incompatible.
+
+    Notes
+    -----
+    Pure; uses numpy for compatibility with tests. Differentiability is not
+    required for this helper.
+
+    Examples
+    --------
+    >>> N, M = 2, 3
+    >>> rays = np.hstack([np.zeros((N,4)), np.ones((N,1))])
+    >>> Ts = np.tile(np.eye(5), (M,1,1))
+    >>> out = transfer_rays(rays, Ts)
+    >>> out.shape
+    (2, 3, 5)
     """
 
     cumulative_matrices = accumulate_matrices_cumulative(transfer_matrices)
@@ -33,29 +55,41 @@ def transfer_rays(ray_coords, transfer_matrices):
 
 def transfer_rays_pt_src(input_pos_xy, input_slopes_xy, transfer_matrix):
     """
-    Propagate rays through an optical system using the provided transfer matrix.
-    This function takes an initial point source position (x, y) and their corresponding
-    slopes, constructs a ray vector, and propagates these rays through the system by
-    applying the transfer matrix. The output is a set of propagated ray coordinates.
+    Apply a single 5×5 transfer matrix to rays from a point source.
+
     Parameters
     ----------
-    input_pos_xy : tuple
-        A tuple (input_pos_x, input_pos_y) representing the x and y coordinates of the
-        source position.
-    input_slopes_xy : tuple
-        A tuple (input_slopes_x, input_slopes_y) representing the slopes of the rays
-        in the x and y directions.
-    transfer_matrix : numpy.ndarray
-        A matrix used to propagate the rays. It should be compatible with the constructed
-        ray vector so that the dot product results in a propagated coordinate array.
+    input_pos_xy : tuple of float
+        Source position (x0, y0) in metres.
+    input_slopes_xy : tuple of jnp.ndarray
+        Slopes (dxs, dys) in radians; arrays of length N.
+    transfer_matrix : jnp.ndarray, shape (5, 5)
+        Homogeneous transfer matrix.
+
     Returns
     -------
-    numpy.ndarray
-        A 2D numpy array of shape (4, N) where N is the number of rays. The rows correspond to:
-            - x positions
-            - y positions
-            - x slopes (dxs)
-            - y slopes (dys)
+    coords : jnp.ndarray, shape (4, N)
+        Rows [x, y, dx, dy] after transformation.
+
+    Raises
+    ------
+    ValueError
+        If slope arrays have different lengths.
+
+    Notes
+    -----
+    Pure and JIT-friendly. The input rays are constructed with a homogeneous
+    1 row.
+
+    Examples
+    --------
+    >>> x0, y0 = 0.0, 0.0
+    >>> dxs = jnp.array([0.1, 0.0])
+    >>> dys = jnp.array([0.0, -0.1])
+    >>> T = jnp.eye(5)
+    >>> out = transfer_rays_pt_src((x0, y0), (dxs, dys), T)
+    >>> out.shape
+    (4, 2)
     """
 
     # Given an input pt_source position and slopes, propagate the rays through the system
@@ -89,9 +123,22 @@ def transfer_rays_pt_src(input_pos_xy, input_slopes_xy, transfer_matrix):
 
 
 def accumulate_matrices(matrices):
-    """
-    Compute the total transfer matrix by
-    multiplying in right-to-left order
+    """Multiply a sequence of 5×5 matrices right-to-left.
+
+    Parameters
+    ----------
+    matrices : sequence of jnp.ndarray, each shape (5, 5)
+        Transfer matrices ordered as applied.
+
+    Returns
+    -------
+    total : jnp.ndarray, shape (5, 5)
+        Product matrices[-1] @ ... @ matrices[0].
+
+    Raises
+    ------
+    IndexError
+        If `matrices` is empty.
     """
     total = matrices[-1]
     for tm in reversed(matrices[:-1]):
@@ -100,11 +147,29 @@ def accumulate_matrices(matrices):
 
 
 def accumulate_matrices_cumulative(matrices):
-    """
-    Compute cumulative products in reverse order:
-    start with the last matrix, then multiply by
-    the one before it, and so on, return all
-    intermediate matrices in a stack
+    """Build cumulative products of 5×5 matrices in forward order.
+
+    Parameters
+    ----------
+    matrices : numpy.ndarray or jnp.ndarray, shape (M, 5, 5)
+        Transfer matrices.
+
+    Returns
+    -------
+    cumulative : jnp.ndarray, shape (M, 5, 5)
+        cumulative[k] = matrices[k] @ ... @ matrices[0].
+
+    Raises
+    ------
+    IndexError
+        If `matrices` is empty.
+
+    Examples
+    --------
+    >>> Ms = jnp.stack([jnp.eye(5), 2*jnp.eye(5)], 0)
+    >>> cum = accumulate_matrices_cumulative(Ms)
+    >>> cum.shape
+    (2, 5, 5)
     """
     all_matrices = []
     # Begin with the last matrix

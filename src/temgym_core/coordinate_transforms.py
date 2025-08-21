@@ -101,6 +101,36 @@ def pixels_to_metres_transform(
 
 
 def apply_transformation(y, x, transformation):
+    """Apply a 3×3 homogeneous transform to pixel or metre coordinates.
+
+    Parameters
+    ----------
+    y : jnp.ndarray
+        First coordinate (row if pixels, y if metres). Any shape.
+    x : jnp.ndarray
+        Second coordinate (col if pixels, x if metres). Broadcastable to `y`.
+    transformation : jnp.ndarray, shape (3, 3)
+        Homogeneous transform mapping [y, x, 1] to [y', x', 1].
+
+    Returns
+    -------
+    y_out : jnp.ndarray
+        Transformed first coordinate with the same shape as `y`.
+    x_out : jnp.ndarray
+        Transformed second coordinate with the same shape as `x`.
+
+    Notes
+    -----
+    Pure and JIT-friendly. Differentiable w.r.t. inputs and transform.
+
+    Examples
+    --------
+    >>> T = jnp.eye(3)
+    >>> y, x = jnp.array([0., 1.]), jnp.array([2., 3.])
+    >>> y2, x2 = apply_transformation(y, x, T)
+    >>> (y2 == y).all(), (x2 == x).all()
+    (Array(True, dtype=bool), Array(True, dtype=bool))
+    """
     # All of our coordinate transforms are 3x3 transformations,
     # so we need to add an array of 1s to the end of our coordinates array
     r = jnp.stack([y, x, jnp.ones_like(y)], axis=-1)

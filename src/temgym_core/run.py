@@ -50,6 +50,28 @@ def run_iter(
     transform: TransformT = passthrough_transform,
     propagator: BasePropagator = FreeSpaceParaxial(),
 ) -> Generator[tuple[Propagator | Source | Component, Ray], Any, None]:
+    """Iterate a ray through the model, yielding each step's output.
+
+    Parameters
+    ----------
+    ray : Ray
+        Initial ray state.
+    components : sequence of Component or Source
+        Model sequence ordered along increasing z.
+    transform : callable, default passthrough_transform
+        Wraps each call to produce `(ray_out, aux)`; see helpers above.
+    propagator : BasePropagator, default FreeSpaceParaxial()
+        Propagator used between elements based on z spacing.
+
+    Yields
+    ------
+    step : (Propagator|Source|Component, Ray)
+        The operation applied and its output ray.
+
+    Notes
+    -----
+    Free-space is inserted when `component.z != ray.z`.
+    """
     for component in components:
         if isinstance(component, (Source, Component)):
             distance = component.z - ray.z
@@ -66,12 +88,57 @@ def run_to_end(
     components: Sequence[Union[Component, Source]],
     propagator: BasePropagator = FreeSpaceParaxial(),
 ) -> Ray:
+    """Propagate a ray through all components and return the final state.
+
+    Parameters
+    ----------
+    ray : Ray
+        Initial ray.
+    components : sequence of Component or Source
+        Model sequence ordered along z.
+    propagator : BasePropagator, default FreeSpaceParaxial()
+        Propagation model between elements.
+
+    Returns
+    -------
+    ray_out : Ray
+        Final ray after propagating through the full model.
+
+    Examples
+    --------
+    >>> from temgym_core.components import Plane
+    >>> r0 = Ray.origin()
+    >>> out = run_to_end(r0, [Plane(z=0.0)])
+    >>> isinstance(out, Ray)
+    True
+    """
     for _, ray in run_iter(ray, components, propagator=propagator):
         pass
     return ray
 
 
 def calculate_derivatives(ray: Ray, model: Sequence[Union[Component, Source]], order: int):
+    """Compute successive forward-mode derivatives of run_to_end w.r.t. the ray.
+
+    Parameters
+    ----------
+    ray : Ray
+        Input ray.
+    model : sequence of Component or Source
+        Model sequence.
+    order : int
+        Number of successive jacfwd calls (derivative order).
+
+    Returns
+    -------
+    derivs : list
+        List of derivative objects up to the given order.
+
+    Notes
+    -----
+    Uses `jax.jacfwd` repeatedly; primarily for experimentation.
+    TODO: Specify the exact structure of each derivative object.
+    """
     derivs = []
     current_func = run_to_end
     for _ in range(order):
@@ -86,6 +153,26 @@ def solve_model(
     model: Sequence[Union[Component, Source]],
     propagator: BasePropagator = FreeSpaceParaxial(),
 ):
+    """Compute per-step 5×5 ABCD matrices along the model using Jacobians.
+
+    Parameters
+    ----------
+    ray : Ray
+        Input ray.
+    model : sequence of Component or Source
+        Model elements in order.
+    propagator : BasePropagator, default FreeSpaceParaxial()
+        Propagation model between elements.
+
+    Returns
+    -------
+    abcd : jnp.ndarray, shape (num_steps, 5, 5)
+        ABCD matrices at each propagation/component step.
+
+    Notes
+    -----
+    Uses `jax.jacobian` and `custom_jacobian_matrix` internally.
+    """
     model_ray_jacobians = []
     for _, jac in run_iter(ray, model, transform=jacobian_transform, propagator=propagator):
         jac = custom_jacobian_matrix(jac)
@@ -98,6 +185,35 @@ def run_with_grads(
     model: Sequence[Union[Component, Source]],
     grad_vars: Sequence["PathBuilder"],
 ) -> tuple[Ray, dict[Sequence[Any], Ray]]:
+    """Run the model and compute Jacobians w.r.t. selected variables.
+
+    Parameters
+    ----------
+    input_ray : Ray
+        Initial ray; can be scalar or vectorized.
+    model : sequence of Component or Source
+        Model to execute.
+    grad_vars : sequence of PathBuilder
+        Variables to differentiate, selected by symbolic paths built with
+        `HasParamsMixin.params`.
+
+    Returns
+    -------
+    value : Ray
+        Final output ray.
+    grads : dict
+        Mapping from variable path (tuple of keys) to `Ray`-shaped Jacobian.
+
+    Notes
+    -----
+    Internally rebuilds the ray and model from flattened parameter lists.
+    Pure and JIT-friendly for static model/graph structures.
+
+    Raises
+    ------
+    RuntimeError
+        If a requested variable cannot be located in flattened parameters.
+    """
     ray_params, ray_tree = jax.tree.flatten(input_ray)
     model_params, model_tree = jax.tree.flatten(model)
 

@@ -1,12 +1,35 @@
 import jax.numpy as jnp
 import numpy as np
-from scipy.constants import e, m_e, h
-from temgym_core.ray import Ray
-import jax_dataclasses as jdc
 from numba import njit
 
 
 def custom_jacobian_matrix(ray_jac):
+    """Convert a nested Ray-Jacobian Pytree to a 5×5 homogeneous matrix.
+
+    Parameters
+    ----------
+    ray_jac : nested structure
+        Result of `jax.jacobian` applied to a function returning `Ray`.
+
+    Returns
+    -------
+    J : jnp.ndarray, shape (5, 5)
+        Matrix with rows corresponding to [x, y, dx, dy, 1] derivatives.
+
+    Notes
+    -----
+    Pure and JIT-friendly; structure mirrors `temgym_core.ray.Ray`. The final
+    row keeps the homogeneous variable constant.
+
+    Examples
+    --------
+    >>> import jax
+    >>> from temgym_core.ray import Ray
+    >>> f = lambda r: r
+    >>> J = custom_jacobian_matrix(jax.jacobian(f)(Ray.origin()))
+    >>> J.shape
+    (5, 5)
+    """
     return jnp.array(
         [
             [ray_jac.x.x, ray_jac.x.y, ray_jac.x.dx, ray_jac.x.dy, ray_jac.x._one],
@@ -26,6 +49,26 @@ def custom_jacobian_matrix(ray_jac):
 
 @njit
 def multi_cumsum_inplace(values, partitions, start):
+    """Compute multiple cumulative sums in-place with resets per partition.
+
+    Parameters
+    ----------
+    values : numpy.ndarray, shape (K,)
+        Values to be cumulatively summed. Mutated in-place.
+    partitions : numpy.ndarray, shape (R,)
+        Number of elements in each partition.
+    start : float
+        Initial value for each partition.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    Numba-compiled; operates in-place on NumPy arrays. Partitions must sum to
+    len(values).
+    """
     part_idx = 0
     current_part_len = partitions[part_idx]
     part_count = 0
@@ -43,6 +86,29 @@ def multi_cumsum_inplace(values, partitions, start):
 
 @njit
 def inplace_sum(px_y, px_x, mask, frame, buffer):
+    """Accumulate values into a 2D buffer at integer coordinates in-place.
+
+    Parameters
+    ----------
+    px_y : numpy.ndarray, int
+        Row indices.
+    px_x : numpy.ndarray, int
+        Column indices.
+    mask : numpy.ndarray, bool
+        Mask selecting valid entries to add.
+    frame : numpy.ndarray, float32
+        Values to add.
+    buffer : numpy.ndarray, float32 or int
+        Target accumulator; mutated in-place.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    Numba-compiled; does bounds checking and mask filtering.
+    """
     h, w = buffer.shape
     n = px_y.size
     for i in range(n):
@@ -56,6 +122,24 @@ def concentric_rings(
     num_points_approx: int,
     radius: float,
 ) -> np.ndarray:
+    """Generate approximately uniform samples on concentric rings.
+
+    Parameters
+    ----------
+    num_points_approx : int
+        Approximate number of points to generate.
+    radius : float
+        Maximum radius in metres (or radians for angular distributions).
+
+    Returns
+    -------
+    points : numpy.ndarray, shape (N, 2), float64
+        Coordinates (y, x) within the disc of given radius.
+
+    Notes
+    -----
+    Deterministic layout approximating uniform density.
+    """
     num_rings = max(
         1, int(np.floor((-1 + np.sqrt(1 + 4 * num_points_approx / np.pi)) / 2))
     )
@@ -96,9 +180,18 @@ def concentric_rings(
 
 
 def random_coords(num: int) -> np.ndarray:
-    # generate random points uniformly sampled in x/y
-    # within a centred circle of radius 0.5
-    # return (y, x)
+    """Draw uniformly random points within a unit-radius disc.
+
+    Parameters
+    ----------
+    num : int
+        Number of points to draw (approximate; uses rejection sampling).
+
+    Returns
+    -------
+    yx : numpy.ndarray, shape (N, 2), float64
+        Coordinates (y, x) in [-1, 1] within the unit disc.
+    """
     yx = np.random.uniform(
         -1,
         1,
@@ -111,6 +204,18 @@ def random_coords(num: int) -> np.ndarray:
 
 
 def try_ravel(val):
+    """Ravel an array-like if possible, otherwise return as-is.
+
+    Parameters
+    ----------
+    val : Any
+        Input array-like or scalar.
+
+    Returns
+    -------
+    out : Any
+        Flattened array or original object.
+    """
     try:
         return val.ravel()
     except AttributeError:
@@ -118,6 +223,20 @@ def try_ravel(val):
 
 
 def try_reshape(val, maybe_has_shape):
+    """Reshape a value to match a reference's shape if possible.
+
+    Parameters
+    ----------
+    val : Any
+        Array-like to reshape.
+    maybe_has_shape : Any
+        Reference object providing target `.shape` if present.
+
+    Returns
+    -------
+    out : Any
+        Reshaped array or original value.
+    """
     try:
         return val.reshape(maybe_has_shape.shape)
     except AttributeError:
