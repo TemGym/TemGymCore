@@ -56,12 +56,10 @@ jobs:
         with:
             ssh-private-key: ${{ secrets.MC_DEPLOY_KEY }}
       - name: checkout mc
+        run: git clone git@github.com:TemGym/MicroscopeCalibration.git
+      - name: install mc + test
+        working-directory: ./MicroscopeCalibration
         run: |
-          git clone git@github.com:TemGym/MicroscopeCalibration.git
-          cd MicroscopeCalibration
-      - name: install mc
-        run: uv pip install --system .
-      - name: install test_requirements
-        run: uv pip install --system -r test_requirements.txt
-      - name: install test_requirements
-        run: pytest tests/
+          uv pip install --system .
+          uv pip install --system -r test_requirements.txt
+          pytest tests/
