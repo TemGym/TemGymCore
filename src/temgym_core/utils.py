@@ -95,37 +95,6 @@ def concentric_rings(
     )
 
 
-def fibonacci_spiral(
-    nb_samples: int,
-    radius: float,
-    alpha=2,
-    jnp=jnp,
-):
-    # From https://github.com/matt77hias/fibpy/blob/master/src/sampling.py
-    # Fibonacci spiral sampling in a unit circle
-    # Alpha parameter determines smoothness of boundary - default of 2 means a smooth boundary
-    # 0 for a rough boundary.
-    # Returns a tuple of y, x coordinates of the samples
-
-    ga = jnp.pi * (3.0 - jnp.sqrt(5.0))
-
-    # Boundary points
-    jnp_boundary = jnp.round(alpha * jnp.sqrt(nb_samples))
-
-    ii = jnp.arange(nb_samples)
-    rr = jnp.where(
-        ii > nb_samples - (jnp_boundary + 1),
-        radius,
-        radius * jnp.sqrt((ii + 0.5) / (nb_samples - 0.5 * (jnp_boundary + 1))),
-    )
-    rr[0] = 0.0
-    phi = ii * ga
-    y = rr * jnp.sin(phi)
-    x = rr * jnp.cos(phi)
-
-    return y, x
-
-
 def random_coords(num: int) -> np.ndarray:
     # generate random points uniformly sampled in x/y
     # within a centred circle of radius 0.5
@@ -139,95 +108,6 @@ def random_coords(num: int) -> np.ndarray:
     mask = radii < 1
     yx = yx[mask, :]
     return yx
-
-
-def calculate_wavelength(phi_0: float):
-    return h / (2 * abs(e) * m_e * phi_0) ** (1 / 2)
-
-
-def calculate_phi_0(wavelength: float):
-    return h**2 / (2 * wavelength**2 * abs(e) * m_e)
-
-
-def zero_phase_1D(u, idx_x):
-    u_centre = u[idx_x]
-    phase_difference = 0 - jnp.angle(u_centre)
-    u = u * jnp.exp(1j * phase_difference)
-    return u
-
-
-def zero_phase(u, idx_x, idx_y):
-    u_centre = u[idx_x, idx_y]
-    phase_difference = 0 - jnp.angle(u_centre)
-    u = u * jnp.exp(1j * phase_difference)
-    return u
-
-
-@jdc.pytree_dataclass
-# A component that should give a singular jacobian used for testing
-class SingularComponent:
-    def __call__(self, ray: Ray):
-        new_x = ray.x
-        new_y = ray.x
-        return Ray(
-            x=new_x,
-            y=new_y,
-            dx=ray.dx,
-            dy=ray.dy,
-            _one=ray._one,
-            pathlength=ray.pathlength,
-            z=ray.z,
-        )
-
-
-def smiley(size):
-    """
-    Smiley face test object from https://doi.org/10.1093/micmic/ozad021
-    """
-    obj = np.ones((size, size), dtype=np.complex64)
-    y, x = np.ogrid[-size // 2: size // 2, -size // 2: size // 2]
-
-    outline = (((y * 1.2) ** 2 + x**2) > (110 / 256 * size) ** 2) & (
-        ((y * 1.2) ** 2 + x**2) < (120 / 256 * size) ** 2
-    )
-    obj[outline] = 0.0
-
-    left_eye = ((y + 40 / 256 * size) ** 2 + (x + 40 / 256 * size) ** 2) < (
-        20 / 256 * size
-    ) ** 2
-    obj[left_eye] = 0
-    right_eye = (np.abs(y + 40 / 256 * size) < 15 / 256 * size) & (
-        np.abs(x - 40 / 256 * size) < 30 / 256 * size
-    )
-    obj[right_eye] = 0
-
-    nose = (y + 20 / 256 * size + x > 0) & (x < 0) & (y < 10 / 256 * size)
-
-    obj[nose] = (0.05j * x + 0.05j * y)[nose]
-
-    mouth = (
-        (((y * 1) ** 2 + x**2) > (50 / 256 * size) ** 2)
-        & (((y * 1) ** 2 + x**2) < (70 / 256 * size) ** 2)
-        & (y > 20 / 256 * size)
-    )
-
-    obj[mouth] = 0
-
-    tongue = (
-        ((y - 50 / 256 * size) ** 2 + (x - 50 / 256 * size) ** 2)
-        < (20 / 256 * size) ** 2
-    ) & ((y**2 + x**2) > (70 / 256 * size) ** 2)
-    obj[tongue] = 0
-
-    # This wave modulation introduces a strong signature in the diffraction pattern
-    # that allows to confirm the correct scale and orientation.
-    signature_wave = np.exp(1j * (3 * y + 7 * x) * 2 * np.pi / size)
-
-    obj += 0.3 * signature_wave - 0.3
-
-    obj = np.abs(obj)
-
-    return obj
 
 
 def try_ravel(val):
