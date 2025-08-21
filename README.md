@@ -51,6 +51,68 @@ Run the ray through the model and query the output coordinates
 >>> print(ray_out)
 Ray(x=0.275, y=0.4, dx=0.05, dy=0.0, z=1.0, pathlength=0.89)
 ```
+
+## What is a ray, a model, and what are components?
+A ray is an object that carries coordinate transformations in an optical system forward,
+a model is simply a sequence of components, and components are at their core generic functions that take a ray as input, 
+apply some generic operations to the ray, and return a new ray. 
+
+To create a component we need two parts:
+
+A dataclass with some input parameters
+```python
+@jdc.pytree_dataclass
+class Lens(Component):
+    z: float
+    focal_length: float
+```
+and a __call__ method to operate on a ray
+```
+    def __call__(self, ray: Ray):
+        f = self.focal_length
+
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+
+        new_dx = -x / f + dx
+        new_dy = -y / f + dy
+
+        pathlength = ray.pathlength - (x**2 + y**2) / (2 * f)
+        one = ray._one * 1.0
+
+        return Ray(
+            x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=ray.z
+        )
+```
+
+Functions can apply any operation available to jax on a ray, and gradients with respect to any component parameter can be found by writing a wrapper function.
+
+## Closer look at sending a ray through the model
+The primary function to propagate rays to the end - 
+``` python 
+run_to_end(ray, model)
+```
+is a convenience function that will repeatedly propagate a ray from it's location to the next component in the model (or a specified plane in free space)
+until the last component in the model via each components function, and will simply return the last ray position
+
+It uses 
+``` python
+run_iter(ray, components) ...
+
+    for component in components:
+        if isinstance(component, (Source, Component)):
+            distance = component.z - ray.z
+
+            if distance != 0.:
+                propagator_d = propagator.with_distance(distance)
+                ray, out = transform(propagator_d)(ray)
+                yield propagator_d, out
+
+        ray, out = transform(component)(ray)
+        yield component, out
+```
+which can iteratively step through each free space propagation or component in the model, and apply the appropriate specified function from that component to the ray.
+It uses the transform operation to enable the calculation of gradients through each operation if requested. 
+
 ## Gradients through the model (w.r.t. parameters)
 
 Write a wrapper to get gradients of a ray through the model with respect to a specific parameter. 
