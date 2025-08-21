@@ -58,7 +58,7 @@ jobs:
           ssh-add - <<< '${{ secrets.MC_DEPLOY_KEY }}'
       - name: checkout mc
         run: |
-          git checkout git@github.com:TemGym/MicroscopeCalibration.git    
+          git clone git@github.com:TemGym/MicroscopeCalibration.git
           cd MicroscopeCalibration
       - name: install mc
         run: uv pip install --system .
