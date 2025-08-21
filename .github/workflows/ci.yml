@@ -36,7 +36,6 @@ jobs:
       #   env:
       #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   mc-tests:
-  tests:
     strategy:
       matrix:
         python_version: ["3.12"]
