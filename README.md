@@ -186,12 +186,15 @@ $$
 x_2\\
 \theta_{x,2}\\
 1
-\end{bmatrix} =
-\begin{bmatrix}
+\end{bmatrix}
+=
+\left[
+\begin{array}{ccc}
 A & B & t\\
 C & D & \kappa\\
 0 & 0 & 1
-\end{bmatrix}
+\end{array}
+\right]
 \begin{bmatrix}
 x_1\\
 \theta_{x,1}\\
