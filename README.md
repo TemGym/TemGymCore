@@ -105,7 +105,7 @@ until end. The basic functionality of `run_to_end` is the following:
     ray = ...
     propagator = FreeSpaceParaxial()
     # step through all components in the model
-    for component in components:
+    for component in model:
         # compute the distance between the current ray and the component
         distance = component.z - ray.z
         if distance != 0.:
