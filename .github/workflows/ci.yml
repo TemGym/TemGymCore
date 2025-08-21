@@ -52,10 +52,9 @@ jobs:
         run: python3 -m pip install uv
       - name: install core
         run: uv pip install --system .
-      - name: add deploy key
-        run: |
-          eval `ssh-agent -s`
-          ssh-add - <<< '${{ secrets.MC_DEPLOY_KEY }}'
+      - uses: webfactory/ssh-agent@v0.9.1
+        with:
+            ssh-private-key: ${{ secrets.MC_DEPLOY_KEY }}
       - name: checkout mc
         run: |
           git clone git@github.com:TemGym/MicroscopeCalibration.git
