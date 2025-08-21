@@ -44,7 +44,7 @@ detector = Detector(z=1.0, pixel_size=(0.01, 0.01), shape=(128, 128))
 model = (lens, detector)
 ```
 
-Run the ray through the model and query the output coordinates
+Run the ray through the model and query the output coordinates:
 
 ```python
 >>> ray_out = run_to_end(ray_in, model)
@@ -53,21 +53,25 @@ Ray(x=0.275, y=0.4, dx=0.05, dy=0.0, z=1.0, pathlength=0.89)
 ```
 
 ## What is a ray, a model, and what are components?
-A ray is an object that carries coordinate transformations in an optical system forward,
-a model is simply a sequence of components, and components are at their core generic functions that take a ray as input, 
-apply some generic operations to the ray, and return a new ray. 
 
-To create a component we need two parts:
+- A ray is an set of coordinates and slopes in an optical system
+- A model is a sequence of components
+- Components are a function which take a ray as input, apply operation, and return a new ray
 
-A dataclass with some input parameters
+To create a standard Component we need two parts:
+
+A [Jax dataclass](https://github.com/brentyi/jax_dataclasses) that holds parameters:
+
 ```python
 @jdc.pytree_dataclass
 class Lens(Component):
     z: float
     focal_length: float
 ```
-and a __call__ method to operate on a ray
-```
+
+and a `__call__` method implemented on it to operate on a ray, so that we can write `ray_out = component(ray_in)`:
+
+```python
     def __call__(self, ray: Ray):
         f = self.focal_length
 
@@ -84,34 +88,34 @@ and a __call__ method to operate on a ray
         )
 ```
 
-Functions can apply any operation available to jax on a ray, and gradients with respect to any component parameter can be found by writing a wrapper function.
+Functions can apply any operation available to Jax on a ray.
 
 ## Closer look at sending a ray through the model
-The primary function to propagate rays to the end - 
+
+The primary function which propagates rays through a `model`:
+
 ``` python 
 run_to_end(ray, model)
 ```
-is a convenience function that will repeatedly propagate a ray from it's location to the next component in the model (or a specified plane in free space)
-until the last component in the model via each components function, and will simply return the last ray position
 
-It uses 
+is a convenience function that repeatedly propagates a ray from it's location to the next component in the model
+until end. The basic functionality of `run_to_end` is the following:
+
 ``` python
-run_iter(ray, components) ...
-
+    ray = ...
+    propagator = FreeSpaceParaxial()
+    # step through all components in the model
     for component in components:
-        if isinstance(component, (Source, Component)):
-            distance = component.z - ray.z
-
-            if distance != 0.:
-                propagator_d = propagator.with_distance(distance)
-                ray, out = transform(propagator_d)(ray)
-                yield propagator_d, out
-
-        ray, out = transform(component)(ray)
-        yield component, out
+        # compute the distance between the current ray and the component
+        distance = component.z - ray.z
+        if distance != 0.:
+            # propagate the ray over the distance
+            propagator_d = propagator.with_distance(distance)
+            ray = propagator_d(ray)
+        # apply the component to the propagated ray
+        ray = component(ray)
+    return ray
 ```
-which can iteratively step through each free space propagation or component in the model, and apply the appropriate specified function from that component to the ray.
-It uses the transform operation to enable the calculation of gradients through each operation if requested. 
 
 ## Gradients through the model (w.r.t. parameters)
 
