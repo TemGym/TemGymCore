@@ -159,9 +159,65 @@ def run_with_params(x):
 0.0
 ```
 
-## Jacobian and ABCD matrix
+## Jacobian and ABCD matrices
 
-The full Jacobian of `run_to_end` w.r.t. the input ray gives the 5×5 ray-transfer (ABCD) form when formatted. You can compute it directly with JAX:
+The structure of the ray object becomes clearer when we introduce the concept of $ABCD$ transfer matrices from optics: 
+
+$ABCD$ transfer matrices are used to describe how an optical component affects the position and slope 
+of a light or electron ray which is made up of the following coordinates:
+
+$$
+r = 
+\begin{bmatrix}
+x_{1}\\
+\theta_{1}\\
+1
+\end{bmatrix}
+$$
+
+ * $x_{1}$ -  input position
+ * $\theta_{1}$ - input slope
+ * 1 - an extra variable to carry offsets through the optical system
+
+$ABCD$ matrices act on a ray in the following way: 
+
+$$
+\begin{bmatrix}
+x_2\\
+\theta_{x,2}\\
+1
+\end{bmatrix} =
+\begin{bmatrix}
+A & B & t\\
+C & D & \kappa\\
+0 & 0 & 1
+\end{bmatrix}
+\begin{bmatrix}
+x_1\\
+\theta_{x,1}\\
+1
+\end{bmatrix}.
+$$
+
+with $t$ and $\kappa$ representing offsets in position and slope in the system. 
+
+A set of chosen $ABCD$ values can be combined to describe how an optical component modifies a ray position or slope.
+
+For instance, to describe how a ray propagating in free space moves a certain distance $z$
+we can use the $ABCD$ matrix, with $A=0,\  B=z,\  C=0,\  D=1$
+
+$$
+Free \ Space = 
+\begin{bmatrix}
+1 & z & 0 \\
+0 & 1 & 0 \\
+0 & 0 & 1
+\end{bmatrix}
+$$
+
+See [here](https://en.wikipedia.org/wiki/Ray_transfer_matrix_analysis) for more examples of $ABCD$ matrices.
+
+Using TemGym, one can create a ray and a model, and call ```jax.jacobian``` on the ```run_to_end``` function to calculate the partial derivatives of the output ray with respect to the input ray, which will directly enable us to complete $ABCD$ transfer matrix of the system, and in $2D$ with an offset column, is of shape $5 \times 5$. In particular, $ABCD$ matrices are a helpful tool to propagate rays through any number of components in a model in one step, without the burden of propgating from one component to the next each time. 
 
 ```python
 from temgym_core.utils import custom_jacobian_matrix
@@ -176,7 +232,7 @@ print(ABCD)  # 5x5 matrix
  [ 0.    0.    0.    0.    1.  ]]
 ```
 
-Or get the ABCD matrices at each propagation/component step:
+If needed one can also obtain the ABCD matrices at each propagation/component step:
 
 ```python
 from temgym_core.run import solve_model
