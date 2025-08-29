@@ -186,8 +186,7 @@ $$
 x_2\\
 \theta_{x,2}\\
 1
-\end{bmatrix}
-=
+\end{bmatrix}=
 \left[
 \begin{array}{ccc}
 A & B & t\\
