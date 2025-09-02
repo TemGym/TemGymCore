@@ -1,7 +1,6 @@
 import dataclasses
 import jax_dataclasses as jdc
 import jax.numpy as jnp
-
 from .tree_utils import HasParamsMixin
 
 
@@ -92,6 +91,9 @@ class Ray(HasParamsMixin):
         params = {k: v[arg] for k, v in dataclasses.asdict(self).items()}
         return type(self)(**params)
 
+    def to_ray(self):
+        return self
+
     def item(self):
         """Convert a single-element ray to scalars.
 
@@ -153,3 +155,43 @@ class Ray(HasParamsMixin):
             pathlength=pathlength if pathlength is not None else self.pathlength,
             _one=self._one,
         )
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class GaussianRay(Ray):
+    amplitude: float
+    waist_xy: jnp.ndarray
+    radii_of_curv: jnp.ndarray
+    wavelength: float
+    theta: float
+
+    def to_ray(self):
+        return Ray(x=self.x, y=self.y, dx=self.dx, dy=self.dy, z=self.z, pathlength=self.pathlength, _one=self._one)
+
+    @property
+    def q_inv(self):
+        w_x, w_y = self.waist_xy
+        R_x, R_y = self.radii_of_curv
+        wavelength = self.wavelength
+        # 1/q on each principal axis
+        inv_qx = jnp.where(
+            jnp.isinf(R_x),
+            0.0,
+            1.0 / R_x
+        ) + 1j * wavelength / (jnp.pi * w_x**2)
+
+        inv_qy = jnp.where(
+            jnp.isinf(R_y),
+            0.0,
+            1.0 / R_y
+        ) + 1j * wavelength / (jnp.pi * w_y**2)
+        return inv_qx, inv_qy
+
+    @property
+    def Q_inv(self):
+        inv_qx, inv_qy = self.q_inv
+        Q_inv_diag = jnp.array([[inv_qx, jnp.zeros_like(inv_qx)], [jnp.zeros_like(inv_qx), inv_qy]])
+        c, s = jnp.cos(self.theta), jnp.sin(self.theta)
+        R = jnp.array([[c, -s], [s, c]])
+
+        return jnp.transpose(R @ Q_inv_diag @ R.T)
