@@ -98,7 +98,7 @@ class PointSource(Source):
     """
     z: float
     semi_conv: float
-    offset_xy: CoordsXY = (0.0, 0.0)
+    offset_xy: CoordsXY = CoordsXY(x=0.0, y=0.0)
 
     def generate_array(self, num: int, random: bool = False) -> np.ndarray:
         """Generate rays with varying slopes within a cone of semi-convergence.
