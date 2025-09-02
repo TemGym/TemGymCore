@@ -3,7 +3,7 @@ import jax
 from .grid import Grid
 from .run import run_to_end
 from .utils import custom_jacobian_matrix
-
+from .ray import GaussianRay
 
 def w_z(w0, z, z_r):
     return w0 * jnp.sqrt(1 + (z / z_r) ** 2)
@@ -134,29 +134,37 @@ def propagate_misaligned_gaussian_jax_scan(
     return out  # (npix,)
 
 
-def get_image(input_rays, model, amplitudes, Q1_invs, wavelength):
+def get_image(gaussian_rays, model):
+
+    rays = gaussian_rays
+    assert isinstance(rays, GaussianRay)
 
     grid = model[-1]
     assert isinstance(grid, Grid)
-    r2 = grid.coords
-    shape = grid.shape
 
     vmap_fn = jax.vmap(jax.jacobian(run_to_end), in_axes=(0, None))
-    output_tm = vmap_fn(input_rays, model)
+
+    central_rays = rays.to_ray()
+    output_tm = vmap_fn(central_rays, model)
 
     model_ray_jacobians = custom_jacobian_matrix(output_tm)
     ABCDs = jnp.array(model_ray_jacobians)
 
-    r1ms = jnp.stack([input_rays.x, input_rays.y], axis=-1)
-    theta1ms = jnp.stack([input_rays.dx, input_rays.dy], axis=-1)
-    A = ABCDs[:, 0:2, 0:2]   # (nb,2,2)
-    B = ABCDs[:, 0:2, 2:4]   # (nb,2,2)
-    C = ABCDs[:, 2:4, 0:2]   # (nb,2,2)
-    D = ABCDs[:, 2:4, 2:4]   # (nb,2,2)
+    amplitudes = rays.amplitude
+
+    Q1_invs = rays.Q_inv  # Should be of shape n x 2 x 2
+    As = ABCDs[:, 0:2, 0:2]   # (nb,2,2)
+    Bs = ABCDs[:, 0:2, 2:4]   # (nb,2,2)
+    Cs = ABCDs[:, 2:4, 0:2]   # (nb,2,2)
+    Ds = ABCDs[:, 2:4, 2:4]   # (nb,2,2)
     es = ABCDs[:, 0:2, 4]  # (nb,2)
-    k = 2 * jnp.pi / wavelength
+    r2 = grid.coords
+    r1ms = jnp.stack([central_rays.x, central_rays.y], axis=-1)
+    theta1ms = jnp.stack([central_rays.dx, central_rays.dy], axis=-1)
+    wavelengths = rays.wavelength
+    k = 2 * jnp.pi / wavelengths
 
     output_field = propagate_misaligned_gaussian_jax_scan(
-        amplitudes, Q1_invs, A, B, C, D, es, r2, r1ms, theta1ms, k
-    ).reshape(shape)
+        amplitudes, Q1_invs, As, Bs, Cs, Ds, es, r2, r1ms, theta1ms, k
+    ).reshape(grid.shape)
     return output_field
