@@ -176,15 +176,15 @@ class GaussianRay(Ray):
         # 1/q on each principal axis
         inv_qx = jnp.where(
             jnp.isinf(R_x),
-            0.0,
-            1.0 / R_x
-        ) + 1j * wavelength / (jnp.pi * w_x**2)
+            -1 / (1j * (jnp.pi * w_x**2) / wavelength),
+            1.0 / R_x - 1j * wavelength / (jnp.pi * w_x**2)
+        )
 
         inv_qy = jnp.where(
             jnp.isinf(R_y),
-            0.0,
-            1.0 / R_y
-        ) + 1j * wavelength / (jnp.pi * w_y**2)
+            -1 / (1j * (jnp.pi * w_y**2) / wavelength),
+            1.0 / R_y - 1j * wavelength / (jnp.pi * w_y**2)
+        )
         return inv_qx, inv_qy
 
     @property
