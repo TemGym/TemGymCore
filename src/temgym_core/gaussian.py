@@ -14,7 +14,10 @@ def zR(w0, wavelength):
 
 
 def R(z, z_r):
-    return z * (1 + (z_r / z) ** 2)
+    cond = jnp.abs(z) < 1e-10
+    z_r_over_z = jax.lax.cond(cond, lambda op: 0.0, lambda op: op[1] / op[0], (z, z_r))
+    # z_r_over_z = jnp.where(cond, 0.0, z_r / z) - this gave me an error and I don't know why it tried to evaluate z_r / z
+    return jax.lax.cond(cond, lambda _: jnp.inf, lambda _: z * (1 + z_r_over_z ** 2), operand=None)
 
 
 def gaussian_beam(x, y, q_inv, k, offset_x=0, offset_y=0):
@@ -31,9 +34,15 @@ def Qinv_ABCD(Qinv, A, B, C, D):
 def q_inv(z, w0, wl):
     z_r = zR(w0, wl)
     cond = jnp.abs(z) < 1e-10
-    q0 = -1 / (1j * (jnp.pi * w0**2) / wl)
-    q1 = 1 / R(z, z_r) - 1j * wl / (jnp.pi * w_z(w0, z, z_r)**2)
-    return jnp.where(cond, q0, q1)
+    wz_val = w_z(w0, z, z_r)
+    R_val = R(z, z_r)
+
+    q_inv = jnp.where(
+        cond,
+        -1.0 / (1j * (jnp.pi * w0**2) / wl),
+        1.0 / R_val - 1j * wl / (jnp.pi * wz_val**2),
+    )
+    return q_inv
 
 
 def matrix_vector_mul(M, v):
