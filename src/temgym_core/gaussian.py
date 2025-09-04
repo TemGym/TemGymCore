@@ -3,7 +3,7 @@ import jax
 from .grid import Grid
 from .run import run_to_end
 from .utils import custom_jacobian_matrix
-from .ray import GaussianRay
+
 
 def w_z(w0, z, z_r):
     return w0 * jnp.sqrt(1 + (z / z_r) ** 2)
@@ -77,6 +77,10 @@ def matrix_linear_mul(v, M, w):
     return jnp.einsum('i,ij,nj->n', v, M, w)
 
 
+def matrix_matrix_matrix_mul(M1, M2, M3):
+    return jnp.einsum('nij,njk,npk->nip', M1, M2, M3)
+
+
 def _beam_field(
     amp, Q1_inv, Q2_inv, r2, r1m, theta1m, k, A, B, e
 ):
@@ -135,6 +139,7 @@ def propagate_misaligned_gaussian_jax_scan(
 
 
 def get_image(gaussian_rays, model):
+    from .ray import GaussianRay
 
     rays = gaussian_rays
     assert isinstance(rays, GaussianRay)
