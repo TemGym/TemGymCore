@@ -170,8 +170,8 @@ class GaussianRay(Ray):
 
     @property
     def q_inv(self):
-        w_x, w_y = self.waist_xy
-        R_x, R_y = self.radii_of_curv
+        w_x, w_y = self.waist_xy.T
+        R_x, R_y = self.radii_of_curv.T
         wavelength = self.wavelength
         # 1/q on each principal axis
         inv_qx = jnp.where(
@@ -189,9 +189,22 @@ class GaussianRay(Ray):
 
     @property
     def Q_inv(self):
-        inv_qx, inv_qy = self.q_inv
-        Q_inv_diag = jnp.array([[inv_qx, jnp.zeros_like(inv_qx)], [jnp.zeros_like(inv_qx), inv_qy]])
-        c, s = jnp.cos(self.theta), jnp.sin(self.theta)
-        R = jnp.array([[c, -s], [s, c]])
+        from .gaussian import matrix_matrix_matrix_mul
 
-        return jnp.transpose(R @ Q_inv_diag @ R.T)
+        inv_qx, inv_qy = self.q_inv
+        Q_inv_diag = jnp.stack(
+            [
+                jnp.stack([inv_qx, jnp.zeros_like(inv_qx)], axis=-1),
+                jnp.stack([jnp.zeros_like(inv_qx), inv_qy], axis=-1),
+            ],
+            axis=-2,
+        )
+        c, s = jnp.cos(self.theta), jnp.sin(self.theta)
+        R = jnp.stack(
+            [
+                jnp.stack([c, -s], axis=-1),
+                jnp.stack([s, c], axis=-1),
+            ],
+            axis=-2,
+        )
+        return matrix_matrix_matrix_mul(R, Q_inv_diag, R)
