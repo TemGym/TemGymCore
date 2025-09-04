@@ -3,7 +3,7 @@ import jax
 from .grid import Grid
 from .run import run_to_end
 from .utils import custom_jacobian_matrix
-
+from dataclasses import fields
 
 def w_z(w0, z, z_r):
     return w0 * jnp.sqrt(1 + (z / z_r) ** 2)
@@ -137,12 +137,12 @@ def propagate_misaligned_gaussian_jax_scan(
     Q2_inv = Qinv_ABCD(Q1_inv, A, B, C, D)  # (nb,2,2)
 
     def body(acc, xs):
-        a_i, q1_i, q2_i, r1_i, t1_i, A_i, B_i, e_i = xs
-        f = _beam_field(a_i, q1_i, q2_i, r2, r1_i, t1_i, k, A_i, B_i, e_i)  # (npix,)
+        a_i, q1_i, q2_i, r1_i, t1_i, A_i, B_i, e_i, k_i = xs
+        f = _beam_field(a_i, q1_i, q2_i, r2, r1_i, t1_i, k_i, A_i, B_i, e_i)  # (npix,)
         return acc + f, None
 
     init = jnp.zeros((npix,), dtype=jnp.complex128)
-    xs = (amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e)
+    xs = (amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, k)
     out, _ = jax.lax.scan(body, init, xs)
     return out  # (npix,)
 
@@ -153,11 +153,15 @@ def get_image(gaussian_rays, model):
     rays = gaussian_rays
     assert isinstance(rays, GaussianRay)
 
+    n_rays = rays.amplitude.shape[0]
+    for param in fields(rays):
+        if getattr(rays, param.name).shape[0] != n_rays:
+            assert False, f"All ray parameters must have same leading dimension, but {param.name} has shape {getattr(rays, param.name).shape}"
+
     grid = model[-1]
     assert isinstance(grid, Grid)
 
     vmap_fn = jax.vmap(jax.jacobian(run_to_end), in_axes=(0, None))
-
     central_rays = rays.to_ray()
     output_tm = vmap_fn(central_rays, model)
 
