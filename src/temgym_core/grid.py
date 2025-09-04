@@ -98,6 +98,24 @@ class Grid:
         coords_xy = jnp.stack((coords_x, coords_y), axis=-1).reshape(-1, 2)
         return coords_xy
 
+    @property
+    def coords_1d(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return 1D coordinates for x and y dimensions in metres.
+
+        Returns
+        -------
+        x_coords : jnp.ndarray, shape (W,), float32
+            X coordinates of pixel centres along the first row.
+        y_coords : jnp.ndarray, shape (H,), float32
+            Y coordinates of pixel centres along the first column.
+        """
+        yy_px, xx_px = self.coords_px
+        # Get x_coords from first row
+        x_coords = self.pixels_to_metres((yy_px[0, :], xx_px[0, :]))[0]
+        # Get y_coords from first column
+        y_coords = self.pixels_to_metres((yy_px[:, 0], xx_px[:, 0]))[1]
+        return x_coords, y_coords
+
     def metres_to_pixels(self, coords: CoordsXY, cast: bool = True) -> PixelsYX:
         """Convert metric coordinates to pixel indices.
 
