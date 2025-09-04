@@ -235,3 +235,82 @@ def try_reshape(val, maybe_has_shape):
         return val.reshape(maybe_has_shape.shape)
     except AttributeError:
         return val
+
+
+def FresnelPropagator(u1, L, wavelength, z, xp=np):
+
+    M, N = u1.shape
+    dx = L / M
+
+    # build frequency coordinates without manual shifting
+    fx = xp.fft.fftfreq(N, d=dx)
+    fy = xp.fft.fftfreq(M, d=dx)
+    FX, FY = xp.meshgrid(fx, fy)
+
+    # transfer function in unshifted FFT domain
+    H = xp.exp(-1j * xp.pi * wavelength * z * (FX**2 + FY**2))
+
+    # forward FFT, multiply, and inverse FFT
+    U1 = xp.fft.fft2(u1)
+    U2 = H * U1
+    u2 = xp.fft.ifft2(U2)
+    return u2
+
+
+def fresnel_lens_imaging_solution(E0, Y, X, ps, lambda0, z1, f, z2):
+    k = 2 * np.pi / lambda0
+    L = E0.shape[0] * ps
+    E_lens = FresnelPropagator(E0, L, lambda0, z1).copy()
+    E_lens *= np.exp((-1j * k) / (2 * f) * (X ** 2 + Y ** 2)).copy()
+    E_final = FresnelPropagator(E_lens, L, lambda0, z2)
+
+    return E_final
+
+
+def zero_phase(u, idx_x, idx_y):
+    u_centre = u[idx_x, idx_y]
+    phase_difference = 0 - np.angle(u_centre)
+    u *= np.exp(1j * phase_difference)
+    return u
+
+
+def make_aperture(X, Y, aperture_ratio=0.1):
+    """
+    Generate a circular detector aperture mask.
+    X, Y           : meshgrid coordinates (m)
+    aperture_ratio : fraction of the detector diagonal to use as radius
+    """
+    detector_radius_x = np.max(np.abs(X))
+    aperture_radius = detector_radius_x * aperture_ratio
+    r2 = X**2 + Y**2
+    return r2 < aperture_radius**2
+
+
+def fibonacci_spiral(
+    nb_samples: int,
+    radius: float,
+    alpha=2,
+):
+    # From https://github.com/matt77hias/fibpy/blob/master/src/sampling.py
+    # Fibonacci spiral sampling in a unit circle
+    # Alpha parameter determines smoothness of boundary - default of 2 means a smooth boundary
+    # 0 for a rough boundary.
+    # Returns a tuple of y, x coordinates of the samples
+
+    ga = np.pi * (3.0 - np.sqrt(5.0))
+
+    # Boundary points
+    np_boundary = np.round(alpha * np.sqrt(nb_samples))
+
+    ii = np.arange(nb_samples)
+    rr = np.where(
+        ii > nb_samples - (np_boundary + 1),
+        radius,
+        radius * np.sqrt((ii + 0.5) / (nb_samples - 0.5 * (np_boundary + 1)))
+    )
+    rr[0] = 0.
+    phi = ii * ga
+    y = rr * np.sin(phi)
+    x = rr * np.cos(phi)
+
+    return y, x
