@@ -32,13 +32,14 @@ def custom_jacobian_matrix(ray_jac):
     """
     return jnp.stack(
         [
-            jnp.stack([ray_jac.x.x, ray_jac.x.y, ray_jac.x.dx, ray_jac.x.dy, ray_jac.x._one], axis=0),
-            jnp.stack([ray_jac.y.x, ray_jac.y.y, ray_jac.y.dx, ray_jac.y.dy, ray_jac.y._one], axis=0),
-            jnp.stack([ray_jac.dx.x, ray_jac.dx.y, ray_jac.dx.dx, ray_jac.dx.dy, ray_jac.dx._one], axis=0),
-            jnp.stack([ray_jac.dy.x, ray_jac.dy.y, ray_jac.dy.dx, ray_jac.dy.dy, ray_jac.dy._one], axis=0),
-            jnp.stack([ray_jac._one.x, ray_jac._one.y, ray_jac._one.dx, ray_jac._one.dy, ray_jac._one._one], axis=0),
-        ], axis=1
-    ).T
+            jnp.stack([ray_jac.x.x, ray_jac.x.y, ray_jac.x.dx, ray_jac.x.dy, ray_jac.x._one], axis=-1),
+            jnp.stack([ray_jac.y.x, ray_jac.y.y, ray_jac.y.dx, ray_jac.y.dy, ray_jac.y._one], axis=-1),
+            jnp.stack([ray_jac.dx.x, ray_jac.dx.y, ray_jac.dx.dx, ray_jac.dx.dy, ray_jac.dx._one], axis=-1),
+            jnp.stack([ray_jac.dy.x, ray_jac.dy.y, ray_jac.dy.dx, ray_jac.dy.dy, ray_jac.dy._one], axis=-1),
+            jnp.stack([ray_jac._one.x, ray_jac._one.y, ray_jac._one.dx, ray_jac._one.dy, ray_jac._one._one], axis=-1),
+        ],
+        axis=-2
+    )
 
 
 @njit
