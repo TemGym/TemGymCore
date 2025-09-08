@@ -115,6 +115,14 @@ class Ray(HasParamsMixin):
         }
         return type(self)(**params)
 
+    def to_vector(self):
+        params = {
+            k: jnp.atleast_1d(v)
+            for k, v
+            in dataclasses.asdict(self).items()
+        }
+        return type(self)(**params)
+
     def derive(
         self,
         x: float | None = None,
@@ -155,56 +163,3 @@ class Ray(HasParamsMixin):
             pathlength=pathlength if pathlength is not None else self.pathlength,
             _one=self._one,
         )
-
-
-@jdc.pytree_dataclass(kw_only=True)
-class GaussianRay(Ray):
-    amplitude: float
-    waist_xy: jnp.ndarray
-    radii_of_curv: jnp.ndarray
-    wavelength: float
-    theta: float
-
-    def to_ray(self):
-        return Ray(x=self.x, y=self.y, dx=self.dx, dy=self.dy, z=self.z, pathlength=self.pathlength, _one=self._one)
-
-    @property
-    def q_inv(self):
-        w_x, w_y = self.waist_xy.T
-        R_x, R_y = self.radii_of_curv.T
-        wavelength = self.wavelength
-        # 1/q on each principal axis
-        inv_qx = jnp.where(
-            jnp.isinf(R_x),
-            -1 / (1j * (jnp.pi * w_x**2) / wavelength),
-            1.0 / R_x - 1j * wavelength / (jnp.pi * w_x**2)
-        )
-
-        inv_qy = jnp.where(
-            jnp.isinf(R_y),
-            -1 / (1j * (jnp.pi * w_y**2) / wavelength),
-            1.0 / R_y - 1j * wavelength / (jnp.pi * w_y**2)
-        )
-        return inv_qx, inv_qy
-
-    @property
-    def Q_inv(self):
-        from .gaussian import matrix_matrix_matrix_mul
-
-        inv_qx, inv_qy = self.q_inv
-        Q_inv_diag = jnp.stack(
-            [
-                jnp.stack([inv_qx, jnp.zeros_like(inv_qx)], axis=-1),
-                jnp.stack([jnp.zeros_like(inv_qx), inv_qy], axis=-1),
-            ],
-            axis=-2,
-        )
-        c, s = jnp.cos(self.theta), jnp.sin(self.theta)
-        R = jnp.stack(
-            [
-                jnp.stack([c, -s], axis=-1),
-                jnp.stack([s, c], axis=-1),
-            ],
-            axis=-2,
-        )
-        return matrix_matrix_matrix_mul(R, Q_inv_diag, R)
