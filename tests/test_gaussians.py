@@ -604,18 +604,18 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         [unwrap_phase(analytic_phase_cross_section), unwrap_phase(fresnel_phase_cross_section)],
     )
 
-    plt.savefig("test_two_beam_interference_cross_section.png")
-    # Overview plots using helper
-    fig, _ = plot_overview(
-        analytic_gauss_image,
-        fresnel_gauss_image,
-        pixel_size[0]*shape[0],
-        pixel_size[1]*shape[1],
-        suffix="",
-        label1="Analytic Gaussian",
-        label2="Fresnel Gaussian"
-    )
-    plt.savefig("test_two_beam_interference_overview.png")
+    # plt.savefig("test_two_beam_interference_cross_section.png")
+    # # Overview plots using helper
+    # fig, _ = plot_overview(
+    #     analytic_gauss_image,
+    #     fresnel_gauss_image,
+    #     pixel_size[0]*shape[0],
+    #     pixel_size[1]*shape[1],
+    #     suffix="",
+    #     label1="Analytic Gaussian",
+    #     label2="Fresnel Gaussian"
+    # )
+    # plt.savefig("test_two_beam_interference_overview.png")
 
     # Assertions remain unchanged
     np.testing.assert_allclose(
