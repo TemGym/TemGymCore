@@ -1,10 +1,14 @@
 import pytest
+from numpy.testing import assert_allclose
+
 import numpy as np
 from jax import jacobian
 import jax.numpy as jnp
 import jax_dataclasses as jdc
 
-from temgym_core.components import ScanGrid, Detector, Descanner, DescanError, Component
+from temgym_core.components import (
+    ScanGrid, Detector, Descanner, Scanner, DescanError, Component, Plane
+)
 from temgym_core.ray import Ray
 from temgym_core.utils import custom_jacobian_matrix
 
@@ -86,8 +90,8 @@ def test_scan_grid_metres_to_pixels(xy, rotation, expected_pixel_coords):
         shape=(11, 11),
     )
     pixel_coords_y, pixel_coords_x = scan_grid.metres_to_pixels(xy)
-    np.testing.assert_allclose(pixel_coords_y, expected_pixel_coords[0], atol=1e-6)
-    np.testing.assert_allclose(pixel_coords_x, expected_pixel_coords[1], atol=1e-6)
+    assert_allclose(pixel_coords_y, expected_pixel_coords[0], atol=1e-6)
+    assert_allclose(pixel_coords_x, expected_pixel_coords[1], atol=1e-6)
 
 
 @pytest.mark.parametrize(
@@ -115,8 +119,8 @@ def test_scan_grid_pixels_to_metres(pixel_coords, rotation, expected_xy):
         shape=(11, 11),
     )
     metres_coords_x, metres_coords_y = scan_grid.pixels_to_metres(pixel_coords)
-    np.testing.assert_allclose(metres_coords_x, expected_xy[0], atol=1e-6)
-    np.testing.assert_allclose(metres_coords_y, expected_xy[1], atol=1e-6)
+    assert_allclose(metres_coords_x, expected_xy[0], atol=1e-6)
+    assert_allclose(metres_coords_y, expected_xy[1], atol=1e-6)
 
 
 @pytest.mark.parametrize(
@@ -137,8 +141,8 @@ def test_detector_metres_to_pixels(xy, expected_pixel_coords):
         flip_y=False,
     )
     pixel_coords_y, pixel_coords_x = detector.metres_to_pixels(xy)
-    np.testing.assert_allclose(pixel_coords_y, expected_pixel_coords[0], atol=1e-6)
-    np.testing.assert_allclose(pixel_coords_x, expected_pixel_coords[1], atol=1e-6)
+    assert_allclose(pixel_coords_y, expected_pixel_coords[0], atol=1e-6)
+    assert_allclose(pixel_coords_x, expected_pixel_coords[1], atol=1e-6)
 
 
 # Test cases for Detector:
@@ -161,46 +165,93 @@ def test_detector_pixels_to_metres(pixel_coords, expected_xy):
         flip_y=False,
     )
     metres_coords_x, metres_coords_y = detector.pixels_to_metres(pixel_coords)
-    np.testing.assert_allclose(metres_coords_x, expected_xy[0], atol=1e-6)
-    np.testing.assert_allclose(metres_coords_y, expected_xy[1], atol=1e-6)
+    assert_allclose(metres_coords_x, expected_xy[0], atol=1e-6)
+    assert_allclose(metres_coords_y, expected_xy[1], atol=1e-6)
+
+
+def test_plane():
+    x, y, dx, dy, z, pathlength = np.random.uniform(-5.0, 5.0, size=6)
+    ray = Ray(x=x, y=y, dx=dx, dy=dy, _one=1.0, z=0.0, pathlength=0.0)
+    comp = Plane(z=23)
+    out = comp(ray)
+    for attr in ('x', 'y', 'dx', 'dy', '_one', 'z', 'pathlength'):
+        assert getattr(ray, attr) == getattr(out, attr)
+
+
+def test_scanner_random():
+    # Randomly chosen scan position and ray parameters
+    sp_x, sp_y = np.random.uniform(-5.0, 5.0), np.random.uniform(-5.0, 5.0)
+    st_x, st_y = np.random.uniform(-0.5, 0.5), np.random.uniform(0.5, 0.5)
+    x, y, dx, dy, z, pathlength = np.random.uniform(-5.0, 5.0, size=6)
+
+    sc = Scanner(
+        z=23,
+        scan_pos_x=sp_x, scan_pos_y=sp_y,
+        scan_tilt_y=st_y, scan_tilt_x=st_x,
+    )
+    ray = Ray(x=x, y=y, dx=dx, dy=dy, _one=1.0, z=z, pathlength=pathlength)
+    out = sc(ray)
+
+    # Expected values computed using the same formula as in the implementation
+    exp_x = x + sp_x
+    exp_y = y + sp_y
+    exp_dx = dx + st_x
+    exp_dy = dy + st_y
+
+    assert_allclose(out.x, exp_x, atol=1e-6)
+    assert_allclose(out.y, exp_y, atol=1e-6)
+    assert_allclose(out.dx, exp_dx, atol=1e-6)
+    assert_allclose(out.dy, exp_dy, atol=1e-6)
+    for attr in ('_one', 'z', 'pathlength'):
+        assert getattr(ray, attr) == getattr(out, attr)
 
 
 def test_descanner_random_descan_error():
     # Randomly chosen scan position and ray parameters
     sp_x, sp_y = np.random.uniform(-5.0, 5.0), np.random.uniform(-5.0, 5.0)
-    x, y, dx, dy = np.random.uniform(-5.0, 5.0, size=4)
+    st_x, st_y = np.random.uniform(-0.5, 0.5), np.random.uniform(0.5, 0.5)
+    x, y, dx, dy, z, pathlength = np.random.uniform(-5.0, 5.0, size=6)
 
     # Randomly chosen non-zero descan error (length 12)
-    err = np.random.rand(12)
+    (pxo_pxi, pxo_pyi, pyo_pxi, pyo_pyi,
+     sxo_pxi, sxo_pyi, syo_pxi, syo_pyi,
+     offpxi, offpyi, offsxi, offsyi) = np.random.rand(12)
 
     err = DescanError(
-        pxo_pxi=err[0],
-        pxo_pyi=err[1],
-        pyo_pxi=err[2],
-        pyo_pyi=err[3],
-        sxo_pxi=err[4],
-        sxo_pyi=err[5],
-        syo_pxi=err[6],
-        syo_pyi=err[7],
-        offpxi=err[8],
-        offpyi=err[9],
-        offsxi=err[10],
-        offsyi=err[11],
+        pxo_pxi=pxo_pxi,
+        pxo_pyi=pxo_pyi,
+        pyo_pxi=pyo_pxi,
+        pyo_pyi=pyo_pyi,
+        sxo_pxi=sxo_pxi,
+        sxo_pyi=sxo_pyi,
+        syo_pxi=syo_pxi,
+        syo_pyi=syo_pyi,
+        offpxi=offpxi,
+        offpyi=offpyi,
+        offsxi=offsxi,
+        offsyi=offsyi,
     )
-    desc = Descanner(z=0.0, scan_pos_x=sp_x, scan_pos_y=sp_y, descan_error=err)
-    ray = Ray(x=x, y=y, dx=dx, dy=dy, _one=1.0, z=0.0, pathlength=0.0)
+    desc = Descanner(
+        z=23,
+        scan_pos_x=sp_x, scan_pos_y=sp_y,
+        scan_tilt_y=st_y, scan_tilt_x=st_x,
+        descan_error=err
+    )
+    ray = Ray(x=x, y=y, dx=dx, dy=dy, _one=1.0, z=z, pathlength=pathlength)
     out = desc(ray)
 
     # Expected values computed using the same formula as in the implementation
-    exp_x = x + sp_x * err[0] + sp_y * err[1] + err[8] - sp_x
-    exp_y = y + sp_x * err[2] + sp_y * err[3] + err[9] - sp_y
-    exp_dx = dx + sp_x * err[4] + sp_y * err[5] + err[10]
-    exp_dy = dy + sp_x * err[6] + sp_y * err[7] + err[11]
+    exp_x = x + sp_x * pxo_pxi + sp_y * pxo_pyi + offpxi - sp_x
+    exp_y = y + sp_x * pyo_pxi + sp_y * pyo_pyi + offpyi - sp_y
+    exp_dx = dx + sp_x * sxo_pxi + sp_y * sxo_pyi + offsxi - st_x
+    exp_dy = dy + sp_x * syo_pxi + sp_y * syo_pyi + offsyi - st_y
 
-    np.testing.assert_allclose(out.x, exp_x, atol=1e-6)
-    np.testing.assert_allclose(out.y, exp_y, atol=1e-6)
-    np.testing.assert_allclose(out.dx, exp_dx, atol=1e-6)
-    np.testing.assert_allclose(out.dy, exp_dy, atol=1e-6)
+    assert_allclose(out.x, exp_x, atol=1e-6)
+    assert_allclose(out.y, exp_y, atol=1e-6)
+    assert_allclose(out.dx, exp_dx, atol=1e-6)
+    assert_allclose(out.dy, exp_dy, atol=1e-6)
+    for attr in ('_one', 'z', 'pathlength'):
+        assert getattr(ray, attr) == getattr(out, attr)
 
 
 def test_descanner_offset_consistency():
@@ -223,7 +274,7 @@ def test_descanner_offset_consistency():
         offsyi=err[11],
     )
     desc = Descanner(
-        z=0.0, scan_pos_x=scan_pos_x, scan_pos_y=scan_pos_y, descan_error=err
+        z=11, scan_pos_x=scan_pos_x, scan_pos_y=scan_pos_y, descan_error=err
     )
 
     # generate a batch of random rays
@@ -251,7 +302,7 @@ def test_descanner_offset_consistency():
     # assert that all rays have received the same offset
     first = offsets[0]
     for off in offsets:
-        np.testing.assert_allclose(off, first, atol=1e-6)
+        assert_allclose(off, first, atol=1e-6)
 
 
 def test_descanner_jacobian_matrix():
@@ -294,7 +345,7 @@ def test_descanner_jacobian_matrix():
             [0.0, 0.0, 0.0, 0.0, 1.0],
         ]
     )
-    np.testing.assert_allclose(J, T, atol=1e-6)
+    assert_allclose(J, T, atol=1e-6)
 
 
 @pytest.mark.parametrize("repeat", tuple(range(5)))
@@ -319,7 +370,7 @@ def test_scan_grid_rotation_random(repeat):
     # expected rotated step vector = R(scan_rot) @ [step_x, 0]
     theta = np.deg2rad(scan_rot)
     exp_scan = np.array([np.cos(theta) * step[0], -np.sin(theta) * step[0]])
-    np.testing.assert_allclose(vec_scan, exp_scan, atol=1e-6)
+    assert_allclose(vec_scan, exp_scan, atol=1e-6)
 
 
 def test_singular_component_jacobian():

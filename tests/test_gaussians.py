@@ -17,7 +17,9 @@ from transfer_matrices import (
     calculate_z1_and_z2_from_M_and_f,
 )
 from skimage.restoration import unwrap_phase
-from temgym_core.utils import make_aperture, zero_phase, FresnelPropagator, fresnel_lens_imaging_solution
+from temgym_core.utils import (
+    make_aperture, zero_phase, FresnelPropagator, fresnel_lens_imaging_solution
+)
 import numpy as np
 import jax.numpy as jnp
 import jax
@@ -293,7 +295,9 @@ def test_gaussian_free_space_vs_fresnel():
         gauss_input.shape[1] // 2,
     )
 
-    fresnel_gauss_image = FresnelPropagator(gauss_input, det_edge_x, wavelength, propagation_distance)
+    fresnel_gauss_image = FresnelPropagator(
+        gauss_input, det_edge_x, wavelength, propagation_distance
+    )
 
     # Normalize amplitude so the maximum magnitude is 1
     analytic_gauss_image /= np.max(np.abs(analytic_gauss_image))
@@ -402,8 +406,10 @@ def test_gaussian_lens_vs_fresnel():
         gauss_input.shape[1] // 2,
     )
 
-    fresnel_gauss_image = fresnel_lens_imaging_solution(gauss_input, Y, X, pixel_size[0], wavelength,
-                                                       defocus+np.abs(z1), f, z2)
+    fresnel_gauss_image = fresnel_lens_imaging_solution(
+        gauss_input, Y, X, pixel_size[0], wavelength,
+        defocus+np.abs(z1), f, z2
+    )
 
     fresnel_gauss_image = zero_phase(
         fresnel_gauss_image,
@@ -563,11 +569,17 @@ def test_gaussian_two_beam_interference_vs_fresnel():
     tilted_shifted_plane_wave1 = np.exp(1j * k * dot[0])
     tilted_shifted_plane_wave2 = np.exp(1j * k * dot[1])
 
-    gaussian_misaligned1 = (gaussian_shifted_1 * tilted_shifted_plane_wave1).reshape(shape[0], shape[1])
-    gaussian_misaligned2 = (gaussian_shifted_2 * tilted_shifted_plane_wave2).reshape(shape[0], shape[1])
+    gaussian_misaligned1 = (
+        gaussian_shifted_1 * tilted_shifted_plane_wave1
+    ).reshape(shape[0], shape[1])
+    gaussian_misaligned2 = (
+        gaussian_shifted_2 * tilted_shifted_plane_wave2
+    ).reshape(shape[0], shape[1])
     gaussian_misaligned = gaussian_misaligned1 + gaussian_misaligned2
 
-    fresnel_gauss_image = fresnel_lens_imaging_solution(gaussian_misaligned, Y, X, pixel_size[0], wavelength, 0.0, f, z2)
+    fresnel_gauss_image = fresnel_lens_imaging_solution(
+        gaussian_misaligned, Y, X, pixel_size[0], wavelength, 0.0, f, z2
+    )
     fresnel_gauss_image = zero_phase(fresnel_gauss_image, shape[0]//2, shape[1]//2)
 
     # Normalize amplitude so the maximum magnitude is 1
