@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import math
 from jax import jacobian
+import jax.numpy as jnp
 
 from temgym_core.ray import Ray
 from temgym_core.propagator import FreeSpaceParaxial, FreeSpaceDirCosine
@@ -79,3 +80,14 @@ def test_propagate_jacobian_matrix():
         ]
     )
     np.testing.assert_allclose(J, T, atol=1e-6)
+
+
+def test_to_vector():
+    import dataclasses
+    # Check that if a ray is created with float values, and to_vector is called,
+    # the output is an jnp.ndarray
+    ray = Ray(x=1.0, y=2.0, dx=0.1, dy=0.2, z=3.0, pathlength=4.0)
+    v = ray.to_vector()
+
+    for k, v in dataclasses.asdict(v).items():
+        assert isinstance(v, jnp.ndarray)
