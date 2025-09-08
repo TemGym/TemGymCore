@@ -35,6 +35,7 @@ dependencies = [
   'numpy',
   'numba',
   'typing-extensions',
+  'sympy',
 ]
 
 [project.urls]
