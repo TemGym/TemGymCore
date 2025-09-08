@@ -6,10 +6,11 @@ from temgym_core.gaussian import (
     gaussian_beam,
     Qinv_ABCD,
     propagate_misaligned_gaussian_jax_scan,
-    make_gaussian_image
+    make_gaussian_image,
+    evaluate_gaussian_input_image,
+    GaussianRay
 )
 
-from temgym_core.gaussian import GaussianRay
 from temgym_core.source import ParallelBeam
 from temgym_core.components import Detector, Lens
 
@@ -22,8 +23,8 @@ import numpy as np
 import jax.numpy as jnp
 import jax
 import matplotlib.pyplot as plt
-jax.config.update("jax_enable_x64", True)
 
+jax.config.update("jax_enable_x64", True)
 
 def plot_cross_sections(
     x,
@@ -131,6 +132,35 @@ def plot_overview(field1, field2, det_size_x, det_size_y,
     return fig, axs
 
 
+def _make_single_gaussian_ray_at(x0, y0, dx, dy, wavelength=500e-9, wo=1e-4):
+    xs = jnp.array([x0])
+    ys = jnp.array([y0])
+    dxs = jnp.array([dx])
+    dys = jnp.array([dy])
+    zs = jnp.array([0.0])
+    pathlengths = jnp.array([0.0])
+    ones = jnp.array([1.0])
+    amplitudes = jnp.array([1.0])
+    radii_of_curv = jnp.array([[jnp.inf, jnp.inf]])
+    theta = jnp.array([0.0])
+    wavelengths = jnp.array([wavelength])
+    waist_xy = jnp.array([[wo, wo]])
+    return GaussianRay(
+        x=xs,
+        y=ys,
+        dx=dxs,
+        dy=dys,
+        z=zs,
+        pathlength=pathlengths,
+        _one=ones,
+        amplitude=amplitudes,
+        waist_xy=waist_xy,
+        radii_of_curv=radii_of_curv,
+        wavelength=wavelengths,
+        theta=theta,
+    )
+
+
 def test_zR_wz_R_basic():
     w0 = 1e-3  # 1 mm
     wl = 500e-9  # 500 nm
@@ -224,7 +254,7 @@ def test_propagate_free_space_matches_expected_formula():
 
     # Compute field with implementation
     field = propagate_misaligned_gaussian_jax_scan(
-        amp, Q1_inv, A, B, C, D, e, r2, r1m, theta1m, kval
+        amp, Q1_inv, A, B, C, D, e, r1m, theta1m, kval, r2
     )  # (N,)
 
     # Expected: pref * exp(i*k/2 * r^T Q2_inv r)
@@ -633,3 +663,197 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         atol=2,
         err_msg="Phase mismatch between analytic and fresnel",
     )
+
+
+def test_gaussian_propagates_to_correct_quadrant():
+    # Setup detector
+    z_prop = 1.0
+    detector = Detector(z=z_prop, pixel_size=(1e-4, 1e-4), shape=(256, 256))
+    det_edge_x, det_edge_y = detector.coords_1d
+    Y, X = np.meshgrid(det_edge_y, det_edge_x, indexing="ij")
+
+    # Use the max of the zero-tilt (central) beam to define the reference center
+    central_ray = _make_single_gaussian_ray_at(0.0, 0.0, 0.0, 0.0)
+    central_img = evaluate_gaussian_input_image(central_ray, detector)
+    cy, cx = np.unravel_index(np.argmax(np.abs(central_img)), central_img.shape)
+    x_center = X[cy, cx]
+    y_center = Y[cy, cx]
+
+    # Small helper for robust sign with tolerance
+    def sign_with_tol(v, eps=1e-12):
+        if v > eps:
+            return 1
+        if v < -eps:
+            return -1
+        return 0
+
+    # Test four tilt combinations: (++), (+-), (-+), (--)
+    tilt_mag = 1e-3
+    combos = [
+        (+tilt_mag, +tilt_mag),  # top-right
+        (+tilt_mag, -tilt_mag),  # bottom-right
+        (-tilt_mag, +tilt_mag),  # top-left
+        (-tilt_mag, -tilt_mag),  # bottom-left
+    ]
+
+    for dx, dy in combos:
+        ray = _make_single_gaussian_ray_at(0.0, 0.0, dx, dy)
+        output_image = make_gaussian_image(ray, [detector])
+        my, mx = np.unravel_index(np.argmax(np.abs(output_image)), output_image.shape)
+        x_max = X[my, mx]
+        y_max = Y[my, mx]
+
+        # Compare quadrant via sign of (max - center) in physical coordinates
+        sx = sign_with_tol(float(x_max - x_center))
+        sy = sign_with_tol(float(y_max - y_center))
+        exp_sx = sign_with_tol(dx)
+        exp_sy = sign_with_tol(dy)
+
+        assert sx == exp_sx, f"dx={dx:+} expected {'right' if exp_sx > 0 else 'left'} shift; got x={x_max:.3e} (center {x_center:.3e})"  # noqa
+        assert sy == exp_sy, f"dy={dy:+} expected {'top' if exp_sy > 0 else 'bottom'} shift; got y={y_max:.3e} (center {y_center:.3e})"  # noqa
+
+
+def _principal_angle(phi):
+    return (phi + np.pi) % (2 * np.pi) - np.pi
+
+
+def test_input_gaussian_phase_ramp_center_and_slope_x_only():
+    # Detector and on-grid center point (ensures exact sampling at r1m)
+    detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
+    det_x, det_y = detector.coords_1d
+    ix = len(det_x) // 2
+    iy = len(det_y) // 2
+    r1m = (float(det_x[ix]), float(det_y[iy]))  # on-grid
+
+    # X-only tilt
+    wavelength = 500e-9
+    k = 2 * np.pi / wavelength
+    dx = 2e-4
+    dy = 0.0
+
+    ray = _make_single_gaussian_ray_at(r1m[0], r1m[1], dx, dy, wavelength=wavelength, wo=1e-4)
+    img = evaluate_gaussian_input_image(ray, detector)
+
+    # Phase at r1m should be ~0 (mod 2π). Use principal angle.
+    phi0 = np.angle(img[iy, ix])
+    assert abs(_principal_angle(phi0)) < 1e-6
+
+    # Estimate local slope dphi/dx near r1m using central difference on an unwrapped row
+    row_phase = np.unwrap(np.angle(img[iy, :]))
+    # Remove constant offset for stability
+    row_phase -= row_phase[ix]
+    delta = 8
+    slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (det_x[ix + delta] - det_x[ix - delta])  # noqa
+
+    # Compare to expected slope k * dx
+    np.testing.assert_allclose(slope_x_est, k * dx, rtol=1e-2, atol=0.0)
+
+    # Ensure there is no spurious slope along y for x-only tilt
+    col_phase = np.unwrap(np.angle(img[:, ix]))
+    col_phase -= col_phase[iy]
+    slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (det_y[iy + delta] - det_y[iy - delta])  # noqa
+    np.testing.assert_allclose(slope_y_est, 0.0, atol=1e-3)
+
+
+def test_input_gaussian_phase_ramp_center_and_slope_y_only():
+    # Detector and on-grid reference point
+    detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
+    det_x, det_y = detector.coords_1d
+    ix = len(det_x) // 2
+    iy = len(det_y) // 2
+    r1m = (float(det_x[ix]), float(det_y[iy]))  # on-grid
+
+    # Y-only tilt
+    wavelength = 500e-9
+    k = 2 * np.pi / wavelength
+    dx = 0.0
+    dy = -1e-4
+
+    ray = _make_single_gaussian_ray_at(r1m[0], r1m[1], dx, dy, wavelength=wavelength, wo=1e-4)
+    img = evaluate_gaussian_input_image(ray, detector)
+
+    # Phase at r1m should be ~0 (mod 2π)
+    phi0 = np.angle(img[iy, ix])
+    assert abs(_principal_angle(phi0)) < 1e-6
+
+    # Estimate local slope dphi/dy near r1m using central difference on an unwrapped column
+    col_phase = np.unwrap(np.angle(img[:, ix]))
+    col_phase -= col_phase[iy]
+    delta = 8
+    slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (det_y[iy + delta] - det_y[iy - delta])  # noqa
+
+    # Compare to expected slope k * dy
+    np.testing.assert_allclose(slope_y_est, k * dy, rtol=1e-2, atol=0.0)
+
+    # Ensure there is no spurious slope along x for y-only tilt
+    row_phase = np.unwrap(np.angle(img[iy, :]))
+    row_phase -= row_phase[ix]
+    slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (det_x[ix + delta] - det_x[ix - delta])  # noqa
+    np.testing.assert_allclose(slope_x_est, 0.0, atol=1e-3)
+
+
+def test_input_gaussian_phase_ramp_center_and_slope_xy_combined():
+    # Detector and on-grid reference point
+    detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
+    det_x, det_y = detector.coords_1d
+    ix = len(det_x) // 2
+    iy = len(det_y) // 2
+    r1m = (float(det_x[ix]), float(det_y[iy]))  # on-grid
+
+    # Combined tilt
+    wavelength = 500e-9
+    k = 2 * np.pi / wavelength
+    dx = 1.5e-4
+    dy = -1.0e-4
+
+    ray = _make_single_gaussian_ray_at(r1m[0], r1m[1], dx, dy, wavelength=wavelength, wo=1e-4)
+    img = evaluate_gaussian_input_image(ray, detector)
+
+    # Phase at r1m should be ~0 (mod 2π)
+    phi0 = np.angle(img[iy, ix])
+    assert abs(_principal_angle(phi0)) < 1e-6
+
+    # Local slopes from 1D unwrapped lines through r1m
+    delta = 8
+
+    row_phase = np.unwrap(np.angle(img[iy, :]))
+    row_phase -= row_phase[ix]
+    slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (det_x[ix + delta] - det_x[ix - delta])  # noqa
+    np.testing.assert_allclose(slope_x_est, k * dx, rtol=2e-2, atol=0.0)
+
+    col_phase = np.unwrap(np.angle(img[:, ix]))
+    col_phase -= col_phase[iy]
+    slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (det_y[iy + delta] - det_y[iy - delta])  # noqa
+    np.testing.assert_allclose(slope_y_est, k * dy, rtol=2e-2, atol=0.0)
+
+
+def test_random_gaussian_input_slope_and_angle_against_fresnel():
+    execution_number = 5
+    for _ in range(execution_number):
+        z_prop = 1
+        rng = np.random.default_rng()
+        r1m = jnp.array(rng.uniform(-1e-3, 1e-3, size=2))  # m, random in [0, 1e-5]
+        theta1m = jnp.array(rng.uniform(-1e-4, 1e-4, size=2))  # rad, random in [-2e-6, 2e-6]
+        input_ray = GaussianRay(x=r1m[0], y=r1m[1], dx=theta1m[0], dy=theta1m[1], z=0.0, pathlength=0.0,
+                                _one=1.0, amplitude=1.0, waist_xy=jnp.array([1e-4, 1e-4]),
+                                radii_of_curv=jnp.array([jnp.inf, jnp.inf]),
+                                wavelength=500e-9, theta=0.0)
+
+        detector = Detector(z=z_prop, pixel_size=(1e-5, 1e-5), shape=(1024, 1024))
+        detector_width = detector.pixel_size[0] * detector.shape[0]
+        input_image = evaluate_gaussian_input_image(input_ray, detector)
+
+        model = [detector]
+        output_image = make_gaussian_image(input_ray, model)
+
+        fresnel_image = FresnelPropagator(input_image, detector_width, wavelength=input_ray.wavelength, z=z_prop)  # noqa
+
+        max_idx_fresnel = jnp.argmax(jnp.abs(fresnel_image))
+        max_idx_output = jnp.argmax(jnp.abs(output_image))
+
+        np.testing.assert_allclose(
+            max_idx_fresnel,
+            max_idx_output,
+            atol=3,
+            err_msg="Maximum pixel index mismatch between Fresnel and analytic Gaussian"
+        )
