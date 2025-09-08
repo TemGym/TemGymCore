@@ -6,10 +6,10 @@ from temgym_core.gaussian import (
     gaussian_beam,
     Qinv_ABCD,
     propagate_misaligned_gaussian_jax_scan,
-    get_image
+    make_gaussian_image
 )
 
-from temgym_core.ray import GaussianRay
+from temgym_core.gaussian import GaussianRay
 from temgym_core.source import ParallelBeam
 from temgym_core.components import Detector, Lens
 
@@ -282,7 +282,7 @@ def test_gaussian_free_space_vs_fresnel():
     det_edge_x, det_edge_y = detector.coords_1d
     Y, X = np.meshgrid(det_edge_y, det_edge_x, indexing="ij")
 
-    analytic_gauss_image = get_image(rays, model)
+    analytic_gauss_image = make_gaussian_image(rays, model)
 
     # Fresnel Version
     q1_inv = q_inv(0.0, wo, wavelength)
@@ -387,7 +387,7 @@ def test_gaussian_lens_vs_fresnel():
     det_edge_x, det_edge_y = detector.coords_1d
     Y, X = np.meshgrid(det_edge_y, det_edge_x, indexing="ij")
 
-    analytic_gauss_image = get_image(rays, model)
+    analytic_gauss_image = make_gaussian_image(rays, model)
     analytic_gauss_image = zero_phase(
         analytic_gauss_image,
         analytic_gauss_image.shape[0] // 2,
@@ -540,7 +540,7 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         wavelength=wavelengths,
         theta=theta,
     )
-    analytic_gauss_image = get_image(rays, model)
+    analytic_gauss_image = make_gaussian_image(rays, model)
     analytic_gauss_image = zero_phase(analytic_gauss_image, shape[0]//2, shape[1]//2)
 
     # Fresnel Version
