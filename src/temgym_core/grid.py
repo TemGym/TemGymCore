@@ -2,7 +2,7 @@ from typing import Union
 import numpy as np
 import jax.numpy as jnp
 
-from . import Degrees, ShapeYX, CoordsXY, ScaleYX, PixelsYX
+from . import Degrees, ShapeYX, CoordXY, CoordsXY, ScaleYX, PixelsYX
 from .ray import Ray
 from .utils import inplace_sum, try_ravel, try_reshape
 from .coordinate_transforms import pixels_to_metres_transform, apply_transformation
@@ -15,7 +15,7 @@ class Grid:
     ----------
     z : float
         Axial position in metres.
-    centre : CoordsXY
+    centre : CoordXY
         Grid centre in metres (x, y).
     shape : ShapeYX
         Grid shape (y, x) in pixels.
@@ -27,7 +27,7 @@ class Grid:
         If True, apply an additional vertical flip.
     """
     z: float
-    centre: CoordsXY
+    centre: CoordXY
     shape: ShapeYX
     pixel_size: ScaleYX
     rotation: Degrees
@@ -146,7 +146,10 @@ class Grid:
         if cast:
             pixels_y = jnp.round(pixels_y).astype(jnp.int32)
             pixels_x = jnp.round(pixels_x).astype(jnp.int32)
-        return try_reshape(pixels_y, coords_y), try_reshape(pixels_x, coords_x)
+        return PixelsYX(
+            y=try_reshape(pixels_y, coords_y),
+            x=try_reshape(pixels_x, coords_x)
+        )
 
     def pixels_to_metres(self, pixels: PixelsYX) -> CoordsXY:
         """Convert pixel indices to metric coordinates.
@@ -172,7 +175,10 @@ class Grid:
         metres_y, metres_x = apply_transformation(
             try_ravel(pixels_y), try_ravel(pixels_x), pixels_to_metres_mat
         )
-        return try_reshape(metres_x, pixels_x), try_reshape(metres_y, pixels_y)
+        return CoordsXY(
+            x=try_reshape(metres_x, pixels_x),
+            y=try_reshape(metres_y, pixels_y)
+        )
 
     def ray_at_grid(
         self, px_y: float, px_x: float, dx: float = 0., dy: float = 0., z: float | None = None

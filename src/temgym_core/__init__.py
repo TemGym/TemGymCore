@@ -1,5 +1,7 @@
 from typing_extensions import TypeAlias
-from typing import NamedTuple
+from typing import NamedTuple, Union
+
+import jax.numpy as jnp
 import numpy as np
 from numpy.typing import NDArray
 
@@ -46,6 +48,26 @@ class ScaleYX(NamedTuple):
     x: float
 
 
+class CoordXY(NamedTuple):
+    """Continuous coordinates in the optical frame.
+
+    Parameters
+    ----------
+    x : float
+        X position, metres.
+    y : float
+        Y position, metres.
+    """
+    x: float
+    y: float
+
+    def to_coords(self) -> 'CoordsXY':
+        return CoordsXY(
+            x=jnp.array((self.x,)),
+            y=jnp.array((self.y,))
+        )
+
+
 class CoordsXY(NamedTuple):
     """Continuous coordinates in the optical frame.
 
@@ -60,19 +82,43 @@ class CoordsXY(NamedTuple):
     y: NDArray[np.floating]
 
 
-class PixelsYX(NamedTuple):
-    """Discrete pixel coordinates for images.
+class PixelYX(NamedTuple):
+    """Pixel coordinates for images.
 
     Parameters
     ----------
-    y : numpy.ndarray
-        Pixel row indices. Integer dtype.
-    x : numpy.ndarray
-        Pixel column indices. Integer dtype.
+    y : Union[int, float]
+        Pixel row indices
+    x : Union[int, float]
+        Pixel column indices
 
     Notes
     -----
     Pixel indices are 0-based.
     """
-    y: NDArray[np.integer]
-    x: NDArray[np.integer]
+    y: Union[int, float]
+    x: Union[int, float]
+
+    def to_pixels(self) -> 'PixelsYX':
+        return PixelsYX(
+            x=jnp.array((self.x,)),
+            y=jnp.array((self.y,))
+        )
+
+
+class PixelsYX(NamedTuple):
+    """Pixel coordinates for images.
+
+    Parameters
+    ----------
+    y : numpy.ndarray
+        Pixel row indices. Integer or floating dtype.
+    x : numpy.ndarray
+        Pixel column indices. Integer or floating dtype.
+
+    Notes
+    -----
+    Pixel indices are 0-based.
+    """
+    y: NDArray[Union[np.integer, np.floating]]
+    x: NDArray[Union[np.integer, np.floating]]
