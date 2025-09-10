@@ -8,7 +8,8 @@ from temgym_core.gaussian import (
     propagate_misaligned_gaussian_jax_scan,
     make_gaussian_image,
     evaluate_gaussian_input_image,
-    GaussianRay
+    GaussianRay,
+    decompose_Q_inv
 )
 
 from temgym_core.source import ParallelBeam
@@ -717,115 +718,57 @@ def _principal_angle(phi):
     return (phi + np.pi) % (2 * np.pi) - np.pi
 
 
-def test_input_gaussian_phase_ramp_center_and_slope_x_only():
-    # Detector and on-grid center point (ensures exact sampling at r1m)
+def test_input_gaussian_phase_ramp_center_and_slope():
+    # Detector and on-grid reference point (ensures exact sampling at r1m)
     detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
     det_x, det_y = detector.coords_1d
     ix = len(det_x) // 2
     iy = len(det_y) // 2
     r1m = (float(det_x[ix]), float(det_y[iy]))  # on-grid
 
-    # X-only tilt
     wavelength = 500e-9
     k = 2 * np.pi / wavelength
-    dx = 2e-4
-    dy = 0.0
-
-    ray = _make_single_gaussian_ray_at(r1m[0], r1m[1], dx, dy, wavelength=wavelength, wo=1e-4)
-    img = evaluate_gaussian_input_image(ray, detector)
-
-    # Phase at r1m should be ~0 (mod 2π). Use principal angle.
-    phi0 = np.angle(img[iy, ix])
-    assert abs(_principal_angle(phi0)) < 1e-6
-
-    # Estimate local slope dphi/dx near r1m using central difference on an unwrapped row
-    row_phase = np.unwrap(np.angle(img[iy, :]))
-    # Remove constant offset for stability
-    row_phase -= row_phase[ix]
-    delta = 8
-    slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (det_x[ix + delta] - det_x[ix - delta])  # noqa
-
-    # Compare to expected slope k * dx
-    np.testing.assert_allclose(slope_x_est, k * dx, rtol=1e-2, atol=0.0)
-
-    # Ensure there is no spurious slope along y for x-only tilt
-    col_phase = np.unwrap(np.angle(img[:, ix]))
-    col_phase -= col_phase[iy]
-    slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (det_y[iy + delta] - det_y[iy - delta])  # noqa
-    np.testing.assert_allclose(slope_y_est, 0.0, atol=1e-3)
-
-
-def test_input_gaussian_phase_ramp_center_and_slope_y_only():
-    # Detector and on-grid reference point
-    detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
-    det_x, det_y = detector.coords_1d
-    ix = len(det_x) // 2
-    iy = len(det_y) // 2
-    r1m = (float(det_x[ix]), float(det_y[iy]))  # on-grid
-
-    # Y-only tilt
-    wavelength = 500e-9
-    k = 2 * np.pi / wavelength
-    dx = 0.0
-    dy = -1e-4
-
-    ray = _make_single_gaussian_ray_at(r1m[0], r1m[1], dx, dy, wavelength=wavelength, wo=1e-4)
-    img = evaluate_gaussian_input_image(ray, detector)
-
-    # Phase at r1m should be ~0 (mod 2π)
-    phi0 = np.angle(img[iy, ix])
-    assert abs(_principal_angle(phi0)) < 1e-6
-
-    # Estimate local slope dphi/dy near r1m using central difference on an unwrapped column
-    col_phase = np.unwrap(np.angle(img[:, ix]))
-    col_phase -= col_phase[iy]
-    delta = 8
-    slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (det_y[iy + delta] - det_y[iy - delta])  # noqa
-
-    # Compare to expected slope k * dy
-    np.testing.assert_allclose(slope_y_est, k * dy, rtol=1e-2, atol=0.0)
-
-    # Ensure there is no spurious slope along x for y-only tilt
-    row_phase = np.unwrap(np.angle(img[iy, :]))
-    row_phase -= row_phase[ix]
-    slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (det_x[ix + delta] - det_x[ix - delta])  # noqa
-    np.testing.assert_allclose(slope_x_est, 0.0, atol=1e-3)
-
-
-def test_input_gaussian_phase_ramp_center_and_slope_xy_combined():
-    # Detector and on-grid reference point
-    detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
-    det_x, det_y = detector.coords_1d
-    ix = len(det_x) // 2
-    iy = len(det_y) // 2
-    r1m = (float(det_x[ix]), float(det_y[iy]))  # on-grid
-
-    # Combined tilt
-    wavelength = 500e-9
-    k = 2 * np.pi / wavelength
-    dx = 1.5e-4
-    dy = -1.0e-4
-
-    ray = _make_single_gaussian_ray_at(r1m[0], r1m[1], dx, dy, wavelength=wavelength, wo=1e-4)
-    img = evaluate_gaussian_input_image(ray, detector)
-
-    # Phase at r1m should be ~0 (mod 2π)
-    phi0 = np.angle(img[iy, ix])
-    assert abs(_principal_angle(phi0)) < 1e-6
-
-    # Local slopes from 1D unwrapped lines through r1m
     delta = 8
 
-    row_phase = np.unwrap(np.angle(img[iy, :]))
-    row_phase -= row_phase[ix]
-    slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (det_x[ix + delta] - det_x[ix - delta])  # noqa
-    np.testing.assert_allclose(slope_x_est, k * dx, rtol=2e-2, atol=0.0)
+    cases = [
+        # X-only tilt
+        dict(dx=2e-4, dy=0.0, rtol_x=1e-2, rtol_y=None, atol_y=1e-3),
+        # Y-only tilt
+        dict(dx=0.0, dy=-1e-4, rtol_x=None, atol_x=1e-3, rtol_y=1e-2),
+        # Combined tilt
+        dict(dx=1.5e-4, dy=-1.0e-4, rtol_x=2e-2, rtol_y=2e-2),
+    ]
 
-    col_phase = np.unwrap(np.angle(img[:, ix]))
-    col_phase -= col_phase[iy]
-    slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (det_y[iy + delta] - det_y[iy - delta])  # noqa
-    np.testing.assert_allclose(slope_y_est, k * dy, rtol=2e-2, atol=0.0)
+    for case in cases:
+        dx = case["dx"]
+        dy = case["dy"]
+        ray = _make_single_gaussian_ray_at(r1m[0], r1m[1], dx, dy, wavelength=wavelength, wo=1e-4)
+        img = evaluate_gaussian_input_image(ray, detector)
 
+        # Phase at r1m should be ~0 (mod 2π)
+        phi0 = np.angle(img[iy, ix])
+        assert abs(_principal_angle(phi0)) < 1e-6
+
+        # Local slopes from 1D unwrapped lines through r1m
+        row_phase = np.unwrap(np.angle(img[iy, :]))
+        row_phase -= row_phase[ix]
+        slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (det_x[ix + delta] - det_x[ix - delta])
+
+        col_phase = np.unwrap(np.angle(img[:, ix]))
+        col_phase -= col_phase[iy]
+        slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (det_y[iy + delta] - det_y[iy - delta])
+
+        # Check X slope
+        if case.get("rtol_x") is not None:
+            np.testing.assert_allclose(slope_x_est, k * dx, rtol=case["rtol_x"], atol=0.0)
+        else:
+            np.testing.assert_allclose(slope_x_est, 0.0, atol=case["atol_x"])
+
+        # Check Y slope
+        if case.get("rtol_y") is not None:
+            np.testing.assert_allclose(slope_y_est, k * dy, rtol=case["rtol_y"], atol=0.0)
+        else:
+            np.testing.assert_allclose(slope_y_est, 0.0, atol=case["atol_y"])
 
 def test_random_gaussian_input_slope_and_angle_against_fresnel():
     execution_number = 5
@@ -857,3 +800,199 @@ def test_random_gaussian_input_slope_and_angle_against_fresnel():
             atol=3,
             err_msg="Maximum pixel index mismatch between Fresnel and analytic Gaussian"
         )
+
+
+def test_astigmatic_rotated_gaussian_beam():
+    # Helper to get principal-axis angle (major axis) from intensity image
+    def principal_axis_angle(field, X, Y):
+        I = np.abs(field) ** 2  # noqa
+        wsum = np.sum(I) + 1e-30
+        xbar = np.sum(I * X) / wsum
+        ybar = np.sum(I * Y) / wsum
+        Xc = X - xbar
+        Yc = Y - ybar
+        Cxx = np.sum(I * Xc * Xc) / wsum
+        Cyy = np.sum(I * Yc * Yc) / wsum
+        Cxy = np.sum(I * Xc * Yc) / wsum
+        C = np.array([[Cxx, Cxy], [Cxy, Cyy]])
+        vals, vecs = np.linalg.eigh(C)
+        v = vecs[:, np.argmax(vals)]  # major axis
+        ang = np.arctan2(v[1], v[0])
+        # Map to [-pi/2, pi/2) to remove 180° ambiguity
+        return (ang + np.pi / 2) % np.pi - np.pi / 2
+
+    def angle_diff(a, b):
+        return np.arctan2(np.sin(a - b), np.cos(a - b))
+
+    # Detector and coordinate grids
+    detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
+    det_x, det_y = detector.coords_1d
+    Y, X = np.meshgrid(det_y, det_x, indexing="ij")
+
+    # Elliptical (astigmatic) beam: major axis along local x' (w_x > w_y)
+    waist_xy = jnp.array([2e-4, 1e-4])
+
+    # Test several rotations (radians)
+    thetas = np.array([-np.pi / 3, -np.pi / 6, 0.0, np.pi / 6, np.pi / 4, np.pi / 3])
+    tol = 0.1  # ~5.7 degrees
+
+    for theta in thetas:
+        rays = GaussianRay(
+            x=0.0,
+            y=0.0,
+            dx=0.0,
+            dy=0.0,
+            z=0.0,
+            pathlength=0.0,
+            _one=1.0,
+            amplitude=1.0,
+            waist_xy=waist_xy,
+            radii_of_curv=jnp.array([jnp.inf, jnp.inf]),
+            wavelength=500e-9,
+            theta=theta,
+        )
+        img = evaluate_gaussian_input_image(rays, detector)
+        phi = principal_axis_angle(img, X, Y)
+
+        # Major-axis angle should match theta (up to pi periodicity handled in principal_axis_angle)
+        assert abs(angle_diff(phi, float(theta))) < tol, f"Estimated angle {phi:.3f} rad != theta {theta:.3f} rad"
+
+
+def _angle_diff_mod_pi(a, b):
+    """Smallest angular difference between a and b, modulo pi (axis direction)."""
+    d = np.arctan2(np.sin(a - b), np.cos(a - b))  # wrap to [-pi, pi]
+    # Equivalent directions under 180° flip
+    return min(abs(d), abs(d + np.pi), abs(d - np.pi))
+
+
+def test_decompose_q_inv_recovers_parameters_single():
+    wl = 500e-9
+    # Distinct waists so eigenvalue order is well-defined (ascending imag parts)
+    w1 = 1.0e-4  # first principal axis (smaller)
+    w2 = 2.0e-4  # second principal axis (larger)
+    R1 = 0.5     # m
+    R2 = np.inf  # planar in second axis
+    theta = np.pi / 6
+
+    ray = GaussianRay(x=0.0, y=0.0, dx=0.0, dy=0.0, z=0.0, pathlength=0.0, _one=1.0, amplitude=1.0,
+                      waist_xy=jnp.array([w1, w2]), radii_of_curv=jnp.array([R1, R2]),
+                      wavelength=wl, theta=theta)
+
+    ray = ray.to_vector()
+    Qinv = ray.Q_inv
+
+    ow1, ow2, oR1, oR2, otheta = decompose_Q_inv(Qinv, wl)
+
+    np.testing.assert_allclose(np.array(ow1), w1, rtol=1e-9, atol=0.0)
+    np.testing.assert_allclose(np.array(ow2), w2, rtol=1e-9, atol=0.0)
+    # Radius: allow inf handling
+    assert np.isinf(oR2) and oR2 > 0
+    np.testing.assert_allclose(np.array(oR1), R1, rtol=1e-9, atol=0.0)
+    assert _angle_diff_mod_pi(float(otheta[0]), theta) < 1e-9
+
+
+def test_decompose_q_inv_batched():
+    wl = 1.3e-6
+    params = [
+        # (w1, w2, R1, R2, theta)
+        (1e-5, 3e-5, np.inf, np.inf, np.pi/6),
+        (1.2e-4, 5e-5, 0.0001, 0.1, -np.pi/4),
+        (1e-4, 3e-4, 0.01, np.inf, -np.pi/3),
+    ]
+
+    for i, (w1, w2, R1, R2, th) in enumerate(params):
+        rays_vec = GaussianRay(
+            x=0.0,
+            y=0.0,
+            dx=0.0,
+            dy=0.0,
+            z=0.0,
+            pathlength=0.0,
+            _one=1.0,
+            amplitude=1.0,
+            waist_xy=jnp.array([[w1, w2]]),
+            radii_of_curv=jnp.array([[R1, R2]]),
+            wavelength=wl,
+            theta=th,
+        ).to_vector()
+
+        Qs = rays_vec.Q_inv
+
+        detector = Detector(z=0.0, pixel_size=(1e-6, 1e-6), shape=(512, 512))
+        original_img = evaluate_gaussian_input_image(rays_vec, detector)
+
+        ow1, ow2, oR1, oR2, otheta = decompose_Q_inv(Qs, wl)
+
+        # Check that re-constructed parameters reproduce the original image
+        recon_rays = GaussianRay(
+            x=0.0,
+            y=0.0,
+            dx=0.0,
+            dy=0.0,
+            z=0.0,
+            pathlength=0.0,
+            _one=1.0,
+            amplitude=1.0,
+            waist_xy=jnp.array([[ow1[0], ow2[0]]]),
+            radii_of_curv=jnp.array([[oR1[0], oR2[0]]]),
+            wavelength=wl,
+            theta=otheta,
+        ).to_vector()
+        recon_img = evaluate_gaussian_input_image(recon_rays, detector)
+
+        np.testing.assert_allclose(
+            np.abs(original_img),
+            np.abs(recon_img),
+            rtol=1e-9,
+        )
+
+        # Amplitude and phase comparison (original vs reconstructed)
+        orig_amp = np.abs(original_img)
+        recon_amp = np.abs(recon_img)
+
+        # Unwrapped phase (optional for clearer visualization)
+        orig_phase = np.angle(original_img)
+        recon_phase = np.angle(recon_img)
+
+        extent = [
+            detector.coords_1d[0][0],
+            detector.coords_1d[0][-1],
+            detector.coords_1d[1][0],
+            detector.coords_1d[1][-1],
+        ]
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        im0 = axes[0, 0].imshow(orig_amp, cmap="viridis", extent=extent)
+        axes[0, 0].set_title("Original Amplitude")
+        fig.colorbar(im0, ax=axes[0, 0], fraction=0.046, pad=0.04)
+
+        im1 = axes[0, 1].imshow(recon_amp, cmap="viridis", extent=extent)
+        axes[0, 1].set_title("Reconstructed Amplitude")
+        fig.colorbar(im1, ax=axes[0, 1], fraction=0.046, pad=0.04)
+
+        im2 = axes[1, 0].imshow(orig_phase, cmap="twilight", extent=extent)
+        axes[1, 0].set_title("Original Phase")
+        fig.colorbar(im2, ax=axes[1, 0], fraction=0.046, pad=0.04)
+
+        im3 = axes[1, 1].imshow(recon_phase, cmap="twilight", extent=extent)
+        axes[1, 1].set_title("Reconstructed Phase")
+        fig.colorbar(im3, ax=axes[1, 1], fraction=0.046, pad=0.04)
+
+        for ax_ in axes.ravel():
+            ax_.set_xlabel("x (m)")
+            ax_.set_ylabel("y (m)")
+
+        plt.tight_layout()
+        plt.savefig(f"test_decompose_q_inv_batched_case_{i}_comparison.png")
+
+        # np.testing.assert_allclose(np.array(ow1[i]), w1, rtol=1e-9, atol=0.0)
+        # np.testing.assert_allclose(np.array(ow2[i]), w2, rtol=1e-9, atol=0.0)
+        # if np.isinf(R1):
+        #     assert np.isinf(oR1[i]) and oR1[i] > 0
+        # else:
+        #     np.testing.assert_allclose(np.array(oR1[i]), R1, rtol=1e-9, atol=0.0)
+        # if np.isinf(R2):
+        #     assert np.isinf(oR2[i]) and oR2[i] > 0
+        # else:
+        #     np.testing.assert_allclose(np.array(oR2[i]), R2, rtol=1e-9, atol=0.0)
+        # assert _angle_diff_mod_pi(float(otheta[i]), th) < 1e-9

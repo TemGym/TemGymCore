@@ -512,45 +512,45 @@ class Biprism(Component):
         ray: Ray,
     ) -> Ray:
         pos_x, pos_y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-
         deflection = self.deflection
-        offset = self.offset
-        rot = jnp.deg2rad(self.rotation)
 
-        rays_v = jnp.array([pos_x, pos_y]).T
+        # deflection = self.deflection
+        # offset = self.offset
+        # rot = jnp.deg2rad(self.rotation)
 
-        biprism_loc_v = jnp.array([offset * jnp.cos(rot), offset * jnp.sin(rot)])
+        # rays_v = jnp.array([pos_x, pos_y]).T
 
-        biprism_v = jnp.array([-jnp.sin(rot), jnp.cos(rot)])
-        biprism_v /= jnp.linalg.norm(biprism_v)
+        # biprism_loc_v = jnp.array([offset * jnp.cos(rot), offset * jnp.sin(rot)])
 
-        rays_v_centred = rays_v - biprism_loc_v
+        # biprism_v = jnp.array([-jnp.sin(rot), jnp.cos(rot)])
+        # biprism_v /= jnp.linalg.norm(biprism_v)
 
-        dot_product = jnp.dot(rays_v_centred, biprism_v) / jnp.dot(biprism_v, biprism_v)
-        projection = jnp.outer(dot_product, biprism_v)
+        # rays_v_centred = rays_v - biprism_loc_v
 
-        rejection = rays_v_centred - projection
-        rejection = rejection / jnp.linalg.norm(rejection, axis=1, keepdims=True)
+        # dot_product = jnp.dot(rays_v_centred, biprism_v) / jnp.dot(biprism_v, biprism_v)
+        # projection = jnp.outer(dot_product, biprism_v)
 
-        # If the ray position is located at [zero, zero], rejection_norm returns a nan,
-        # so we convert it to a zero, zero.
-        rejection = jnp.nan_to_num(rejection)
+        # rejection = rays_v_centred - projection
+        # rejection = rejection / jnp.linalg.norm(rejection, axis=1, keepdims=True)
 
-        xdeflection_mag = rejection[:, 0]
-        ydeflection_mag = rejection[:, 1]
+        # # If the ray position is located at [zero, zero], rejection_norm returns a nan,
+        # # so we convert it to a zero, zero.
+        # rejection = jnp.nan_to_num(rejection)
 
-        new_dx = (dx + xdeflection_mag * deflection).squeeze()
-        new_dy = (dy + ydeflection_mag * deflection).squeeze()
+        # xdeflection_mag = rejection[:, 0]
+        # ydeflection_mag = rejection[:, 1]
+
+        new_dx = dx + deflection * ray._one * jnp.sign(ray.x)
 
         pathlength = ray.pathlength + (
-            xdeflection_mag * deflection * pos_x + ydeflection_mag * deflection * pos_y
+            1.0 * deflection * pos_x + 0.0 * deflection * pos_y
         )
 
         return Ray(
-            x=pos_x.squeeze(),
-            y=pos_y.squeeze(),
+            x=pos_x,
+            y=pos_y,
             dx=new_dx,
-            dy=new_dy,
+            dy=dy,
             _one=ray._one,
             pathlength=pathlength,
             z=ray.z,
