@@ -76,3 +76,11 @@ class PixelsYX(NamedTuple):
     """
     y: NDArray[np.integer]
     x: NDArray[np.integer]
+
+
+# Convenience re-exports
+try:
+    from .plotting import plot_model, PlotParams  # noqa: F401
+except Exception:
+    # Plotting has optional dependencies (matplotlib); ignore import errors at package import time
+    pass

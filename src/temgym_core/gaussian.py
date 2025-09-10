@@ -31,6 +31,63 @@ def gaussian_beam(x, y, q_inv, k, offset_x=0, offset_y=0):
     return jnp.exp(1j * k * ((x + offset_x) ** 2 + (y + offset_y) ** 2) / 2 * q_inv)
 
 
+def decompose_Q_inv(Q_inv, wavelength, eps=1e-12):
+    """
+    Decompose a 2x2 complex Q_inv matrix into beam parameters:
+    returns (waist_x, waist_y, r_x, r_y, theta).
+
+    Supports broadcasting over leading batch dimensions.
+    """
+    Q = jnp.asarray(Q_inv)
+
+    # Use the imaginary part (real symmetric, negative-definite) to get rotation
+    S = jnp.imag(Q)
+    S = 0.5 * (S + jnp.swapaxes(S, -1, -2))  # enforce symmetry
+    _, evecs = jnp.linalg.eigh(S)  # ascending order
+
+    # Ensure a proper rotation (det = +1)
+    det = jnp.linalg.det(evecs)
+    sign = jnp.where(det < 0, -1.0, 1.0)
+    evecs = evecs.at[..., :, 1].multiply(sign[..., None])
+
+    # Rotate Q into principal axes and read diagonal
+    Vt = jnp.swapaxes(evecs, -1, -2)
+    Qd = Vt @ Q @ evecs
+    qdiag = jnp.stack([Qd[..., 0, 0], Qd[..., 1, 1]], axis=-1)
+
+    # Determine a consistent ordering: put larger waist first (major axis)
+    imd_pre = jnp.imag(qdiag)  # = wavelength/(pi * w^2)
+    waists_pre = jnp.sqrt(
+        jnp.where(jnp.abs(imd_pre) > eps, jnp.abs(wavelength / (jnp.pi * imd_pre)), jnp.inf)
+    )
+    swap_mask = waists_pre[..., 0] < waists_pre[..., 1]
+
+    # If needed, swap principal axes (qdiag and eigenvectors)
+    qdiag = jnp.where(swap_mask[..., None], qdiag[..., ::-1], qdiag)
+    evecs_swapped = evecs[..., :, ::-1]
+    evecs = jnp.where(swap_mask[..., None, None], evecs_swapped, evecs)
+
+    # Re-enforce right-handed rotation after possible swap
+    det = jnp.linalg.det(evecs)
+    sign = jnp.where(det < 0, -1.0, 1.0)
+    evecs = evecs.at[..., :, 1].multiply(sign[..., None])
+
+    imd = jnp.imag(qdiag)  # = wavelength/(pi * w^2)
+    red = jnp.real(qdiag)  # = 1 / R
+
+    # Waists
+    waists = jnp.sqrt(jnp.where(jnp.abs(imd) > eps, jnp.abs(wavelength / (jnp.pi * imd)), jnp.inf))
+
+    # Radii of curvature
+    radii = jnp.where(jnp.abs(red) > eps, 1.0 / red, jnp.inf)
+
+    # Rotation angle from first principal axis
+    e1 = evecs[..., :, 0]
+    theta = jnp.arctan2(e1[..., 1], e1[..., 0])
+
+    return waists[..., 0], waists[..., 1], radii[..., 0], radii[..., 1], theta
+
+
 def Qinv_ABCD(Qinv, A, B, C, D):
     # compute (C + D @ Qinv) @ inv(A + B @ Qinv) without explicit inv
     lhs = A + B @ Qinv
@@ -47,7 +104,7 @@ def q_inv(z, w0, wl):
     q_inv = jnp.where(
         cond,
         -1.0 / (1j * (jnp.pi * w0**2) / wl),
-        1.0 / R_val - 1j * wl / (jnp.pi * wz_val**2),
+        -1.0 / R_val + 1j * wl / (jnp.pi * wz_val**2),
     )
     return q_inv
 
@@ -79,14 +136,14 @@ class GaussianRay(Ray):
         # 1/q on each principal axis
         inv_qx = jnp.where(
             jnp.isinf(R_x),
-            -1 / (1j * (jnp.pi * w_x**2) / wavelength),
-            1.0 / R_x - 1j * wavelength / (jnp.pi * w_x**2),
+            1j * wavelength / ((jnp.pi * w_x**2)),
+            -1.0 / R_x + 1j * wavelength / (jnp.pi * w_x**2),
         )
 
         inv_qy = jnp.where(
             jnp.isinf(R_y),
-            -1 / (1j * (jnp.pi * w_y**2) / wavelength),
-            1.0 / R_y - 1j * wavelength / (jnp.pi * w_y**2),
+            1j * wavelength / ((jnp.pi * w_x**2)),
+            -1.0 / R_y + 1j * wavelength / (jnp.pi * w_y**2),
         )
         return inv_qx, inv_qy
 
@@ -111,6 +168,62 @@ class GaussianRay(Ray):
             axis=-2,
         )
         return matrix_matrix_matrix_mul(R, Q_inv_diag, R)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class GaussianRayQinv(Ray):
+    # Replaces waist_xy, radii_of_curv, theta inputs with a full complex Q_inv matrix.
+    # Q_inv shape: (..., 2, 2). It encodes astigmatism + rotation.
+    amplitude: float
+    Q_inv: jnp.ndarray          # complex (...,2,2)
+    wavelength: float
+
+    def to_ray(self):
+        return Ray(
+            x=self.x,
+            y=self.y,
+            dx=self.dx,
+            dy=self.dy,
+            z=self.z,
+            pathlength=self.pathlength,
+            _one=self._one,
+        )
+
+    def _decompose(self):
+        # Returns (w_x, w_y, R_x, R_y, theta) each shape (...,)
+        return decompose_Q_inv(self.Q_inv, self.wavelength)
+
+    @property
+    def waist_xy(self):
+        w_x, w_y, *_ = self._decompose()
+        return jnp.stack([w_x, w_y], axis=-1)
+
+    @property
+    def radii_of_curv(self):
+        _, _, R_x, R_y, _ = self._decompose()
+        return jnp.stack([R_x, R_y], axis=-1)
+
+    @property
+    def theta(self):
+        *_, theta = self._decompose()
+        return theta
+
+    @property
+    def q_inv(self):
+        # Return principal-axis 1/q values (inv_qx, inv_qy)
+        w_x, w_y, R_x, R_y, _ = self._decompose()
+        wl = self.wavelength
+        inv_qx = jnp.where(
+            jnp.isinf(R_x),
+            -1 / (1j * (jnp.pi * w_x**2) / wl),
+            -1.0 / R_x + 1j * wl / (jnp.pi * w_x**2),
+        )
+        inv_qy = jnp.where(
+            jnp.isinf(R_y),
+            -1 / (1j * (jnp.pi * w_y**2) / wl),
+            -1.0 / R_y + 1j * wl / (jnp.pi * w_y**2),
+        )
+        return inv_qx, inv_qy
 
 
 def matrix_vector_mul(M, v):
