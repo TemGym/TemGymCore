@@ -240,6 +240,7 @@ def test_propagate_free_space_matches_expected_formula():
     C = jnp.array([np.zeros((2, 2))])
     D = jnp.array([np.eye(2)])
     e = jnp.array([[0.0, 0.0]])
+    f = jnp.array([[0.0, 0.0]])
 
     # Observation points r2: simple small grid (N,2)
     xs = jnp.array([-1e-4, 0.0, 2e-4])
@@ -255,7 +256,7 @@ def test_propagate_free_space_matches_expected_formula():
 
     # Compute field with implementation
     field = propagate_misaligned_gaussian_jax_scan(
-        amp, Q1_inv, A, B, C, D, e, r1m, theta1m, kval, r2
+        amp, Q1_inv, A, B, C, D, e, f, r1m, theta1m, kval, r2
     )  # (N,)
 
     # Expected: pref * exp(i*k/2 * r^T Q2_inv r)
@@ -635,18 +636,18 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         [unwrap_phase(analytic_phase_cross_section), unwrap_phase(fresnel_phase_cross_section)],
     )
 
-    # plt.savefig("test_two_beam_interference_cross_section.png")
-    # # Overview plots using helper
-    # fig, _ = plot_overview(
-    #     analytic_gauss_image,
-    #     fresnel_gauss_image,
-    #     pixel_size[0]*shape[0],
-    #     pixel_size[1]*shape[1],
-    #     suffix="",
-    #     label1="Analytic Gaussian",
-    #     label2="Fresnel Gaussian"
-    # )
-    # plt.savefig("test_two_beam_interference_overview.png")
+    plt.savefig("test_two_beam_interference_cross_section.png")
+    # Overview plots using helper
+    fig, _ = plot_overview(
+        analytic_gauss_image,
+        fresnel_gauss_image,
+        pixel_size[0]*shape[0],
+        pixel_size[1]*shape[1],
+        suffix="",
+        label1="Analytic Gaussian",
+        label2="Fresnel Gaussian"
+    )
+    plt.savefig("test_two_beam_interference_overview.png")
 
     # Assertions remain unchanged
     np.testing.assert_allclose(

@@ -295,6 +295,7 @@ def make_gaussian_image(gaussian_rays, model, batch_size=128):
     Cs = ABCDs[:, 2:4, 0:2]  # (nb,2,2)
     Ds = ABCDs[:, 2:4, 2:4]  # (nb,2,2)
     es = ABCDs[:, 0:2, 4]  # (nb,2)
+    fs = ABCDs[:, 2:4, 4]  # (nb,2)
     r2 = grid.coords
     r1ms = jnp.stack([central_rays.x, central_rays.y], axis=-1)
     theta1ms = jnp.stack([central_rays.dx, central_rays.dy], axis=-1)
@@ -309,6 +310,7 @@ def make_gaussian_image(gaussian_rays, model, batch_size=128):
         Cs,
         Ds,
         es,
+        fs,
         r1ms,
         theta1ms,
         k,
@@ -318,7 +320,7 @@ def make_gaussian_image(gaussian_rays, model, batch_size=128):
     return output_field
 
 
-def _beam_field(amp, Q1_inv, Q2_inv, r1m, theta1m, k, A, B, e, r2):
+def _beam_field(amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k, r2):
     """Single-beam field at all observation points r2 -> (np,)
     r2 is at the end since it represents the grid, and is not batched.
     All other inputs are batched over the number of beams (nb, ...)"""
@@ -331,8 +333,9 @@ def _beam_field(amp, Q1_inv, Q2_inv, r1m, theta1m, k, A, B, e, r2):
     Q1 = jnp.linalg.solve(Q1_inv, I)
     Q1 = jnp.nan_to_num(Q1, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Central ray at output: r2m = A r1m + B theta1m + e
-    r2m = matrix_vector_mul(A, r1m) + matrix_vector_mul(B, theta1m) + e  # (2,)
+    r2 = r2 - e
+    # Central ray at output: r2m = A r1m + B theta1m
+    r2m = matrix_vector_mul(A, r1m) + matrix_vector_mul(B, theta1m)  # (2,)
 
     # AB-q amplitude prefactor
     denom = A + matrix_matrix_mul(B, Q1_inv)  # (2,2)
@@ -354,22 +357,24 @@ def _beam_field(amp, Q1_inv, Q2_inv, r1m, theta1m, k, A, B, e, r2):
 
     Q2t = jnp.einsum("ni,ij,nj->n", r2, Q2_inv, r2)  # (np,)
 
-    phase = (k / 2) * (Q2t + phi1 - phi2)  # (np,)
+    # f is of shape 2, and r is (np,2), and we need f_offset * r2 to be (np,)
+    f_offset = 2 * r2 @ f  # (np,)
+    phase = (k / 2) * (Q2t + phi1 - phi2 + f_offset)  # (np,)
     return pref * jnp.exp(1j * phase)  # (np,)
 
 
 def propagate_misaligned_gaussian_jax_scan(
-    amp, Q1_inv, A, B, C, D, e, r1m, theta1m, k, r2, batch_size=128
+    amp, Q1_inv, A, B, C, D, e, f, r1m, theta1m, k, r2, batch_size=128
 ):
     npix = r2.shape[0]
     Q2_inv = Qinv_ABCD(Q1_inv, A, B, C, D)  # (nb,2,2)
 
     def _beam_field_outer(xs):
-        a_i, q1_i, q2_i, r1_i, t1_i, A_i, B_i, e_i, k_i = xs
-        return _beam_field(a_i, q1_i, q2_i, r1_i, t1_i, k_i, A_i, B_i, e_i, r2)
+        a_i, q1_i, q2_i, r1m_i, t1m_i, A_i, B_i, e_i, f_i, k_i = xs
+        return _beam_field(a_i, q1_i, q2_i, r1m_i, t1m_i, A_i, B_i, e_i, f_i, k_i, r2)
 
     init = jnp.zeros((npix,), dtype=jnp.complex128)
-    xs = (amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, k)
+    xs = (amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k)
     out = map_reduce(_beam_field_outer, jnp.add, init, xs, batch_size=batch_size)
     return out  # (npix,)
 

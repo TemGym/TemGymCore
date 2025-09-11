@@ -505,53 +505,13 @@ class Biprism(Component):
     z: float
     offset: float = 0.0
     rotation: Degrees = 0.0
-    deflection: float = 0.0
+    def_x: float = 0.0
+    side: int = 1
 
-    def __call__(
-        self,
-        ray: Ray,
-    ) -> Ray:
-        pos_x, pos_y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-        deflection = self.deflection
-
-        # deflection = self.deflection
-        # offset = self.offset
-        # rot = jnp.deg2rad(self.rotation)
-
-        # rays_v = jnp.array([pos_x, pos_y]).T
-
-        # biprism_loc_v = jnp.array([offset * jnp.cos(rot), offset * jnp.sin(rot)])
-
-        # biprism_v = jnp.array([-jnp.sin(rot), jnp.cos(rot)])
-        # biprism_v /= jnp.linalg.norm(biprism_v)
-
-        # rays_v_centred = rays_v - biprism_loc_v
-
-        # dot_product = jnp.dot(rays_v_centred, biprism_v) / jnp.dot(biprism_v, biprism_v)
-        # projection = jnp.outer(dot_product, biprism_v)
-
-        # rejection = rays_v_centred - projection
-        # rejection = rejection / jnp.linalg.norm(rejection, axis=1, keepdims=True)
-
-        # # If the ray position is located at [zero, zero], rejection_norm returns a nan,
-        # # so we convert it to a zero, zero.
-        # rejection = jnp.nan_to_num(rejection)
-
-        # xdeflection_mag = rejection[:, 0]
-        # ydeflection_mag = rejection[:, 1]
-
-        new_dx = dx + deflection * ray._one * jnp.sign(ray.x)
-
-        pathlength = ray.pathlength + (
-            1.0 * deflection * pos_x + 0.0 * deflection * pos_y
-        )
-
-        return Ray(
-            x=pos_x,
-            y=pos_y,
-            dx=new_dx,
+    def __call__(self, ray: Ray):
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        return ray.derive(
+            dx=dx + self.def_x * ray._one * jnp.sign(ray.x),
             dy=dy,
-            _one=ray._one,
-            pathlength=pathlength,
-            z=ray.z,
+            pathlength=ray.pathlength + dx * x + dy * y,
         )
