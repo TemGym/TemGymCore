@@ -1,6 +1,7 @@
 from typing_extensions import TypeAlias
 from typing import NamedTuple, Union
 
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax.numpy as jnp
 import numpy as np
 from numpy.typing import NDArray

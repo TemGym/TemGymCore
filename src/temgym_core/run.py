@@ -2,7 +2,7 @@ from itertools import chain
 import dataclasses
 from typing import TYPE_CHECKING, Sequence, Union, Any, Callable, Generator
 
-import jax
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax.numpy as jnp
 from .utils import custom_jacobian_matrix
 from .propagator import FreeSpaceParaxial, BasePropagator, Propagator

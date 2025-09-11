@@ -1,12 +1,13 @@
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax.numpy as jnp
-import jax
+import jax_dataclasses as jdc
+from jax._src.lax.control_flow.loops import _batch_and_remainder
+from jax import lax
+
 from .grid import Grid
 from .run import run_to_end
 from .utils import custom_jacobian_matrix
 from .ray import Ray
-import jax_dataclasses as jdc
-from jax._src.lax.control_flow.loops import _batch_and_remainder
-from jax import lax
 
 
 def w_z(w0, z, z_r):

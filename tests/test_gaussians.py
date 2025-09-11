@@ -21,10 +21,9 @@ from temgym_core.utils import (
     make_aperture, zero_phase, FresnelPropagator, fresnel_lens_imaging_solution
 )
 import numpy as np
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax.numpy as jnp
-import jax
 import matplotlib.pyplot as plt
-jax.config.update("jax_enable_x64", True)
 
 
 def plot_cross_sections(

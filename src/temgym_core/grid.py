@@ -1,5 +1,6 @@
 from typing import Union
 import numpy as np
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax.numpy as jnp
 
 from . import Degrees, ShapeYX, CoordXY, CoordsXY, ScaleYX, PixelsYX

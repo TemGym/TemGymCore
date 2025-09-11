@@ -1,4 +1,5 @@
 import numpy as np
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax_dataclasses as jdc
 
 from .tree_utils import HasParamsMixin

@@ -2,6 +2,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 import numpy as np
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 from jax import jacobian
 import jax.numpy as jnp
 import jax_dataclasses as jdc
