@@ -346,8 +346,8 @@ def test_singular_component_jacobian():
 
 def test_biprism():
     deflection = 1e-3
-    biprism = Biprism(deflection=deflection, z=0.0)
-    ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, _one=1.0, z=0.0, pathlength=0.0)
+    biprism = Biprism(def_x=deflection, z=0.0)
+    ray = Ray(x=1e-15, y=0.0, dx=0.0, dy=0.0, _one=1.0, z=0.0, pathlength=0.0)
 
     out_jac = jacobian(biprism)(ray)
     J = custom_jacobian_matrix(out_jac)
@@ -359,9 +359,9 @@ def test_biprism_with_prop():
     deflection = 1e-3
     z_biprism = 0.0
     z_det = 0.234
-    biprism = Biprism(deflection=deflection, z=z_biprism)
+    biprism = Biprism(def_x=deflection, z=z_biprism)
     detector = Detector(z=z_det, pixel_size=(1e-4, 1e-4), shape=(512, 512))
-    ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, _one=1.0, z=0.0, pathlength=0.0)
+    ray = Ray(x=1e-15, y=0.0, dx=0.0, dy=0.0, _one=1.0, z=0.0, pathlength=0.0)
     model = [biprism, detector]
     ABCD = jacobian(lambda r: run_to_end(r, model))(ray)
     ABCD = custom_jacobian_matrix(ABCD)
@@ -406,7 +406,7 @@ def test_biprism_with_lens_and_prop():
         detector,
     ]
 
-    central_ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=input_beam.z, pathlength=0.0, _one=1.0)
+    central_ray = Ray(x=-1e-15, y=0.0, dx=0.0, dy=0.0, z=input_beam.z, pathlength=0.0, _one=1.0)
 
     ABCD = jacobian(lambda r: run_to_end(r, model))(central_ray)
     ABCD = custom_jacobian_matrix(ABCD)
