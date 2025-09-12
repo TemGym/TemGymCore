@@ -434,8 +434,8 @@ class Deflector(Component):
     def __call__(self, ray: Ray):
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
         return ray.derive(
-            dx=dx + self.def_x,
-            dy=dy + self.def_y,
+            dx=dx + self.def_x * ray._one,
+            dy=dy + self.def_y * ray._one,
             pathlength=ray.pathlength + dx * x + dy * y,
         )
 
