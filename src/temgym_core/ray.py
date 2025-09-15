@@ -1,7 +1,6 @@
 import dataclasses
 import jax_dataclasses as jdc
 import jax.numpy as jnp
-
 from .tree_utils import HasParamsMixin
 
 
@@ -92,6 +91,9 @@ class Ray(HasParamsMixin):
         params = {k: v[arg] for k, v in dataclasses.asdict(self).items()}
         return type(self)(**params)
 
+    def to_ray(self):
+        return self
+
     def item(self):
         """Convert a single-element ray to scalars.
 
@@ -108,6 +110,14 @@ class Ray(HasParamsMixin):
             k: v.item()
             if hasattr(v, "size")
             else v
+            for k, v
+            in dataclasses.asdict(self).items()
+        }
+        return type(self)(**params)
+
+    def to_vector(self):
+        params = {
+            k: jnp.atleast_1d(v)
             for k, v
             in dataclasses.asdict(self).items()
         }

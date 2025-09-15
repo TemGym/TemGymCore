@@ -1,12 +1,17 @@
 import pytest
 import numpy as np
+import jax
 from jax import jacobian
 import jax.numpy as jnp
 import jax_dataclasses as jdc
 
-from temgym_core.components import ScanGrid, Detector, Descanner, DescanError, Component
+from temgym_core.source import ParallelBeam
+from temgym_core.components import ScanGrid, Detector, Descanner, DescanError, Component, Biprism, Lens
 from temgym_core.ray import Ray
 from temgym_core.utils import custom_jacobian_matrix
+from temgym_core.run import run_to_end
+from transfer_matrices import propagation_matrix_5x5, lens_matrix_5x5, biprism_matrix_5x5
+jax.config.update("jax_enable_x64", True)
 
 
 @jdc.pytree_dataclass
@@ -337,3 +342,73 @@ def test_singular_component_jacobian():
     # and used with our custom_jacobian_matrix
     # returns a matrix that is singular (i.e., has NaN or Inf values)
     assert np.isnan(inv).any() or np.isinf(inv).any()
+
+
+def test_biprism():
+    deflection = 1e-3
+    biprism = Biprism(def_x=deflection, z=0.0)
+    ray = Ray(x=1e-15, y=0.0, dx=0.0, dy=0.0, _one=1.0, z=0.0, pathlength=0.0)
+
+    out_jac = jacobian(biprism)(ray)
+    J = custom_jacobian_matrix(out_jac)
+    jac_def = J[2, -1]
+    np.testing.assert_allclose(jac_def, deflection, atol=1e-6)
+
+
+def test_biprism_with_prop():
+    deflection = 1e-3
+    z_biprism = 0.0
+    z_det = 0.234
+    biprism = Biprism(def_x=deflection, z=z_biprism)
+    detector = Detector(z=z_det, pixel_size=(1e-4, 1e-4), shape=(512, 512))
+    ray = Ray(x=1e-15, y=0.0, dx=0.0, dy=0.0, _one=1.0, z=0.0, pathlength=0.0)
+    model = [biprism, detector]
+    ABCD = jacobian(lambda r: run_to_end(r, model))(ray)
+    ABCD = custom_jacobian_matrix(ABCD)
+    d_x_d_one = ABCD[0, -1]
+    d_dx_d_one = ABCD[2, -1]
+    analytic_def = deflection * (z_det - z_biprism)
+    np.testing.assert_allclose(d_x_d_one, analytic_def, atol=1e-6)
+    np.testing.assert_allclose(d_dx_d_one, deflection, atol=1e-6)
+
+
+def test_biprism_with_lens_and_prop():
+
+    M1 = -10
+    F1 = 0.0002
+
+    defocus = 1e-4
+    L1_z1 = F1 * (1/M1 - 1)
+    L1_z2 = F1 * (1 - M1)
+
+    deflection = 1e-4
+    input_beam = ParallelBeam(z=0.0 + defocus, radius=0.0)
+    lens = Lens(focal_length=F1, z=abs(L1_z1))
+    biprism = Biprism(z=abs(L1_z1) + abs(L1_z2) / 2, rotation=0.0, def_x=deflection)
+    detector = Detector(z=abs(L1_z1) + abs(L1_z2), pixel_size=(0.01, 0.01), shape=(128, 128))
+
+    z1 = lens.z - input_beam.z
+    z2 = biprism.z - lens.z
+    z3 = detector.z - biprism.z
+
+    analytic_ABCD = (
+        propagation_matrix_5x5(z3, xp=jnp)
+        @ biprism_matrix_5x5(deflection, xp=jnp)
+        @ propagation_matrix_5x5(z2, xp=jnp)
+        @ lens_matrix_5x5(F1, xp=jnp)
+        @ propagation_matrix_5x5(z1, xp=jnp)
+    )
+
+    model = [
+        input_beam,
+        lens,
+        biprism,
+        detector,
+    ]
+
+    central_ray = Ray(x=-1e-15, y=0.0, dx=0.0, dy=0.0, z=input_beam.z, pathlength=0.0, _one=1.0)
+
+    ABCD = jacobian(lambda r: run_to_end(r, model))(central_ray)
+    ABCD = custom_jacobian_matrix(ABCD)
+
+    np.testing.assert_allclose(ABCD, analytic_ABCD, atol=1e-12)
