@@ -251,12 +251,14 @@ def test_propagate_free_space_matches_expected_formula():
     r1m = jnp.array([[0.0, 0.0]])
     theta1m = jnp.array([[0.0, 0.0]])
 
-    amp = jnp.array([1.0 + 0j])
+    amp = jnp.array([1.0])
+    phase_offset = jnp.array([0.0])
+
     kval = jnp.array([k])
 
     # Compute field with implementation
     field = propagate_misaligned_gaussian_jax_scan(
-        amp, Q1_inv, A, B, C, D, e, f, r1m, theta1m, kval, r2
+        amp, phase_offset, Q1_inv, A, B, C, D, e, f, r1m, theta1m, kval, r2
     )  # (N,)
 
     # Expected: pref * exp(i*k/2 * r^T Q2_inv r)
