@@ -75,10 +75,9 @@ def run_iter(
     for component in components:
         if isinstance(component, (Source, Component)):
             distance = component.z - ray.z
-            if distance != 0.:
-                propagator_d = propagator.with_distance(distance)
-                ray, out = transform(propagator_d)(ray)
-                yield propagator_d, out
+            propagator_d = propagator.with_distance(distance)
+            ray, out = transform(propagator_d)(ray)
+            yield propagator_d, out
         ray, out = transform(component)(ray)
         yield component, out
 
