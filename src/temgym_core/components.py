@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, Dict
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
@@ -6,7 +6,7 @@ from .ray import Ray
 from .grid import Grid
 from . import Degrees, CoordsXY, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
-
+from .aberrations import grad_W_krivanek, W_krivanek
 
 class Component(HasParamsMixin):
     """Base component that transforms a ray without side effects.
@@ -170,6 +170,47 @@ class Lens(Component):
 
         return Ray(
             x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=ray.z
+        )
+
+
+@jdc.pytree_dataclass
+class AberratedLensKrivanek(Lens):
+    """Thin lens with Krivanek aberrations.
+
+    Parameters
+    ----------
+    z : float
+        Axial position in metres.
+    focal_length : float
+        Focal length in metres.
+    aber_coeffs : jnp.ndarray
+
+    """
+    coeffs: Dict
+
+    def __call__(self, ray: Ray):
+        f = self.focal_length
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        coeffs = self.coeffs
+
+        # Paraxial thin lens
+        ideal_dx = -x / f + dx
+        ideal_dy = -y / f + dy
+
+        alpha = jnp.hypot(ideal_dx, ideal_dy)    # radians
+        phi = jnp.arctan2(ideal_dy, ideal_dx)    # radians
+
+        dWx, dWy = grad_W_krivanek(ideal_dx, ideal_dy, coeffs)
+        dux, duy = -dWx / f, -dWy / f
+
+        aber_dx = ideal_dx + dux
+        aber_dy = ideal_dy + duy
+
+        pathlength = ray.pathlength - (x**2 + y**2) / (2 * f) + W_krivanek(alpha, phi, coeffs) / f
+        one = ray._one * 1.0
+
+        return Ray(
+            x=x, y=y, dx=aber_dx, dy=aber_dy, _one=one, pathlength=pathlength, z=ray.z
         )
 
 
