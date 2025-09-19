@@ -68,7 +68,7 @@ class FreeSpaceParaxial(BasePropagator):
             x=ray.x + ray.dx * distance,
             y=ray.y + ray.dy * distance,
             z=ray.z + distance,
-            pathlength=ray.pathlength + distance,
+            pathlength=ray.pathlength + distance / 2 * (ray.dx**2 + ray.dy**2) + distance,
         )
 
     @classmethod

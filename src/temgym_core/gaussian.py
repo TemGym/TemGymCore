@@ -95,6 +95,10 @@ def Qinv_ABCD(Qinv, A, B, C, D):
     return jnp.linalg.solve(lhs, rhs)
 
 
+def Qinv_ABCD_float(Qinv, A, B, C, D):
+    return C + D * Qinv / (A + B * Qinv)
+
+
 def q_inv(z, w0, wl):
     z_r = zR(w0, wl)
     cond = jnp.abs(z) < 1e-10
@@ -173,6 +177,9 @@ class GaussianRay(Ray):
             ],
             axis=-2,
         )
+
+        Q_inv_diag = Q_inv_diag[None, ...] if Q_inv_diag.ndim == 2 else Q_inv_diag
+        R = R[None, ...] if R.ndim == 2 else R
         return matrix_matrix_matrix_mul(R, Q_inv_diag, R)
 
 
@@ -233,6 +240,7 @@ def make_gaussian_image(gaussian_rays, model, batch_size=128):
     vmap_fn = jax.vmap(jax.jacobian(run_to_end), in_axes=(0, None))
     central_rays = rays.to_ray()
     output_tm = vmap_fn(central_rays, model)
+    output_rays = run_to_end(central_rays, model)
 
     model_ray_jacobians = custom_jacobian_matrix(output_tm)
     ABCDs = jnp.array(model_ray_jacobians)
@@ -251,7 +259,7 @@ def make_gaussian_image(gaussian_rays, model, batch_size=128):
     theta1ms = jnp.stack([central_rays.dx, central_rays.dy], axis=-1)
     wavelengths = rays.wavelength
     k = 2 * jnp.pi / wavelengths
-    phase_offset = k * rays.pathlength
+    phase_offset = k * output_rays.pathlength
 
     output_field = propagate_misaligned_gaussian_jax_scan(
         amplitudes,
