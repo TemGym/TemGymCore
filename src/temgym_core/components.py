@@ -206,7 +206,7 @@ class AberratedLensKrivanek(Lens):
         aber_dx = ideal_dx + dux
         aber_dy = ideal_dy + duy
 
-        pathlength = ray.pathlength - (x**2 + y**2) / (2 * f) + W_krivanek(alpha, phi, coeffs) / f
+        pathlength = W_krivanek(alpha, phi, coeffs)
         one = ray._one * 1.0
 
         return Ray(
