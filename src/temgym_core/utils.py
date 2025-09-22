@@ -316,3 +316,82 @@ def fibonacci_spiral(
     y = rr * np.sin(phi)
 
     return x, y
+
+
+def _clamp(v, lo, hi):
+    return jnp.clip(v, lo, hi)
+
+
+def _get_texels(img, ys, xs):
+    H, W = img.shape
+    ys = _clamp(ys, 0, H - 1)
+    xs = _clamp(xs, 0, W - 1)
+    return img[ys, xs]
+
+
+def _bilinear_sample(img, y, x):
+    H, W = img.shape
+    y0 = jnp.floor(y).astype(jnp.int32)
+    x0 = jnp.floor(x).astype(jnp.int32)
+    y1 = jnp.minimum(y0 + 1, H - 1)
+    x1 = jnp.minimum(x0 + 1, W - 1)
+
+    wy = y - y0.astype(y.dtype)
+    wx = x - x0.astype(x.dtype)
+
+    v00 = _get_texels(img, y0, x0)
+    v01 = _get_texels(img, y0, x1)
+    v10 = _get_texels(img, y1, x0)
+    v11 = _get_texels(img, y1, x1)
+
+    v0 = v00 * (1 - wx) + v01 * wx
+    v1 = v10 * (1 - wx) + v11 * wx
+    return v0 * (1 - wy) + v1 * wy
+
+
+def _cubic_weights(f, a=-0.5):
+    f2 = f * f
+    f3 = f2 * f
+    w_m1 = -a * f + 2 * a * f2 - a * f3
+    w_0 = 1 + (a - 3) * f2 + (2 - a) * f3
+    w_p1 = a * f + (3 - 2 * a) * f2 + (a - 2) * f3
+    w_p2 = -a * f2 + a * f3
+    return w_m1, w_0, w_p1, w_p2
+
+
+def _bicubic_sample(img, y, x, a=-0.5):
+    H, W = img.shape
+    y0f = jnp.floor(y)
+    x0f = jnp.floor(x)
+    fy = (y - y0f).astype(jnp.float64)
+    fx = (x - x0f).astype(jnp.float64)
+
+    y0 = y0f.astype(jnp.int32)
+    x0 = x0f.astype(jnp.int32)
+
+    y_m1 = _clamp(y0 - 1, 0, H - 1)
+    y_p0 = _clamp(y0 + 0, 0, H - 1)
+    y_p1 = _clamp(y0 + 1, 0, H - 1)
+    y_p2 = _clamp(y0 + 2, 0, H - 1)
+
+    x_m1 = _clamp(x0 - 1, 0, W - 1)
+    x_p0 = _clamp(x0 + 0, 0, W - 1)
+    x_p1 = _clamp(x0 + 1, 0, W - 1)
+    x_p2 = _clamp(x0 + 2, 0, W - 1)
+
+    wy_m1, wy_0, wy_1, wy_2 = _cubic_weights(fy, a)
+    wx_m1, wx_0, wx_1, wx_2 = _cubic_weights(fx, a)
+
+    def row_interp(y_idx):
+        v_m1 = _get_texels(img, y_idx, x_m1)
+        v_0 = _get_texels(img, y_idx, x_p0)
+        v_1 = _get_texels(img, y_idx, x_p1)
+        v_2 = _get_texels(img, y_idx, x_p2)
+        return v_m1 * wx_m1 + v_0 * wx_0 + v_1 * wx_1 + v_2 * wx_2
+
+    r_m1 = row_interp(y_m1)
+    r_0 = row_interp(y_p0)
+    r_1 = row_interp(y_p1)
+    r_2 = row_interp(y_p2)
+
+    return r_m1 * wy_m1 + r_0 * wy_0 + r_1 * wy_1 + r_2 * wy_2
