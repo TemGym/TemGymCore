@@ -75,6 +75,22 @@ class Ray(HasParamsMixin):
         assert len(sizes) == 1
         return tuple(sizes)[0]
 
+    @property
+    def r_xy(self):
+        # always (B, 2). If single point (2,), add batch dim → (1,2)
+        r = jnp.stack([self.x, self.y], axis=-1)
+        r = r if r.ndim == 2 else r[None, ...]
+        assert r.shape[-1] == 2, f"r_xy must be (B,2), got {r.shape}"
+        return r
+
+    @property
+    def d_xy(self):
+        # always (B, 2). If single point (2,), add batch dim → (1,2)
+        dr = jnp.stack([self.dx, self.dy], axis=-1)
+        dr = dr if dr.ndim == 2 else dr[None, ...]
+        assert dr.shape[-1] == 2, f"d_xy must be (B,2), got {dr.shape}"
+        return dr
+
     def __getitem__(self, arg):
         """Index a vectorized ray to get a single-element Ray.
 
@@ -122,6 +138,7 @@ class Ray(HasParamsMixin):
             in dataclasses.asdict(self).items()
         }
         return type(self)(**params)
+
 
     def derive(
         self,

@@ -183,6 +183,30 @@ class GaussianRay(Ray):
         return matrix_matrix_matrix_mul(R, Q_inv_diag, R)
 
 
+@jdc.pytree_dataclass(kw_only=True)
+class GaussianRayBeta(Ray):
+    Q_inv: float
+    eta: jnp.ndarray
+    C: jnp.ndarray
+    k0: jnp.ndarray
+
+    def derive(self, **updates):
+        def resolve(v):
+            return v(self) if callable(v) else v
+        return jdc.replace(self, **{k: resolve(v) for k, v in updates.items()})
+
+    def to_ray(self):
+        return Ray(
+            x=self.x,
+            y=self.y,
+            dx=self.dx,
+            dy=self.dy,
+            z=self.z,
+            pathlength=self.pathlength,
+            _one=self._one,
+        )
+
+
 def matrix_vector_mul(M, v):
     """
     Batched matrix-vector multiplication.
@@ -407,26 +431,46 @@ def evaluate_gaussian_input_image(gaussian_rays, grid, batch_size=128):
 
 
 def _input_beam_field(a, p, q1, r1m, t1m, k, r1):
+    # r1: (np,2), r1m: (2,), q1: (2,2)
     r1_minus_r1m = r1 - r1m  # (np,2)
-    r1_Q1_inv_r1 = jnp.einsum("ni,ij,nj->n", r1_minus_r1m, q1, r1_minus_r1m)  # (np,)
-    misaligned_tilt_phase = 2 * r1_minus_r1m @ t1m  # (np,)
+    # faster quadratic form: v = r1_minus_r1m @ q1.T -> (np,2)
+    v = r1_minus_r1m @ q1.T
+    r1_Q1_inv_r1 = jnp.sum(v * r1_minus_r1m, axis=1)  # (np,)
+    misaligned_tilt_phase = 2 * (r1_minus_r1m @ t1m)  # (np,)
     phase = (k / 2) * (r1_Q1_inv_r1 + misaligned_tilt_phase)  # (np,)
-    return a * jnp.exp(1j * phase) * jnp.exp(1j * p)  # (np,)
+    # combine exps into one to reduce work
+    return a * jnp.exp(1j * (phase + p))  # (np,)
+
+
+# def evaluate_misaligned_input_gaussian_jax_scan(
+#     amp, phase_offset, Q1_inv, r1m, theta1m, k, r1, batch_size=128
+# ):
+#     npix = r1.shape[0]
+
+#     def _input_beam_field_outer(xs):
+#         a_i, p_i, q1_i, r1m_i, t1m_i, k_i = xs
+#         return _input_beam_field(a_i, p_i, q1_i, r1m_i, t1m_i, k_i, r1)
+
+#     init = jnp.zeros((npix,), dtype=jnp.complex128)
+#     xs = (amp, phase_offset, Q1_inv, r1m, theta1m, k)
+#     out = map_reduce(_input_beam_field_outer, jnp.add, init, xs, batch_size=batch_size)
+#     return out  # (npix,)
 
 
 def evaluate_misaligned_input_gaussian_jax_scan(
     amp, phase_offset, Q1_inv, r1m, theta1m, k, r1, batch_size=128
 ):
     npix = r1.shape[0]
+    # Pick accumulator dtype that matches inputs to avoid upcasts:
+    complex_dtype = jnp.result_type(amp, 1j)
+    init = jnp.zeros((npix,), dtype=complex_dtype)
 
-    def _input_beam_field_outer(xs):
-        a_i, p_i, q1_i, r1m_i, t1m_i, k_i = xs
-        return _input_beam_field(a_i, p_i, q1_i, r1m_i, t1m_i, k_i, r1)
-
-    init = jnp.zeros((npix,), dtype=jnp.complex128)
-    xs = (amp, phase_offset, Q1_inv, r1m, theta1m, k)
-    out = map_reduce(_input_beam_field_outer, jnp.add, init, xs, batch_size=batch_size)
-    return out  # (npix,)
+    # Prefer a single vmap + sum when memory permits (faster than map_reduce):
+    # vmapped over the beam axis; each call returns shape (npix,)
+    vmapped = jax.vmap(lambda a, p, q, r0, t, kk: _input_beam_field(a, p, q, r0, t, kk, r1))
+    fields = vmapped(amp, phase_offset, Q1_inv, r1m, theta1m, k)  # (nbeams, npix)
+    out = jnp.sum(fields, axis=0)  # (npix,)
+    return out
 
 
 evaluate_misaligned_input_gaussian_jax_scan = jax.jit(
