@@ -8,7 +8,7 @@ from typing import List, Tuple, Dict, Any
 import interpax as interp
 
 
-def _beam_field(r_m, C, eta, Q_inv, opl, k, r2):
+def _beam_field(r_m, C, eta, Q_inv, k, r2):
     delta = r2 - r_m
     lin = jnp.sum(delta * eta, axis=-1)
     quad = jnp.sum((delta @ Q_inv) * delta, axis=-1)
@@ -20,27 +20,28 @@ def _beam_field(r_m, C, eta, Q_inv, opl, k, r2):
     taylor_logA = jnp.imag(taylor)
     taylor_logA = jnp.clip(taylor_logA, a_min=-700.0, a_max=0.0)
 
-    # New input constant amplitude and phase
-    constant = C * jnp.exp(1j * k * opl)
-
     # Local linear and quadratic taylor expansions of amplitude and phase
     lin_and_quad_taylor_amp_phase = jnp.exp(taylor_logA) * jnp.exp(-1j * taylor_phase)
-    final_field = constant * lin_and_quad_taylor_amp_phase
+    final_field = C * lin_and_quad_taylor_amp_phase
     return final_field
 
 
 def _beam_field_outer(xs, r2):
-    r_m_i, C_i, eta_i, Q_i, opl_i, k_i = xs
-    return _beam_field(r_m_i, C_i, eta_i, Q_i, opl_i, k_i, r2)
+    r_m_i, C_i, eta_i, Q_i, k_i = xs
+    return _beam_field(r_m_i, C_i, eta_i, Q_i, k_i, r2)
 
 
-def evaluate_gaussian_packets_jax_scan(gaussian_ray: GaussianRayBeta, grid, *, batch_size: int | None = 128):
+def evaluate_gaussian_packets_jax_scan(
+    gaussian_ray: GaussianRayBeta,
+    grid,
+    *,
+    batch_size: int | None = 128,
+):
     r_m = gaussian_ray.r_xy
     C = gaussian_ray.C
     eta = gaussian_ray.eta
     Q_inv = gaussian_ray.Q_inv
     k = gaussian_ray.k
-    opl = gaussian_ray.pathlength
 
     r2 = grid.coords
     P = r2.shape[0]
@@ -49,7 +50,7 @@ def evaluate_gaussian_packets_jax_scan(gaussian_ray: GaussianRayBeta, grid, *, b
     def f_pack(xs):
         return _beam_field_outer(xs, r2)
 
-    xs = (r_m, C, eta, Q_inv, opl, k)
+    xs = (r_m, C, eta, Q_inv, k)
     out = map_reduce(f_pack, jnp.add, init, xs, batch_size=batch_size)
     return out.reshape(grid.shape)
 
@@ -95,24 +96,26 @@ def apply_thin_element_from_complex_opl(gp: GaussianRayBeta, opl, grad_opl, Hess
     grad_opl : (B,2)  complex = ∇φ - i∇ℓ
     Hess_opl : (B,2,2) complex = Hφ - iHℓ
     """
-    phi0 = jnp.real(opl)  # (B,)
-    im0 = jnp.imag(opl)  # (B,)  == -ℓ
-    C_out = gp.C * jnp.exp(-im0) * jnp.exp(1j * phi0)
-
+    k = gp.k
+    phi_0 = jnp.real(opl)  # (B,)
+    im_0 = jnp.imag(opl)  # (B,)  == -ℓ
     g_phi = jnp.real(grad_opl)  # (B,2)
     g_im = jnp.imag(grad_opl)  # (B,2) == -∇ℓ
     H_phi = jnp.real(Hess_opl)  # (B,2,2)
     H_im = jnp.imag(Hess_opl)  # (B,2,2) == -Hℓ
 
-    # η' = η - ∇φ - i ∇ℓ  (since g_im = -∇ℓ) - Linear terms
+    # C' = C * exp(-ℓ) * exp(i φ) - Constant phase and amplitude factors
+    C_out = gp.C * jnp.exp(-im_0) * jnp.exp(1j * k * phi_0)
+    # η' = η - ∇φ - i ∇ℓ  (since g_im = -∇ℓ) - Linear phase and amplitude terms
     eta_out = gp.eta - g_phi - 1j * (g_im)
-    # Qinv' = Qinv - Hφ - i Hℓ - Quadratic terms
+    # Qinv' = Qinv - Hφ - i Hℓ - Quadratic terms - Quadratic phase and amplitude terms
     Qinv_out = gp.Q_inv - H_phi - 1j * (H_im)
 
     dxy_in = gp.d_xy
     dxy_out = dxy_in - g_phi
+    opl_out = gp.pathlength + opl
 
-    return gp.derive(dx=dxy_out[..., 0], dy=dxy_out[..., 1],
+    return gp.derive(dx=dxy_out[..., 0], dy=dxy_out[..., 1], pathlength=opl_out,
                      Q_inv=Qinv_out, eta=eta_out, C=C_out)
 
 
@@ -270,15 +273,22 @@ class Potential(Component):
         r_xy = ray.r_xy
         r_xy = _as_batch(r_xy)
 
-        opl = ray.sigma * self.V_interp(r_xy) / ray.k
+        # Per-ray scalar factor
+        sk = (ray.sigma / ray.k)
 
-        g_real = ray.sigma * self.grad_V_interp(r_xy) / ray.k
-        H_real = ray.sigma * self.hess_V_interp(r_xy) / ray.k
+        # Scalar OPL term (B,)
+        opl = sk * self.V_interp(r_xy)
+
+        # Gradient (B,2) — broadcast scalar over last axis
+        grad_real = sk[..., None] * self.grad_V_interp(r_xy)
+
+        # Hessian (B,2,2) — broadcast scalar over the last two axes
+        Hess_real = sk[..., None, None] * self.hess_V_interp(r_xy)
 
         # promote to complex (imaginary parts are zero)
-        g_opl = g_real.astype(jnp.complex128)
-        H_opl = H_real.astype(jnp.complex128)
-        out = apply_thin_element_from_complex_opl(ray, opl, g_opl, H_opl)
+        grad_opl = grad_real.astype(jnp.complex128)
+        Hess_opl = Hess_real.astype(jnp.complex128)
+        out = apply_thin_element_from_complex_opl(ray, opl, grad_opl, Hess_opl)
 
         return out.derive(z=self.z)
 
