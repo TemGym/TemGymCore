@@ -16,13 +16,17 @@ def _beam_field(r_m, C, eta, Q_inv, opl, k, r2):
     k = jnp.asarray(k).reshape(())
     taylor = k * (lin + 0.5 * quad)
 
-    phase = jnp.real(taylor)
-    amp = jnp.imag(taylor)
+    taylor_phase = jnp.real(taylor)
+    taylor_logA = jnp.imag(taylor)
+    taylor_logA = jnp.clip(taylor_logA, a_min=-700.0, a_max=0.0)
 
-    amp = jnp.clip(amp, a_min=-700.0, a_max=0.0)
+    # New input constant amplitude and phase
+    constant = C * jnp.exp(1j * k * opl)
 
-    amp0 = C * jnp.exp(1j * k * opl)
-    return amp0 * jnp.exp(phase) * jnp.exp(-1j * amp)
+    # Local linear and quadratic taylor expansions of amplitude and phase
+    lin_and_quad_taylor_amp_phase = jnp.exp(taylor_logA) * jnp.exp(-1j * taylor_phase)
+    final_field = constant * lin_and_quad_taylor_amp_phase
+    return final_field
 
 
 def _beam_field_outer(xs, r2):
@@ -30,12 +34,12 @@ def _beam_field_outer(xs, r2):
     return _beam_field(r_m_i, C_i, eta_i, Q_i, opl_i, k_i, r2)
 
 
-def evaluate_gaussian_packets_jax_scan(gaussian_ray, grid, *, batch_size: int | None = 128):
+def evaluate_gaussian_packets_jax_scan(gaussian_ray: GaussianRayBeta, grid, *, batch_size: int | None = 128):
     r_m = gaussian_ray.r_xy
     C = gaussian_ray.C
     eta = gaussian_ray.eta
     Q_inv = gaussian_ray.Q_inv
-    k = gaussian_ray.k0
+    k = gaussian_ray.k
     opl = gaussian_ray.pathlength
 
     r2 = grid.coords
@@ -132,12 +136,7 @@ class Component:
 
         if isinstance(ray, GaussianRayBeta):
             H_opl = hess_opl(self, r_xy)    # (B,2,2) complex
-            # k = ray.k0
-            # k_vec = k if jnp.ndim(k) == 0 else k[:, None]
-            # k_mat = k if jnp.ndim(k) == 0 else k[:, None, None]
-
             out = apply_thin_element_from_complex_opl(ray, opl, g_opl, H_opl)
-
             return out.derive(z=self.z)
 
         dxy = ray.d_xy - jnp.real(g_opl)
