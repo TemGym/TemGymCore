@@ -139,7 +139,6 @@ class Ray(HasParamsMixin):
         }
         return type(self)(**params)
 
-
     def derive(
         self,
         x: float | None = None,
