@@ -283,26 +283,20 @@ class Potential(Component):
 
         return out.derive(z=self.z)
 
-    def _sample_V(self, xq, yq):
-        # Interpolator2D signature is (xq, yq, dx=0, dy=0); it expects x first.
-        shp = xq.shape
-        Vq = self._interp(jnp.ravel(xq), jnp.ravel(yq))   # (N,)
-        return Vq.reshape(shp)
-
     def V_interp(self, xy):
         xq = xy[..., 0]
         yq = xy[..., 1]
-
-        Vxy = self._sample_V(xq, yq)
-        return Vxy
+        shp = xq.shape
+        Vq = self._interp(jnp.ravel(xq), jnp.ravel(yq)).reshape(shp)
+        return Vq
 
     def grad_V_interp(self, xy):
         xq = xy[..., 0]
         yq = xy[..., 1]
 
         shp = xq.shape
-        dVdx = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=0).reshape(shp)
-        dVdy = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=1).reshape(shp)
+        dVdx = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=0).reshape(shp)
+        dVdy = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=1).reshape(shp)
         J = jnp.stack([dVdx, dVdy], axis=-1)
         return J
 
@@ -311,9 +305,9 @@ class Potential(Component):
         yq = xy[..., 1]
 
         shp = xq.shape
-        Vxx = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=2, dy=0).reshape(shp)
-        Vxy = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=1).reshape(shp)
-        Vyy = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=2).reshape(shp)
+        Vxx = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=2, dy=0).reshape(shp)
+        Vxy = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=1).reshape(shp)
+        Vyy = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=2).reshape(shp)
         H = jnp.stack([jnp.stack([Vxx, Vxy], -1), jnp.stack([Vxy, Vyy], -1)], -2)
         return H
 
