@@ -14,15 +14,15 @@ def _beam_field(r_m, C, eta, Q_inv, opl, k, r2):
     quad = jnp.sum((delta @ Q_inv) * delta, axis=-1)
 
     k = jnp.asarray(k).reshape(())
-    phase = k * (lin + 0.5 * quad)
+    taylor = k * (lin + 0.5 * quad)
 
-    a = jnp.real(phase)
-    b = jnp.imag(phase)
+    phase = jnp.real(taylor)
+    amp = jnp.imag(taylor)
 
-    b = jnp.clip(b, a_min=-700.0, a_max=0.0)
+    amp = jnp.clip(amp, a_min=-700.0, a_max=0.0)
 
     amp0 = C * jnp.exp(1j * k * opl)
-    return amp0 * jnp.exp(b) * jnp.exp(-1j * a)
+    return amp0 * jnp.exp(phase) * jnp.exp(-1j * amp)
 
 
 def _beam_field_outer(xs, r2):
@@ -237,7 +237,6 @@ class Potential(Component):
     sy: float               # pixel size in y
     x0: float               # physical x of pixel index 0
     y0: float               # physical y of pixel index 0
-    sigma: float
     method: str = 'catmull-rom'
     order: int = 3
 
@@ -266,17 +265,16 @@ class Potential(Component):
             interp.Interpolator2D(x_phys, y_phys, f, method=method, extrap=[0.0, 0.0]),
         )
 
-    def __call__(self, ray):
+    def __call__(self, ray: GaussianRayBeta):
 
         # (B,2) positions
         r_xy = ray.r_xy
         r_xy = _as_batch(r_xy)
 
-        # φ - iℓ at points (for C update)
-        opl = jax.vmap(self.complex_action)(r_xy)
+        opl = ray.sigma * self.V_interp(r_xy) / ray.k
 
-        g_real = self.sigma * self.grad_V(r_xy)   # (B,2)
-        H_real = self.sigma * self.hess_V(r_xy)   # (B,2,2)
+        g_real = ray.sigma * self.grad_V_interp(r_xy) / ray.k
+        H_real = ray.sigma * self.hess_V_interp(r_xy) / ray.k
 
         # promote to complex (imaginary parts are zero)
         g_opl = g_real.astype(jnp.complex128)
@@ -291,31 +289,31 @@ class Potential(Component):
         Vq = self._interp(jnp.ravel(xq), jnp.ravel(yq))   # (N,)
         return Vq.reshape(shp)
 
-    def complex_action(self, xy):
+    def V_interp(self, xy):
         xq = xy[..., 0]
         yq = xy[..., 1]
 
         Vxy = self._sample_V(xq, yq)
-        opl = self.sigma * Vxy
-        return opl - 1j * 0.0
+        return Vxy
 
-    def grad_V(self, xy):
+    def grad_V_interp(self, xy):
         xq = xy[..., 0]
         yq = xy[..., 1]
 
         shp = xq.shape
-        dVdx = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=0).reshape(shp)
-        dVdy = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=1).reshape(shp)
-        return jnp.stack([dVdx, dVdy], axis=-1)
+        dVdx = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=0).reshape(shp)
+        dVdy = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=1).reshape(shp)
+        J = jnp.stack([dVdx, dVdy], axis=-1)
+        return J
 
-    def hess_V(self, xy):
+    def hess_V_interp(self, xy):
         xq = xy[..., 0]
         yq = xy[..., 1]
 
         shp = xq.shape
-        Vxx = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=2, dy=0).reshape(shp)
-        Vxy = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=1).reshape(shp)
-        Vyy = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=2).reshape(shp)
+        Vxx = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=2, dy=0).reshape(shp)
+        Vxy = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=1).reshape(shp)
+        Vyy = self.sigma * self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=2).reshape(shp)
         H = jnp.stack([jnp.stack([Vxx, Vxy], -1), jnp.stack([Vxy, Vyy], -1)], -2)
         return H
 

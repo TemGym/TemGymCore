@@ -7,6 +7,11 @@ from .ray import Ray
 import jax_dataclasses as jdc
 from jax._src.lax.control_flow.loops import _batch_and_remainder
 from jax import lax
+from ase import units
+
+
+def relativistic_mass_correction(energy: float) -> float:
+    return 1 + units._e * energy / (units._me * units._c**2)
 
 
 def w_z(w0, z, z_r):
@@ -185,10 +190,10 @@ class GaussianRay(Ray):
 
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianRayBeta(Ray):
-    Q_inv: float
-    eta: jnp.ndarray
-    C: jnp.ndarray
-    k0: jnp.ndarray
+    Q_inv: jnp.ndarray  # (2,2) Quadratic complex term in phase and amplitude
+    eta: complex  # (2,) linear complex term in phase and amplitude
+    C: complex  # constant complex term in phase and amplitude
+    voltage: float
 
     def derive(self, **updates):
         def resolve(v):
@@ -205,6 +210,48 @@ class GaussianRayBeta(Ray):
             pathlength=self.pathlength,
             _one=self._one,
         )
+
+    @property
+    def mass(self) -> float:
+        """
+        Relativistic electron mass [kg] for this ray's voltage (eV).
+        """
+        return relativistic_mass_correction(self.voltage) * units._me
+
+    @property
+    def wavelength(self) -> float:
+        """
+        Relativistic de Broglie wavelength [Å] for this ray's voltage (eV).
+        """
+        E = self.voltage
+        return (
+            units._hplanck
+            * units._c
+            / jnp.sqrt(E * (2 * units._me * units._c**2 / units._e + E))
+            / units._e
+            * 1.0e10
+        )
+
+    @property
+    def sigma(self) -> float:
+        """
+        Interaction parameter [1 / (Å * eV)] for this ray's voltage (eV).
+        """
+        return (
+            2
+            * jnp.pi
+            * self.mass
+            * units.kg
+            * units._e
+            * units.C
+            * self.wavelength
+            / (units._hplanck * units.s * units.J) ** 2
+        )
+
+    @property
+    def k(self) -> float:
+        """Wave number k = 2*pi / wavelength (1/Å)."""
+        return 2 * jnp.pi / self.wavelength
 
 
 def matrix_vector_mul(M, v):
