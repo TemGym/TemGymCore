@@ -8,7 +8,7 @@ from typing import List, Tuple, Dict, Any
 import interpax as interp
 
 
-def _beam_field(r_m, C, eta, Q_inv, phase_offset, k, r2):
+def _beam_field(r_m, C, eta, Q_inv, opl, k, r2):
     delta = r2 - r_m
     lin = jnp.sum(delta * eta, axis=-1)
     quad = jnp.sum((delta @ Q_inv) * delta, axis=-1)
@@ -21,13 +21,13 @@ def _beam_field(r_m, C, eta, Q_inv, phase_offset, k, r2):
 
     b = jnp.clip(b, a_min=-700.0, a_max=0.0)
 
-    amp0 = C * jnp.exp(1j * phase_offset)
+    amp0 = C * jnp.exp(1j * k * opl)
     return amp0 * jnp.exp(b) * jnp.exp(-1j * a)
 
 
 def _beam_field_outer(xs, r2):
-    r_m_i, C_i, eta_i, Q_i, phase_offset_i, k_i = xs
-    return _beam_field(r_m_i, C_i, eta_i, Q_i, phase_offset_i, k_i, r2)
+    r_m_i, C_i, eta_i, Q_i, opl_i, k_i = xs
+    return _beam_field(r_m_i, C_i, eta_i, Q_i, opl_i, k_i, r2)
 
 
 def evaluate_gaussian_packets_jax_scan(gaussian_ray, grid, *, batch_size: int | None = 128):
@@ -36,8 +36,7 @@ def evaluate_gaussian_packets_jax_scan(gaussian_ray, grid, *, batch_size: int | 
     eta = gaussian_ray.eta
     Q_inv = gaussian_ray.Q_inv
     k = gaussian_ray.k0
-    path = gaussian_ray.pathlength
-    phase_offset = k * path
+    opl = gaussian_ray.pathlength
 
     r2 = grid.coords
     P = r2.shape[0]
@@ -46,7 +45,7 @@ def evaluate_gaussian_packets_jax_scan(gaussian_ray, grid, *, batch_size: int | 
     def f_pack(xs):
         return _beam_field_outer(xs, r2)
 
-    xs = (r_m, C, eta, Q_inv, phase_offset, k)
+    xs = (r_m, C, eta, Q_inv, opl, k)
     out = map_reduce(f_pack, jnp.add, init, xs, batch_size=batch_size)
     return out.reshape(grid.shape)
 
@@ -129,30 +128,20 @@ class Component:
         # φ - iℓ at points (for C update)
         opl = jax.vmap(self.complex_action)(r_xy)
         # Jac and Hessian
+        g_opl = grad_opl(self, r_xy)    # (B,2) complex
 
-        if isinstance(self, Potential):
-            # Use analytic derivatives from Potential: complex_action = sigma * V => grad/H = sigma * grad_V/hess_V
-            g_real = self.sigma * self.grad_V(r_xy)   # (B,2)
-            H_real = self.sigma * self.hess_V(r_xy)   # (B,2,2)
-            # promote to complex (imaginary parts are zero)
-            g_opl = g_real.astype(jnp.complex128)
-            H_opl = H_real.astype(jnp.complex128)
+        if isinstance(ray, GaussianRayBeta):
+            H_opl = hess_opl(self, r_xy)    # (B,2,2) complex
+            # k = ray.k0
+            # k_vec = k if jnp.ndim(k) == 0 else k[:, None]
+            # k_mat = k if jnp.ndim(k) == 0 else k[:, None, None]
+
             out = apply_thin_element_from_complex_opl(ray, opl, g_opl, H_opl)
-            return out.derive(z=self.z)
-        elif hasattr(self, "complex_action"):
-            k = ray.k0
-            k_vec = k if jnp.ndim(k) == 0 else k[:, None]
-            k_mat = k if jnp.ndim(k) == 0 else k[:, None, None]
 
-            g_scaled = g_opl / k_vec
-            H_scaled = H_opl / k_mat
-
-            out = apply_thin_element_from_complex_opl(ray, opl, g_scaled, H_scaled)
             return out.derive(z=self.z)
-        else:
-            # Geometric ray: only phase gradient affects slopes
-            dxy = ray.d_xy - jnp.real(g_opl)
-            return ray.derive(dx=dxy[..., 0], dy=dxy[..., 1], z=self.z)
+
+        dxy = ray.d_xy - jnp.real(g_opl)
+        return ray.derive(dx=dxy[..., 0], dy=dxy[..., 1], z=self.z)
 
 
 @jdc.pytree_dataclass
@@ -277,6 +266,25 @@ class Potential(Component):
             interp.Interpolator2D(x_phys, y_phys, f, method=method, extrap=[0.0, 0.0]),
         )
 
+    def __call__(self, ray):
+
+        # (B,2) positions
+        r_xy = ray.r_xy
+        r_xy = _as_batch(r_xy)
+
+        # φ - iℓ at points (for C update)
+        opl = jax.vmap(self.complex_action)(r_xy)
+
+        g_real = self.sigma * self.grad_V(r_xy)   # (B,2)
+        H_real = self.sigma * self.hess_V(r_xy)   # (B,2,2)
+
+        # promote to complex (imaginary parts are zero)
+        g_opl = g_real.astype(jnp.complex128)
+        H_opl = H_real.astype(jnp.complex128)
+        out = apply_thin_element_from_complex_opl(ray, opl, g_opl, H_opl)
+
+        return out.derive(z=self.z)
+
     def _sample_V(self, xq, yq):
         # Interpolator2D signature is (xq, yq, dx=0, dy=0); it expects x first.
         shp = xq.shape
@@ -296,7 +304,6 @@ class Potential(Component):
         yq = xy[..., 1]
 
         shp = xq.shape
-        # Derivatives are w.r.t. physical coordinates directly
         dVdx = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=1, dy=0).reshape(shp)
         dVdy = self._interp(jnp.ravel(xq), jnp.ravel(yq), dx=0, dy=1).reshape(shp)
         return jnp.stack([dVdx, dVdy], axis=-1)
