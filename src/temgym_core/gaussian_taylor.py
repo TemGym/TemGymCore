@@ -3,8 +3,6 @@ import jax.numpy as jnp
 import jax_dataclasses as jdc
 from .gaussian import GaussianRayBeta, map_reduce
 from jax.nn import softplus
-import numpy as np
-from typing import List, Tuple, Dict, Any
 import interpax as interp
 
 
@@ -58,6 +56,47 @@ def evaluate_gaussian_packets_jax_scan(
 # evaluate_gaussian_packets_jax_scan = jax.jit(
 #     evaluate_gaussian_packets_jax_scan, static_argnames=["batch_size", "grid"]
 # )
+
+
+def evaluate_gaussian_packets_for_loop(
+    gaussian_ray: GaussianRayBeta,
+    grid,
+):
+    """
+    A simple for-loop based evaluation for testing and debugging.
+    This is not JIT-compatible and will be slow.
+    """
+    # Extract properties for all packets. These have a leading batch dimension.
+    r_m = gaussian_ray.r_xy
+    C = gaussian_ray.C
+    eta = gaussian_ray.eta
+    Q_inv = gaussian_ray.Q_inv
+    k = gaussian_ray.k
+
+    # Grid coordinates where the field is evaluated.
+    r2 = grid.coords
+    P = r2.shape[0]  # Total number of grid points
+    num_packets = r_m.shape[0]
+
+    # Initialize the total field accumulator.
+    total_field = jnp.zeros((P,), dtype=jnp.complex128)
+
+    # Iterate through each Gaussian packet one by one.
+    for i in range(num_packets):
+        # Calculate the field for the i-th packet on the entire grid.
+        field_i = _beam_field(
+            r_m=r_m[i],
+            C=C[i],
+            eta=eta[i],
+            Q_inv=Q_inv[i],
+            k=k[i],
+            r2=r2,
+        )
+        # Add its contribution to the total field.
+        total_field += field_i
+
+    # Reshape the final flat array to match the grid's 2D shape.
+    return total_field.reshape(grid.shape)
 
 
 def _as_batch(r):
@@ -198,6 +237,47 @@ class SigmoidAperture(Component):
 
 
 @jdc.pytree_dataclass
+class SigmoidSquareAperture(Component):
+    """Smooth square aperture with soft roll-off.
+
+    This is the rectangular analogue of ``SigmoidAperture`` (circular).
+    It produces a pure amplitude mask A(x,y) ≈ 1 inside the box
+    |x| ≤ half_width_x and |y| ≤ half_width_y, and decays smoothly to 0
+    outside with an exponential-like tail controlled by ``sharpness``.
+
+    Returned complex action: ψ(x,y) = φ(x,y) - i ℓ(x,y) with φ=0 and
+    ℓ(x,y) = log A(x,y) ≤ 0 so the element only affects amplitude while
+    remaining fully differentiable for gradient/Hessian extraction.
+    """
+    half_width_x: float
+    half_width_y: float | None = None
+    sharpness: float = 50.0
+    eps: float = 1e-12
+
+    def complex_action(self, xy):
+        x, y = xy[..., 0], xy[..., 1]
+
+        # Allow square via defaulting y half-width to x half-width
+        hx = self.half_width_x
+        hy = self.half_width_y if self.half_width_y is not None else hx
+
+        # Smooth absolute value for differentiable gradients/Hessians
+        ax = jnp.sqrt(x * x + self.eps)
+        ay = jnp.sqrt(y * y + self.eps)
+
+        # Signed distance-like terms to each pair of parallel edges
+        # Negative inside, positive outside.
+        tx = self.sharpness * (ax - hx)
+        ty = self.sharpness * (ay - hy)
+
+        # Soft roll-off on each axis; product in amplitude => sum in log-space
+        logA = -softplus(tx) - softplus(ty)
+
+        # Pure amplitude mask: ψ = φ - iℓ, here φ=0, ℓ = logA (≤ 0)
+        return -1j * logA
+
+
+@jdc.pytree_dataclass
 class FreeSpaceParaxial(Component):
     distance: float  # L
 
@@ -326,351 +406,3 @@ def run_to_end(ray, components):
     for comp in components:
         r = comp(r)
     return r
-
-
-def _poly2d_cubic_features(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-    """Return cubic monomial features [1, x, y, x^2, xy, y^2, x^3, x^2 y, x y^2, y^3].
-
-    Supports broadcasting. Last dimension is 10.
-    """
-    x2 = x * x
-    y2 = y * y
-    xy = x * y
-    return jnp.stack([
-        jnp.ones_like(x),  # 1
-        x,
-        y,
-        x2,
-        xy,
-        y2,
-        x2 * x,
-        x2 * y,
-        x * y2,
-        y2 * y,
-    ], axis=-1)
-
-
-def _poly2d_cubic_eval(coeffs: jnp.ndarray, x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-    """Evaluate 2D cubic polynomial with 10 coeffs at coordinates (x, y).
-
-    coeffs order matches _poly2d_cubic_features.
-    coeffs shape: (..., 10) or (10,)
-    x,y: broadcastable arrays.
-    """
-    phi = _poly2d_cubic_features(x, y)
-    return jnp.sum(phi * coeffs, axis=-1)
-
-
-def fit_cubic_polynomial_to_slice(
-    V2d: np.ndarray,
-    sx: float,
-    sy: float,
-    x0: float,
-    y0: float,
-    *,
-    stride: int = 1,
-) -> np.ndarray:
-    """Least-squares fit of a 2D cubic polynomial to a single slice.
-
-    Parameters
-    ----------
-    V2d : (ny, nx) array of potential values (V·Å)
-    sx, sy : pixel sizes in Å/px (x then y)
-    x0, y0 : origin in Å so pixel (0,0) maps to (x0, y0)
-    stride : sample every `stride` pixels along both axes to speed up LSQ
-
-    Returns
-    -------
-    coeffs : (10,) array of cubic polynomial coefficients in order
-        [1, x, y, x^2, xy, y^2, x^3, x^2 y, x y^2, y^3]
-    """
-    V2d = np.asarray(V2d)
-    ny, nx = V2d.shape
-    xs = x0 + sx * np.arange(nx)
-    ys = y0 + sy * np.arange(ny)
-    X, Y = np.meshgrid(xs, ys)
-
-    Xs = X[::stride, ::stride].ravel()
-    Ys = Y[::stride, ::stride].ravel()
-    Zs = V2d[::stride, ::stride].ravel()
-
-    # Build design matrix A with columns of monomials
-    x = Xs
-    y = Ys
-    A = np.column_stack([
-        np.ones_like(x),
-        x,
-        y,
-        x * x,
-        x * y,
-        y * y,
-        x * x * x,
-        (x * x) * y,
-        x * (y * y),
-        y * y * y,
-    ])
-
-    # Solve least squares
-    coeffs, *_ = np.linalg.lstsq(A, Zs, rcond=None)
-    return coeffs.astype(np.float64)
-
-
-@jdc.pytree_dataclass
-class PolynomialPotential(Component):
-    """Thin element whose phase is sigma * P_3(x, y), where P_3 is a cubic polynomial.
-
-    coeffs order: [1, x, y, x^2, xy, y^2, x^3, x^2 y, x y^2, y^3]
-    """
-    coeffs: jnp.ndarray  # shape (10,)
-    x0: float
-    y0: float
-    sigma: float
-
-    def complex_action(self, xy):
-        x, y = xy[..., 0], xy[..., 1]
-        phase = self.sigma * _poly2d_cubic_eval(self.coeffs, x, y)
-        return phase - 1j * 0.0
-
-
-def abtem_potential_3d(
-    src,
-    *,
-    how: str = "slice",
-    sampling_A: float = 0.05,
-    parametrization: str = "lobato",
-    projection: str = "infinite",
-    periodic: bool = False,
-    box_A: Tuple[float, float, float] | None = None,
-    slice_thickness: float = 1.0,
-    slice_index: int | None = None,
-) -> Tuple[np.ndarray, float, float, float, float, float]:
-    """Return a 3D potential volume from abTEM along with sampling and dz.
-
-    If `src` is:
-      - ase.Atoms: constructs abtem.Potential with given settings and builds slices.
-      - abtem.Potential: builds slices.
-      - abtem computed object with .array: if 3D, uses it directly.
-
-    Returns
-    -------
-    V3d : np.ndarray with shape (nz, ny, nx)
-    sx, sy : float pixel sizes in Å/px
-    x0, y0 : float origins so that pixel (0,0) maps to (x0, y0)
-    dz : float distance between slices in Å (taken as slice_thickness)
-    """
-    try:
-        from ase import Atoms  # type: ignore
-        import abtem  # type: ignore
-    except Exception as e:
-        raise ImportError("abtem and ase are required for abtem_potential_3d") from e
-
-    decided = how
-    if isinstance(src, Atoms):
-        pot = abtem.Potential(
-            src,
-            sampling=sampling_A,
-            parametrization=parametrization,
-            slice_thickness=slice_thickness,
-            projection=projection,
-            periodic=periodic,
-            box=None if box_A is None else tuple(map(float, box_A)),
-        )
-        decided = "slice" if how == "auto" else how
-    elif hasattr(src, "project") and hasattr(src, "build"):
-        pot = src
-        if decided == "auto":
-            decided = "slice"
-    elif hasattr(src, "array"):
-        A = np.asarray(src.array)
-        sy, sx = getattr(src, "sampling", (None, None))
-        if A.ndim != 3:
-            raise ValueError("Expected a 3D array-like for abtem object with .array")
-        nz, ny, nx = A.shape
-        Lx, Ly = nx * sx, ny * sy
-        x0, y0 = -Lx / 2.0, -Ly / 2.0
-        dz = float(slice_thickness)
-        return A, float(sx), float(sy), float(x0), float(y0), dz
-    else:
-        raise TypeError(
-            "Unsupported src. Provide Atoms, abtem.Potential, or abtem object with .array."
-        )
-
-    if decided != "slice":
-        raise ValueError("abtem_potential_3d requires how='slice' or 'auto' resolving to 'slice'.")
-
-    slices = pot.build().compute()  # (nz, ny, nx)
-    V3d = np.asarray(slices.array)
-    if V3d.ndim != 3:
-        raise ValueError("Built potential does not have 3D (nz, ny, nx) shape.")
-    sy, sx = slices.sampling
-    nz, ny, nx = V3d.shape
-    Lx, Ly = nx * sx, ny * sy
-    x0, y0 = -Lx / 2.0, -Ly / 2.0
-    dz = float(slice_thickness)
-    return V3d, float(sx), float(sy), float(x0), float(y0), dz
-
-
-def build_polynomial_potential_components_from_abtem(
-    src,
-    *,
-    accel_V: float = 200_000.0,
-    how: str = "slice",
-    sampling_A: float = 0.1,
-    parametrization: str = "lobato",
-    projection: str = "infinite",
-    periodic: bool = False,
-    box_A: Tuple[float, float, float] | None = None,
-    slice_thickness: float = 1.0,
-    z0: float = 0.0,
-    fit_stride: int = 1,
-) -> Tuple[List[Component], Dict[str, Any]]:
-    """Create a list of thin polynomial potential components interleaved with free-space.
-
-    For each z-slice of the abTEM potential volume, a 2D cubic polynomial is fitted
-    and wrapped in a PolynomialPotential. Between successive slices, a FreeSpaceParaxial
-    with distance = slice_thickness is inserted.
-
-    Returns (components, meta).
-    """
-    from abtem.core.energy import energy2sigma  # lazy import to avoid hard dep at module import
-
-    V3d, sx, sy, x0, y0, dz = abtem_potential_3d(
-        src,
-        how=how,
-        sampling_A=sampling_A,
-        parametrization=parametrization,
-        projection=projection,
-        periodic=periodic,
-        box_A=box_A,
-        slice_thickness=slice_thickness,
-    )
-
-    sigma = float(energy2sigma(accel_V))
-
-    components: List[Component] = []
-    nz = V3d.shape[0]
-    for i in range(nz):
-        coeffs = fit_cubic_polynomial_to_slice(V3d[i], sx, sy, x0, y0, stride=fit_stride)
-        comp = PolynomialPotential(
-            z=z0 + i * dz,
-            coeffs=jnp.asarray(coeffs, dtype=jnp.float64),
-            x0=float(x0),
-            y0=float(y0),
-            sigma=sigma,
-        )
-        components.append(comp)
-        if i < nz - 1:
-            components.append(FreeSpaceParaxial(distance=dz, z=z0 + i * dz))
-
-    meta = dict(
-        accel_V=accel_V,
-        sampling=(sx, sy),
-        origin=(x0, y0),
-        dz=dz,
-        nz=nz,
-        sigma=sigma,
-        src_type=type(src).__name__,
-        how=how,
-        parametrization=parametrization,
-        projection=projection,
-        periodic=periodic,
-        box_A=box_A,
-        fit_stride=fit_stride,
-    )
-    return components, meta
-
-
-def run_gaussian_through_cubic_slices(
-    ray: GaussianRayBeta,
-    src,
-    **kwargs,
-):
-    """Convenience: build polynomial components from abTEM volume and run to end.
-
-    kwargs are forwarded to build_polynomial_potential_components_from_abtem.
-    Returns (ray_out, components, meta).
-    """
-    components, meta = build_polynomial_potential_components_from_abtem(src, **kwargs)
-    ray_out = run_to_end(ray, components)
-    return ray_out, components, meta
-
-
-def build_polynomial_potential_components_from_array(
-    V3d: np.ndarray,
-    *,
-    sx: float,
-    sy: float,
-    x0: float,
-    y0: float,
-    dz: float,
-    accel_V: float = 200_000.0,
-    z0: float = 0.0,
-    fit_stride: int = 1,
-) -> Tuple[List[Component], Dict[str, Any]]:
-    """Create polynomial thin elements + free space from a raw 3D volume.
-
-    Parameters
-    ----------
-    V3d : np.ndarray (nz, ny, nx)
-    sx, sy : Å/px
-    x0, y0 : Å origin
-    dz : Å between slices
-    accel_V : accelerating voltage in volts
-    z0 : starting z position
-    fit_stride : subsampling factor for LSQ
-    """
-    from abtem.core.energy import energy2sigma  # lazy import
-
-    V3d = np.asarray(V3d)
-    assert V3d.ndim == 3, "V3d must have shape (nz, ny, nx)"
-
-    sigma = float(energy2sigma(accel_V))
-    components: List[Component] = []
-    nz = V3d.shape[0]
-    for i in range(nz):
-        coeffs = fit_cubic_polynomial_to_slice(V3d[i], sx, sy, x0, y0, stride=fit_stride)
-        comp = PolynomialPotential(
-            z=z0 + i * dz,
-            coeffs=jnp.asarray(coeffs, dtype=jnp.float64),
-            x0=float(x0),
-            y0=float(y0),
-            sigma=sigma,
-        )
-        components.append(comp)
-        if i < nz - 1:
-            components.append(FreeSpaceParaxial(distance=dz, z=z0 + i * dz))
-
-    meta = dict(
-        accel_V=accel_V,
-        sampling=(sx, sy),
-        origin=(x0, y0),
-        dz=dz,
-        nz=nz,
-        sigma=sigma,
-        src_type="ndarray",
-        fit_stride=fit_stride,
-    )
-    return components, meta
-
-
-def run_gaussian_through_cubic_slices_from_array(
-    ray: GaussianRayBeta,
-    V3d: np.ndarray,
-    *,
-    sx: float,
-    sy: float,
-    x0: float,
-    y0: float,
-    dz: float,
-    **kwargs,
-):
-    """Convenience: build polynomial components from array and run to end.
-
-    kwargs are forwarded to build_polynomial_potential_components_from_array.
-    Returns (ray_out, components, meta).
-    """
-    components, meta = build_polynomial_potential_components_from_array(
-        V3d, sx=sx, sy=sy, x0=x0, y0=y0, dz=dz, **kwargs
-    )
-    ray_out = run_to_end(ray, components)
-    return ray_out, components, meta
