@@ -229,8 +229,7 @@ class GaussianRayBeta(Ray):
             * units._c
             / jnp.sqrt(E * (2 * units._me * units._c**2 / units._e + E))
             / units._e
-            * 1.0e10
-        )
+        ) * 1.0e10
 
     @property
     def sigma(self) -> float:
