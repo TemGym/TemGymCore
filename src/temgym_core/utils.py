@@ -249,7 +249,7 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np):
     FX, FY = xp.meshgrid(fx, fy)
 
     # transfer function in unshifted FFT domain
-    H = xp.exp(-1j * xp.pi * wavelength * z * (FX**2 + FY**2))
+    H = xp.exp(1j * xp.pi * wavelength * z * (FX**2 + FY**2))
 
     # forward FFT, multiply, and inverse FFT
     U1 = xp.fft.fft2(u1)
