@@ -489,35 +489,35 @@ def _input_beam_field(a, p, q1, r1m, t1m, k, r1):
     return a * jnp.exp(1j * (phase + p))  # (np,)
 
 
-# def evaluate_misaligned_input_gaussian_jax_scan(
-#     amp, phase_offset, Q1_inv, r1m, theta1m, k, r1, batch_size=128
-# ):
-#     npix = r1.shape[0]
-
-#     def _input_beam_field_outer(xs):
-#         a_i, p_i, q1_i, r1m_i, t1m_i, k_i = xs
-#         return _input_beam_field(a_i, p_i, q1_i, r1m_i, t1m_i, k_i, r1)
-
-#     init = jnp.zeros((npix,), dtype=jnp.complex128)
-#     xs = (amp, phase_offset, Q1_inv, r1m, theta1m, k)
-#     out = map_reduce(_input_beam_field_outer, jnp.add, init, xs, batch_size=batch_size)
-#     return out  # (npix,)
-
-
 def evaluate_misaligned_input_gaussian_jax_scan(
     amp, phase_offset, Q1_inv, r1m, theta1m, k, r1, batch_size=128
 ):
     npix = r1.shape[0]
-    # Pick accumulator dtype that matches inputs to avoid upcasts:
-    complex_dtype = jnp.result_type(amp, 1j)
-    init = jnp.zeros((npix,), dtype=complex_dtype)
 
-    # Prefer a single vmap + sum when memory permits (faster than map_reduce):
-    # vmapped over the beam axis; each call returns shape (npix,)
-    vmapped = jax.vmap(lambda a, p, q, r0, t, kk: _input_beam_field(a, p, q, r0, t, kk, r1))
-    fields = vmapped(amp, phase_offset, Q1_inv, r1m, theta1m, k)  # (nbeams, npix)
-    out = jnp.sum(fields, axis=0)  # (npix,)
-    return out
+    def _input_beam_field_outer(xs):
+        a_i, p_i, q1_i, r1m_i, t1m_i, k_i = xs
+        return _input_beam_field(a_i, p_i, q1_i, r1m_i, t1m_i, k_i, r1)
+
+    init = jnp.zeros((npix,), dtype=jnp.complex128)
+    xs = (amp, phase_offset, Q1_inv, r1m, theta1m, k)
+    out = map_reduce(_input_beam_field_outer, jnp.add, init, xs, batch_size=batch_size)
+    return out  # (npix,)
+
+
+# def evaluate_misaligned_input_gaussian_jax_scan(
+#     amp, phase_offset, Q1_inv, r1m, theta1m, k, r1, batch_size=128
+# ):
+#     npix = r1.shape[0]
+#     # Pick accumulator dtype that matches inputs to avoid upcasts:
+#     complex_dtype = jnp.result_type(amp, 1j)
+#     init = jnp.zeros((npix,), dtype=complex_dtype)
+
+#     # Prefer a single vmap + sum when memory permits (faster than map_reduce):
+#     # vmapped over the beam axis; each call returns shape (npix,)
+#     vmapped = jax.vmap(lambda a, p, q, r0, t, kk: _input_beam_field(a, p, q, r0, t, kk, r1))
+#     fields = vmapped(amp, phase_offset, Q1_inv, r1m, theta1m, k)  # (nbeams, npix)
+#     out = jnp.sum(fields, axis=0)  # (npix,)
+#     return out
 
 
 evaluate_misaligned_input_gaussian_jax_scan = jax.jit(

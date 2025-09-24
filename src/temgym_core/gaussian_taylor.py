@@ -221,7 +221,7 @@ class FreeSpaceParaxial(Component):
         Qinv = ray.Q_inv
         I2 = jnp.eye(2, dtype=jnp.complex128)
         M = I2 + L * Qinv
-        M_inv = jnp.linalg.inv(M)
+        M_inv = jnp.linalg.solve(M, I2)
         Qinv_new = Qinv @ M_inv
         eta_new = (jnp.swapaxes(M_inv, -1, -2) @ ray.eta[..., None])[..., 0]
         C_new = ray.C / jnp.sqrt(jnp.linalg.det(M))
