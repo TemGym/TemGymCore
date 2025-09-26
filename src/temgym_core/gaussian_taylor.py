@@ -13,30 +13,6 @@ def _as_batch(r):
     r = r if r.ndim == 2 else r[None, ...]
     return r
 
-
-def _split_real_imag(component, rr):
-    z = component.complex_action(rr)
-    return jnp.stack([jnp.real(z), jnp.imag(z)])
-
-
-def grad_opl(component, xy_batch):
-    J = jax.vmap(jax.jacfwd(_split_real_imag, argnums=1), in_axes=(None, 0))(component, xy_batch)
-    g_phi = J[:, 0, :]
-    g_imag = J[:, 1, :]
-    return g_phi + 1j * g_imag
-
-
-def hess_opl(component, xy_batch):
-    H = jax.vmap(
-        jax.jacfwd(jax.jacrev(_split_real_imag, argnums=1), argnums=1),
-        in_axes=(None, 0)
-    )(component, xy_batch)
-    H_phi = H[:, 0, :, :]
-    H_imag = H[:, 1, :, :]
-    Hc = H_phi + 1j * H_imag
-    return 0.5 * (Hc + jnp.swapaxes(Hc, -1, -2))
-
-
 def apply_thin_element_from_complex_opl(ray: GaussianRayBeta,
                                         dS_const, dS_grad, dS_hess):
 
