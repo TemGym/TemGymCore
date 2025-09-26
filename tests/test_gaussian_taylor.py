@@ -103,12 +103,12 @@ def test_lens_magnification_and_beam_waist(M1, F1):
 
     rays_out = run_to_end(rays_in, model)
 
-    # mask = np.abs(np.array(rays_in.x)) > 1e-15
-    # r_in = np.sqrt(np.array(rays_in.x) ** 2 + np.array(rays_in.y) ** 2)
-    # r_out = np.sqrt(np.array(rays_out.x) ** 2 + np.array(rays_out.y) ** 2)
-    # mask = r_in > 1e-15
-    # measured_M = np.mean(r_out[mask] / r_in[mask])
-    # assert np.isclose(measured_M, np.abs(M1), rtol=5e-3, atol=5e-3), f"Magnification mismatch: got {measured_M}, expected {M1}"
+    mask = np.abs(np.array(rays_in.x)) > 1e-15
+    r_in = np.sqrt(np.array(rays_in.x) ** 2 + np.array(rays_in.y) ** 2)
+    r_out = np.sqrt(np.array(rays_out.x) ** 2 + np.array(rays_out.y) ** 2)
+    mask = r_in > 1e-15
+    measured_M = np.mean(r_out[mask] / r_in[mask])
+    assert np.isclose(measured_M, np.abs(M1), rtol=5e-3, atol=5e-3), f"Magnification mismatch: got {measured_M}, expected {M1}"
 
     # Beam waist from Q_inv
     q_inv_elem = np.array(rays_out.S.quad[0, 0, 0])
