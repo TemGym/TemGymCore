@@ -1,102 +1,12 @@
 import jax
 import jax.numpy as jnp
 import jax_dataclasses as jdc
-from .gaussian import GaussianRayBeta, map_reduce
 from jax.nn import softplus
 import interpax as interp
-
-
-def _beam_field(r_m, C, eta, Q_inv, k, r2):
-    delta = r2 - r_m
-    lin = jnp.sum(delta * eta, axis=-1)
-    quad = jnp.sum((delta @ Q_inv) * delta, axis=-1)
-
-    k = jnp.asarray(k).reshape(())
-    taylor = k * (lin + 0.5 * quad)
-
-    taylor_phase = jnp.real(taylor)
-    taylor_logA = jnp.imag(taylor)
-    taylor_logA = jnp.clip(taylor_logA, a_min=-700.0, a_max=0.0)
-
-    # Local linear and quadratic taylor expansions of amplitude and phase
-    lin_and_quad_taylor_amp_phase = jnp.exp(taylor_logA) * jnp.exp(-1j * taylor_phase)
-    final_field = C * lin_and_quad_taylor_amp_phase
-    return final_field
-
-
-def _beam_field_outer(xs, r2):
-    r_m_i, C_i, eta_i, Q_i, k_i = xs
-    return _beam_field(r_m_i, C_i, eta_i, Q_i, k_i, r2)
-
-
-def evaluate_gaussian_packets_jax_scan(
-    gaussian_ray: GaussianRayBeta,
-    grid,
-    *,
-    batch_size: int | None = 128,
-):
-    r_m = gaussian_ray.r_xy
-    C = gaussian_ray.C
-    eta = gaussian_ray.eta
-    Q_inv = gaussian_ray.Q_inv
-    k = gaussian_ray.k
-
-    r2 = grid.coords
-    P = r2.shape[0]
-    init = jnp.zeros((P,), dtype=jnp.complex128)
-
-    def f_pack(xs):
-        return _beam_field_outer(xs, r2)
-
-    xs = (r_m, C, eta, Q_inv, k)
-    out = map_reduce(f_pack, jnp.add, init, xs, batch_size=batch_size)
-    return out.reshape(grid.shape)
-
-
-# evaluate_gaussian_packets_jax_scan = jax.jit(
-#     evaluate_gaussian_packets_jax_scan, static_argnames=["batch_size", "grid"]
-# )
-
-
-def evaluate_gaussian_packets_for_loop(
-    gaussian_ray: GaussianRayBeta,
-    grid,
-):
-    """
-    A simple for-loop based evaluation for testing and debugging.
-    This is not JIT-compatible and will be slow.
-    """
-    # Extract properties for all packets. These have a leading batch dimension.
-    r_m = gaussian_ray.r_xy
-    C = gaussian_ray.C
-    eta = gaussian_ray.eta
-    Q_inv = gaussian_ray.Q_inv
-    k = gaussian_ray.k
-
-    # Grid coordinates where the field is evaluated.
-    r2 = grid.coords
-    P = r2.shape[0]  # Total number of grid points
-    num_packets = r_m.shape[0]
-
-    # Initialize the total field accumulator.
-    total_field = jnp.zeros((P,), dtype=jnp.complex128)
-
-    # Iterate through each Gaussian packet one by one.
-    for i in range(num_packets):
-        # Calculate the field for the i-th packet on the entire grid.
-        field_i = _beam_field(
-            r_m=r_m[i],
-            C=C[i],
-            eta=eta[i],
-            Q_inv=Q_inv[i],
-            k=k[i],
-            r2=r2,
-        )
-        # Add its contribution to the total field.
-        total_field += field_i
-
-    # Reshape the final flat array to match the grid's 2D shape.
-    return total_field.reshape(grid.shape)
+from typing import Sequence, Callable, Any, Generator, Union, NamedTuple
+from temgym_core.components import Detector
+from temgym_core.gaussian import GaussianRayBeta
+from temgym_core.ray import Ray
 
 
 def _as_batch(r):
@@ -110,52 +20,40 @@ def _split_real_imag(component, rr):
 
 
 def grad_opl(component, xy_batch):
-    # J shape: (B, 2_out=[Reψ, Imψ], 2_in=[x,y])
     J = jax.vmap(jax.jacfwd(_split_real_imag, argnums=1), in_axes=(None, 0))(component, xy_batch)
-    g_phi = J[:, 0, :]  # ∇φ
-    g_imag = J[:, 1, :]  # ∇(Im ψ) = ∇(-ℓ) = -∇ℓ
-    return g_phi + 1j * g_imag  # == ∇φ - i∇ℓ
+    g_phi = J[:, 0, :]
+    g_imag = J[:, 1, :]
+    return g_phi + 1j * g_imag
 
 
 def hess_opl(component, xy_batch):
-    # H shape: (B, 2_out=[Reψ, Imψ], 2, 2)
     H = jax.vmap(
         jax.jacfwd(jax.jacrev(_split_real_imag, argnums=1), argnums=1),
         in_axes=(None, 0)
     )(component, xy_batch)
-    H_phi = H[:, 0, :, :]  # Hφ
-    H_imag = H[:, 1, :, :]  # H(Im ψ) = H(-ℓ) = -Hℓ
-    Hc = H_phi + 1j * H_imag  # == Hφ - iHℓ
+    H_phi = H[:, 0, :, :]
+    H_imag = H[:, 1, :, :]
+    Hc = H_phi + 1j * H_imag
     return 0.5 * (Hc + jnp.swapaxes(Hc, -1, -2))
 
 
-def apply_thin_element_from_complex_opl(gp: GaussianRayBeta, opl, grad_opl, Hess_opl):
-    """
-    opl      : (B,)   complex = φ - iℓ
-    grad_opl : (B,2)  complex = ∇φ - i∇ℓ
-    Hess_opl : (B,2,2) complex = Hφ - iHℓ
-    """
-    k = gp.k
-    phi_0 = jnp.real(opl)  # (B,)
-    im_0 = jnp.imag(opl)  # (B,)  == -ℓ
-    g_phi = jnp.real(grad_opl)  # (B,2)
-    g_im = jnp.imag(grad_opl)  # (B,2) == -∇ℓ
-    H_phi = jnp.real(Hess_opl)  # (B,2,2)
-    H_im = jnp.imag(Hess_opl)  # (B,2,2) == -Hℓ
+def apply_thin_element_from_complex_opl(ray: GaussianRayBeta,
+                                        dS_const, dS_grad, dS_hess):
 
-    # C' = C * exp(-ℓ) * exp(i φ) - Constant phase and amplitude factors
-    C_out = gp.C * jnp.exp(-im_0) * jnp.exp(1j * k * phi_0)
-    # η' = η - ∇φ - i ∇ℓ  (since g_im = -∇ℓ) - Linear phase and amplitude terms
-    eta_out = gp.eta - g_phi - 1j * (g_im)
-    # Qinv' = Qinv - Hφ - i Hℓ - Quadratic terms - Quadratic phase and amplitude terms
-    Qinv_out = gp.Q_inv - H_phi - 1j * (H_im)
+    S_out = jdc.replace(
+        ray.S,
+        const=ray.S.const + dS_const,
+        lin=ray.S.lin + dS_grad,
+        quad=ray.S.quad + dS_hess,
+    )
 
-    dxy_in = gp.d_xy
-    dxy_out = dxy_in - g_phi
-    opl_out = gp.pathlength + opl
+    # −ikS convention: geometric kick from +Re(∇ΔS)
+    dxy_out = ray.d_xy + jnp.real(dS_grad)
 
-    return gp.derive(dx=dxy_out[..., 0], dy=dxy_out[..., 1], pathlength=opl_out,
-                     Q_inv=Qinv_out, eta=eta_out, C=C_out)
+    return ray.derive(
+        S=S_out, C=ray.C,
+        dx=dxy_out[..., 0], dy=dxy_out[..., 1],
+    )
 
 
 @jdc.pytree_dataclass
@@ -163,38 +61,29 @@ class Component:
     z: float
 
     def complex_action(self, xy: jnp.ndarray) -> complex:
-        """Return φ(x,y) - i ℓ(x,y). Default: no effect."""
+        """Return ΔS(x,y) in meters (complex). Default: transparent."""
         return jnp.zeros((), dtype=jnp.complex128)
 
-    def __call__(self, ray):
-        # (B,2) positions
-        r_xy = ray.r_xy
-        r_xy = _as_batch(r_xy)
+    def __call__(self, ray: GaussianRayBeta):
+        r_xy = _as_batch(ray.r_xy)
 
-        # φ - iℓ at points (for C update)
-        opl = jax.vmap(self.complex_action)(r_xy)
-        # Jac and Hessian
-        g_opl = grad_opl(self, r_xy)    # (B,2) complex
+        dS0 = jax.vmap(self.complex_action)(r_xy)
+        dS1 = jax.vmap(jax.jacrev(self.complex_action))(r_xy)
+        dS2 = jax.vmap(jax.jacfwd(jax.jacrev(self.complex_action)))(r_xy)
 
-        if isinstance(ray, GaussianRayBeta):
-            H_opl = hess_opl(self, r_xy)    # (B,2,2) complex
-            out = apply_thin_element_from_complex_opl(ray, opl, g_opl, H_opl)
-            return out.derive(z=self.z)
-
-        dxy = ray.d_xy - jnp.real(g_opl)
-        return ray.derive(dx=dxy[..., 0], dy=dxy[..., 1], z=self.z)
+        out = apply_thin_element_from_complex_opl(ray, dS0, dS1, dS2)
+        return out.derive(z=self.z)
 
 
 @jdc.pytree_dataclass
 class Lens(Component):
-    focal_length: float
+    focal_length: float  # f > 0 focusing, f < 0 defocusing
 
     def complex_action(self, xy):
         x, y = xy[..., 0], xy[..., 1]
-        rho2 = x*x + y*y
-        phase = -0.5 * rho2 / self.focal_length
-        log_amplitude = 0.0
-        return phase - 1j * log_amplitude
+        rho2 = x * x + y * y
+        # Pure phase (real) ΔS; amplitude unchanged
+        return -0.5 * rho2 / self.focal_length
 
 
 @jdc.pytree_dataclass
@@ -208,15 +97,12 @@ class AberratedLens(Component):
         x, y = xy[..., 0], xy[..., 1]
         rho2 = x*x + y*y
 
-        # Aberration expansion
-        phase = (
+        return (
             -0.5 * rho2 / self.focal_length
             + self.C_sph * (rho2**2)
             + self.C_coma_x * (x**3 + x*y**2)
             + self.C_coma_y * (y**3 + y*x**2)
         )
-        log_amplitude = 0.0
-        return phase - 1j * log_amplitude
 
 
 @jdc.pytree_dataclass
@@ -275,41 +161,6 @@ class SigmoidSquareAperture(Component):
 
         # Pure amplitude mask: ψ = φ - iℓ, here φ=0, ℓ = logA (≤ 0)
         return -1j * logA
-
-
-@jdc.pytree_dataclass
-class FreeSpaceParaxial(Component):
-    distance: float  # L
-
-    def complex_action(self, xy):
-        return jnp.array(0.0, dtype=jnp.complex128)
-
-    def __call__(self, ray):
-        L = self.distance
-
-        x_new = ray.x + ray.dx * L
-        y_new = ray.y + ray.dy * L
-        z_new = ray.z + L
-
-        path_inc = L * (1.0 + 0.5 * (ray.dx**2 + ray.dy**2))
-        path_new = ray.pathlength + path_inc
-
-        # Geometric ray path
-        if not hasattr(ray, "Q_inv"):
-            return ray.derive(x=x_new, y=y_new, z=z_new, pathlength=path_new)
-
-        Qinv = ray.Q_inv
-        I2 = jnp.eye(2, dtype=jnp.complex128)
-        M = I2 + L * Qinv
-        M_inv = jnp.linalg.solve(M, I2)
-        Qinv_new = Qinv @ M_inv
-        eta_new = (jnp.swapaxes(M_inv, -1, -2) @ ray.eta[..., None])[..., 0]
-        C_new = ray.C / jnp.sqrt(jnp.linalg.det(M))
-
-        return ray.derive(
-            x=x_new, y=y_new, z=z_new, pathlength=path_new,
-            Q_inv=Qinv_new, eta=eta_new, C=C_new
-        )
 
 
 @jdc.pytree_dataclass
@@ -401,8 +252,218 @@ class Potential(Component):
         return H
 
 
-def run_to_end(ray, components):
-    r = ray
-    for comp in components:
-        r = comp(r)
-    return r
+@jdc.pytree_dataclass
+class Biprism(Component):
+    """
+    Biprism with inverse sigmoid square aperture (blocked inside, open outside).
+
+    Inside the (rotated / shifted) rectangle: amplitude ~ 0.
+    Outside: amplitude ~ 1.
+    Phase: linear in |u| (prism deflection).
+
+    Parameters
+    ----------
+    strength : phase slope versus |u|
+    width    : filament physical width (defines blocked square of side=width) along u
+    length   : extent along v; if None => treated as infinite (no masking along v)
+    theta    : rotation (radians)
+    x0, y0   : center position
+    sharpness: transition steepness
+    eps      : fraction of half-width used to smooth |.| for differentiability
+    """
+    strength: float
+    width: float
+    length: float | None = None  # None => effectively infinite (no v aperture)
+
+    theta: float = 0.0
+    x0: float = 0.0
+    y0: float = 0.0
+
+    sharpness: float = 50.0
+    eps: float = 1e-12
+
+    def complex_action(self, xy):
+        x, y = xy[..., 0], xy[..., 1]
+
+        # shift & rotate into (u,v)
+        xr, yr = x - self.x0, y - self.y0
+        c, s = jnp.cos(self.theta), jnp.sin(self.theta)
+        u = c * xr + s * yr
+        v = -s * xr + c * yr
+
+        # u half-width and smooth abs
+        hu = 0.5 * self.width
+        eps_u = self.eps * hu
+        au = jnp.sqrt(u * u + eps_u * eps_u)
+
+        # Soft distance and inverse sigmoid aperture along u
+        tx = self.sharpness * (au - hu)
+        logA_u = -softplus(-tx)  # ≈ large negative inside (blocked), 0 outside
+
+        # v dimension: only apply if finite length provided
+        if self.length is None:
+            logA_v = 0.0
+        else:
+            hv = 0.5 * self.length
+            eps_v = self.eps * hu  # scale smoothing with filament width (could also use hv)
+            av = jnp.sqrt(v * v + eps_v * eps_v)
+            ty = self.sharpness * (av - hv)
+            logA_v = -softplus(-ty)
+
+        logA = logA_u + logA_v
+
+        # Linear phase in |u|
+        phi = -self.strength * au
+
+        return phi - 1j * logA
+
+
+@jdc.pytree_dataclass
+class InverseSigmoidSquareAperture(Component):
+    """
+    Inverse of SigmoidSquareAperture.
+
+    Inside the rectangle (|x| <= hx, |y| <= hy) amplitude -> ~0.
+    Outside the rectangle amplitude ~1 (logA ≈ 0).
+    Smoothly differentiable for gradient / Hessian use.
+
+    Parameters
+    ----------
+    half_width_x : half-width along x
+    half_width_y : half-width along y (defaults to half_width_x if None)
+    sharpness    : controls steepness of the transition
+    eps          : small number for smooth |x|
+    """
+    half_width_x: float
+    half_width_y: float | None = None
+    sharpness: float = 50.0
+    eps: float = 1e-12
+
+    def complex_action(self, xy):
+        x, y = xy[..., 0], xy[..., 1]
+        hx = self.half_width_x
+        hy = self.half_width_y if self.half_width_y is not None else hx
+
+        # Smooth absolute values for differentiability
+        ax = jnp.sqrt(x * x + self.eps)
+        ay = jnp.sqrt(y * y + self.eps)
+
+        # Signed (soft) distances from edges
+        tx = self.sharpness * (ax - hx)
+        ty = self.sharpness * (ay - hy)
+
+        # Original square aperture used: logA = -softplus(tx) - softplus(ty)
+        # which gives A≈1 inside, decays outside.
+        # Invert: want A≈0 inside, A≈1 outside.
+        # Use -softplus(-tx): for tx<<0 (inside) -> large negative; for tx>>0 (outside) -> ~0.
+        logA = -softplus(-tx) - softplus(-ty)
+
+        # Pure amplitude mask (φ=0)
+        return -1j * logA
+
+
+def jacobian_and_value(fn, argnums: int = 0, **jac_kwargs):
+    def inner(*args, **kwargs):
+        out = fn(*args, **kwargs)
+        return out, out
+    return jax.jacobian(inner, argnums=argnums, has_aux=True, **jac_kwargs)
+
+
+def passthrough_transform(component):
+    def inner(ray):
+        out = component(ray)
+        return out, out
+    return inner
+
+
+def jacobian_transform(component):
+    def inner(ray):
+        jac, out = jacobian_and_value(component)(ray)
+        return out, jac
+    return inner
+
+
+class BaseGaussianPropagator:
+    """Base propagator for (Gaussian) rays in gaussian_taylor."""
+    def propagate(self, ray: GaussianRayBeta, distance: float):
+        raise NotImplementedError
+
+    def with_distance(self, distance: float):
+        return GaussianPropagator(distance, self)
+
+
+class GaussianPropagator(NamedTuple):
+    distance: float
+    propagator: BaseGaussianPropagator
+
+    def __call__(self, ray: GaussianRayBeta):
+        return self.propagator.propagate(ray, self.distance)
+
+
+class FreeSpaceParaxial(BaseGaussianPropagator):
+    def propagate(self, ray: GaussianRayBeta, distance: float):
+        L = distance
+
+        x_new = ray.x + ray.dx * L
+        y_new = ray.y + ray.dy * L
+        z_new = ray.z + L
+
+        dS_real = L * (1.0 + 0.5 * (ray.dx**2 + ray.dy**2))
+        S0_new = ray.S.const + dS_real
+
+        Q = ray.S.quad
+        I2 = jnp.eye(2, dtype=jnp.complex128)
+        M = I2 + L * Q
+        M_inv = jnp.linalg.solve(M, I2)
+
+        Q_new = Q @ M_inv
+        eta_new = (jnp.swapaxes(M_inv, -1, -2) @ ray.S.lin[..., None])[..., 0]
+
+        # geometric spreading (k-free)
+        C_new = ray.C / jnp.sqrt(jnp.linalg.det(M))
+
+        return ray.derive(
+            x=x_new, y=y_new, z=z_new,
+            S=jdc.replace(ray.S, const=S0_new, lin=eta_new, quad=Q_new),
+            C=C_new,
+        )
+
+
+TransformT = Callable[[Any], Callable[[Any], tuple[Any, Any]]]
+
+
+def run_iter(
+    ray: Union[GaussianRayBeta, Any],
+    components: Sequence[Any],
+    transform: TransformT = passthrough_transform,
+    propagator: BaseGaussianPropagator = FreeSpaceParaxial(),
+) -> Generator[tuple[Any, Any], Any, None]:
+    """
+    Iterate a ray (GaussianRayBeta or standard Ray) through the model, yielding each step's output.
+    Free-space (paraxial) propagation is inserted when component.z != ray.z.
+    """
+    for component in components:
+        if isinstance(component, (Component, Detector)):  # Include Detector as a valid type
+            ray_z = ray.z
+            if jnp.ndim(ray_z) > 0:
+                ray_z = ray_z[0]
+            distance = float(component.z) - float(ray_z)
+            if distance != 0.0:
+                propagator_d = propagator.with_distance(distance)
+                ray, out = transform(propagator_d)(ray)
+                yield propagator_d, out
+        ray, out = transform(component)(ray)
+        yield component, out
+
+
+def run_to_end(
+    ray: Union[GaussianRayBeta, Any],
+    components: Sequence[Any],
+    propagator: FreeSpaceParaxial = FreeSpaceParaxial(),
+) -> Union[GaussianRayBeta, Any]:
+    """
+    Propagate a ray through all components and return the final state.
+    """
+    for _, ray in run_iter(ray, components, propagator=propagator):
+        pass
+    return ray

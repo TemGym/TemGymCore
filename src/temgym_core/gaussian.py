@@ -188,28 +188,26 @@ class GaussianRay(Ray):
         return matrix_matrix_matrix_mul(R, Q_inv_diag, R)
 
 
+@jdc.pytree_dataclass
+class TaylorExpofAction:
+    const: complex
+    lin: jnp.ndarray
+    quad: jnp.ndarray
+
+
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianRayBeta(Ray):
-    Q_inv: jnp.ndarray  # (2,2) Quadratic complex term in phase and amplitude
-    eta: complex  # (2,) linear complex term in phase and amplitude
-    C: complex  # constant complex term in phase and amplitude
+    S: TaylorExpofAction  # complex action Taylor (meters)
+    C: complex = 1.0 + 0.0j  # geometric prefactor (k-free)
     voltage: float
 
     def derive(self, **updates):
-        def resolve(v):
-            return v(self) if callable(v) else v
+        def resolve(v): return v(self) if callable(v) else v
         return jdc.replace(self, **{k: resolve(v) for k, v in updates.items()})
 
     def to_ray(self):
-        return Ray(
-            x=self.x,
-            y=self.y,
-            dx=self.dx,
-            dy=self.dy,
-            z=self.z,
-            pathlength=self.pathlength,
-            _one=self._one,
-        )
+        return Ray(x=self.x, y=self.y, dx=self.dx, dy=self.dy,
+        z=self.z, pathlength=self.S.const, _one=self._one)
 
     @property
     def mass(self) -> float:
@@ -229,7 +227,7 @@ class GaussianRayBeta(Ray):
             * units._c
             / jnp.sqrt(E * (2 * units._me * units._c**2 / units._e + E))
             / units._e
-        ) * 1.0e10
+        )
 
     @property
     def sigma(self) -> float:
