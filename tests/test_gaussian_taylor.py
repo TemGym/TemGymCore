@@ -144,7 +144,7 @@ def test_defocused_plane_radius_and_waist():
     model = [lens, detector]
 
     rays_im = run_to_end(rays_in, model)
-    q_inv_image = np.array(rays_im.Q_inv[0, 0, 0])
+    q_inv_image = np.array(rays_im.S.quad[0, 0, 0])
 
     # At image plane (new waist)
     w_image = _waist_from_Q_inv(q_inv_image, wavelength)
@@ -196,14 +196,14 @@ def test_free_space_propagation_Q_inv_waist_radius(L_factor):
     q_inv_expected = _expected_q_inv_free_space(w0, wavelength, L)
     w_expected, R_expected = _expected_waist_R(w0, wavelength, L)
 
-    q_inv_out = np.array(rays_out.Q_inv[0, 0, 0])
+    q_inv_out = np.array(rays_out.S.quad[0, 0, 0])
 
     # Check diagonal equality (x/y symmetry)
-    q_inv_y = np.array(rays_out.Q_inv[0, 1, 1])
+    q_inv_y = np.array(rays_out.S.quad[0, 1, 1])
     assert np.allclose(q_inv_out, q_inv_y, rtol=1e-6, atol=1e-9), "Anisotropy detected in Q_inv"
 
     # Off-diagonals should remain (near) zero
-    off_diag = np.array(rays_out.Q_inv[0, 0, 1])
+    off_diag = np.array(rays_out.S.quad[0, 0, 1])
     assert abs(off_diag) < 1e-12, f"Off-diagonal coupling appeared: {off_diag}"
 
     # Real / Imag parts vs analytic
