@@ -1,3 +1,4 @@
+import dataclasses
 import jax.numpy as jnp
 import jax
 from .grid import Grid
@@ -208,6 +209,17 @@ class GaussianRayBeta(Ray):
     def to_ray(self):
         return Ray(x=self.x, y=self.y, dx=self.dx, dy=self.dy,
         z=self.z, pathlength=self.S.const, _one=self._one)
+
+    def to_vector(self):
+        params = {}
+        for k, v in dataclasses.asdict(self).items():
+            if k == "S" and isinstance(v, dict):
+                # ensure each item in S is atleast_1d, then rebuild TaylorExpofAction
+                s_params = {sk: jnp.atleast_1d(sv) for sk, sv in v.items()}
+                params["S"] = TaylorExpofAction(**s_params)
+            else:
+                params[k] = jnp.atleast_1d(v)
+        return type(self)(**params)
 
     @property
     def mass(self) -> float:

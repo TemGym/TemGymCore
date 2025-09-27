@@ -10,32 +10,39 @@ from temgym_core.ray import Ray
 from inspect import signature
 
 
-def grad_complex_action(component, xy, k):
-    """Gradient of complex_action w.r.t xy for a single XY. Returns complex gradient (2,)."""
-    def vec(xy):
-        z = component.complex_action(xy, k)
-        return jnp.stack([jnp.real(z), jnp.imag(z)])  # (2,)
+def _grad_vjp(component, xy, k):
+    """
+    ∇_xy f(xy), where f: R^2 -> C. Returns shape (2,) complex.
+    Uses VJP and seeds with ones_like(output) to match shape/dtype.
+    """
+    f = lambda x: component.complex_action(x, k)  # may return ()-shaped scalar or (1,) array
+    y, pullback = jax.vjp(f, xy)
+    seed = jnp.ones_like(y)  # ensures exact shape/dtype match ((),) or (1,)
+    (g,) = pullback(seed)
+    return g  # complex gradient (2,)
 
-    # jacobian(vec) -> (2,2)
-    J = jax.jacobian(vec)(xy)
-    g_phi = J[0, :]
-    g_imag = J[1, :]
-    return g_phi + 1j * g_imag
+
+def grad_complex_action(component, xy, k):
+    return _grad_vjp(component, xy, k)
 
 
 def hess_complex_action(component, xy, k):
-    """Symmetric Hessian of complex_action w.r.t xy for a single XY. Returns complex Hessian (2,2)."""
-    def vec(xy):
-        z = component.complex_action(xy, k)
-        return jnp.stack([jnp.real(z), jnp.imag(z)])
+    """
+    ∇^2_xy f(xy) via VJP-of-gradient. Returns (2,2) complex.
+    """
+    g = lambda x: _grad_vjp(component, x, k)  # R^2 -> C^2
 
-    # H shape (out=2, in=2, in=2)
-    H = jax.jacfwd(jax.jacrev(vec))(xy)
-    H_phi = H[0, :, :]
-    H_imag = H[1, :, :]
-    Hc = H_phi + 1j * H_imag
-    # ensure symmetry (numerical)
-    return 0.5 * (Hc + jnp.swapaxes(Hc, -1, -2))
+    gxy, vjp_g = jax.vjp(g, xy)               # gxy: (2,) complex
+    n = gxy.shape[-1]
+    eye = jnp.eye(n, dtype=gxy.dtype)         # complex basis in C^n
+
+    def apply(e):
+        (ht_col,) = vjp_g(e)                  # H^T @ e
+        return ht_col
+
+    Ht = jax.vmap(apply)(eye)                 # (n,n) complex, this is H^T
+    H = jnp.swapaxes(Ht, -1, -2)              # transpose to get H
+    return 0.5 * (H + jnp.swapaxes(H, -1, -2))  # symmetrize (optional)
 
 
 @jdc.pytree_dataclass
@@ -62,8 +69,11 @@ class Component:
 
         # ΔS and its derivatives (meters, complex) for a single XY
         dS0 = self.complex_action(r, k)                     # complex scalar
-        dS1 = grad_complex_action(self, r, k)  # complex (2,)
-        dS2 = hess_complex_action(self, r, k)  # complex (2,2)
+        # ensure a single 2-vector (drop leading 1-batch if present)
+        r_vec = jnp.asarray(r).reshape((2,))  # will convert (1,2) -> (2,) or leave (2,) unchanged
+
+        dS1 = grad_complex_action(self, r_vec, k)  # complex (2,)
+        dS2 = hess_complex_action(self, r_vec, k)  # complex (2,2)
 
         S_out = jdc.replace(
             ray.S,
@@ -73,7 +83,7 @@ class Component:
         )
 
         # −ikS convention: kick from +Re(∇ΔS) only
-        dxy_out = ray.d_xy + jnp.real(dS1)
+        dxy_out = ray.d_xy + jnp.real(dS1[0])
 
         dx_new = dxy_out[0]
         dy_new = dxy_out[1]
@@ -107,7 +117,7 @@ class SigmoidAperture(Component):
         return 0.0
 
     def transmission(self, xy):
-        x, y = xy[..., 0], xy[..., 1]
+        x, y = xy[0], xy[1]
         r = jnp.sqrt(x*x + y*y + self.eps)
         s = jax.nn.sigmoid(self.sharpness * (r - self.radius))  # 0 in → 1 out
         return (1.0 - s) + s * self.t_outside                   # 1 inside, t_out outside
@@ -130,71 +140,6 @@ class AberratedLens(Component):
             + self.C_coma_x * (x**3 + x*y**2)
             + self.C_coma_y * (y**3 + y*x**2)
         ) + 0.0j
-
-
-@jdc.pytree_dataclass
-class SigmoidAperture(Component):
-    """
-    Circular, smooth-rolloff aperture (length-native).
-    Pure attenuation: ΔS = -i * L_a(x,y)   [meters]
-    """
-    radius: float              # aperture radius [m]
-    sharpness: float = 50.0    # edge steepness (1/m scaled into t)
-    L_outside: float = 0.0     # attenuation length far outside [m]
-    eps: float = 1e-12
-
-    def complex_action(self, xy):
-        x, y = xy[..., 0], xy[..., 1]
-        r = jnp.sqrt(x*x + y*y + self.eps)
-
-        # Smooth edge: inside -> 0, outside -> 1
-        t = self.sharpness * (r - self.radius)
-        s = jax.nn.sigmoid(t)            # 0 inside, →1 outside (C∞-smooth)
-        L_a = self.L_outside * s          # meters
-
-        # Pure amplitude: imaginary negative ΔS; produces no ray kick
-        return -1j * L_a
-
-
-@jdc.pytree_dataclass
-class SigmoidSquareAperture(Component):
-    """Smooth square aperture with soft roll-off.
-
-    This is the rectangular analogue of ``SigmoidAperture`` (circular).
-    It produces a pure amplitude mask A(x,y) ≈ 1 inside the box
-    |x| ≤ half_width_x and |y| ≤ half_width_y, and decays smoothly to 0
-    outside with an exponential-like tail controlled by ``sharpness``.
-
-    Returned complex action: ψ(x,y) = φ(x,y) - i ℓ(x,y) with φ=0 and
-    ℓ(x,y) = log A(x,y) ≤ 0 so the element only affects amplitude while
-    remaining fully differentiable for gradient/Hessian extraction.
-    """
-    half_width_x: float
-    half_width_y: float | None = None
-    sharpness: float = 50.0
-    eps: float = 1e-12
-
-    def complex_action(self, xy):
-        x, y = xy[..., 0], xy[..., 1]
-
-        # Allow square via defaulting y half-width to x half-width
-        hx = self.half_width_x
-        hy = self.half_width_y if self.half_width_y is not None else hx
-
-        # Smooth absolute value for differentiable gradients/Hessians
-        ax = jnp.sqrt(x * x + self.eps)
-        ay = jnp.sqrt(y * y + self.eps)
-
-        # Signed distance-like terms to each pair of parallel edges
-        # Negative inside, positive outside.
-        tx = self.sharpness * (ax - hx)
-        ty = self.sharpness * (ay - hy)
-
-        # Soft roll-off on each axis; product in amplitude => sum in log-space
-        logA = -softplus(tx) - softplus(ty)
-
-        # Pure amplitude mask: ψ = φ - iℓ, here φ=0, ℓ = logA (≤ 0)
-        return -1j * logA
 
 
 @jdc.pytree_dataclass
@@ -350,50 +295,6 @@ class Biprism(Component):
         phi = -self.strength * au
 
         return phi - 1j * logA
-
-
-@jdc.pytree_dataclass
-class InverseSigmoidSquareAperture(Component):
-    """
-    Inverse of SigmoidSquareAperture.
-
-    Inside the rectangle (|x| <= hx, |y| <= hy) amplitude -> ~0.
-    Outside the rectangle amplitude ~1 (logA ≈ 0).
-    Smoothly differentiable for gradient / Hessian use.
-
-    Parameters
-    ----------
-    half_width_x : half-width along x
-    half_width_y : half-width along y (defaults to half_width_x if None)
-    sharpness    : controls steepness of the transition
-    eps          : small number for smooth |x|
-    """
-    half_width_x: float
-    half_width_y: float | None = None
-    sharpness: float = 50.0
-    eps: float = 1e-12
-
-    def complex_action(self, xy):
-        x, y = xy[..., 0], xy[..., 1]
-        hx = self.half_width_x
-        hy = self.half_width_y if self.half_width_y is not None else hx
-
-        # Smooth absolute values for differentiability
-        ax = jnp.sqrt(x * x + self.eps)
-        ay = jnp.sqrt(y * y + self.eps)
-
-        # Signed (soft) distances from edges
-        tx = self.sharpness * (ax - hx)
-        ty = self.sharpness * (ay - hy)
-
-        # Original square aperture used: logA = -softplus(tx) - softplus(ty)
-        # which gives A≈1 inside, decays outside.
-        # Invert: want A≈0 inside, A≈1 outside.
-        # Use -softplus(-tx): for tx<<0 (inside) -> large negative; for tx>>0 (outside) -> ~0.
-        logA = -softplus(-tx) - softplus(-ty)
-
-        # Pure amplitude mask (φ=0)
-        return -1j * logA
 
 
 def jacobian_and_value(fn, argnums: int = 0, **jac_kwargs):

@@ -244,10 +244,10 @@ def _beam_field(r_centre, init_amp, S_const, S_lin, S_quad, k, det_xy):
     A_tot = jnp.imag(E)
     # Prevent overflow in exp(A_tot) by clipping to a minimum value
     # Note: exp(-700) ~ 9.859e-305, which is small but not underflowing float64
-    final_amp = jnp.exp(jnp.clip(A_tot, a_min=-700.0, a_max=0.0))  # Prevent overflow
+    final_amp = jnp.exp(-A_tot)  # Prevent overflow
     final_phase = -jnp.real(E)
 
-    return init_amp * final_amp * jnp.exp(1j * final_phase)
+    return init_amp * final_amp * jnp.exp(1j * k * final_phase)
 
 
 def _beam_field_outer(xs, r2):
@@ -305,25 +305,40 @@ def evaluate_gaussians_for(
     # Grid coordinates where the field is evaluated.
     r2 = grid.coords
     P = r2.shape[0]  # Total number of grid points
-    num_packets = r_m.shape[0]
+
+    if r_m.ndim == 1:
+        num_packets = 1
+    else:
+        num_packets = len(r_m)
 
     # Initialize the total field accumulator.
     total_field = jnp.zeros((P,), dtype=jnp.complex128)
 
     # Iterate through each Gaussian packet one by one.
-    for i in range(num_packets):
-        # Calculate the field for the i-th packet on the entire grid.
-        field_i = _beam_field(
-            r_centre=r_m[i],
-            init_amp=C[i],
-            S_const=S_const[i],
-            S_quad=S_quad[i],
-            S_lin=S_lin[i],
-            k=k[i],
+    if num_packets == 1:
+        return _beam_field(
+            r_centre=r_m,
+            init_amp=C,
+            S_const=S_const,
+            S_quad=S_quad,
+            S_lin=S_lin,
+            k=k,
             det_xy=r2,
-        )
-        # Add its contribution to the total field.
-        total_field += field_i
+        ).reshape(grid.shape)
+    else:
+        for i in range(num_packets):
+            # Calculate the field for the i-th packet on the entire grid.
+            field_i = _beam_field(
+                r_centre=r_m[i],
+                init_amp=C[i],
+                S_const=S_const[i],
+                S_quad=S_quad[i],
+                S_lin=S_lin[i],
+                k=k[i],
+                det_xy=r2,
+            )
+            # Add its contribution to the total field.
+            total_field += field_i
 
-    # Reshape the final flat array to match the grid's 2D shape.
-    return total_field.reshape(grid.shape)
+        # Reshape the final flat array to match the grid's 2D shape.
+        return total_field.reshape(grid.shape)
