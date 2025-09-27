@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pytest
 
 from temgym_core.gaussian import GaussianRayBeta, TaylorExpofAction
-from temgym_core.gaussian_taylor import Lens, run_to_end
+from temgym_core.gaussian_taylor import Lens, run_to_end, SigmoidAperture
 from temgym_core.components import Detector
 from temgym_core.evaluate import evaluate_gaussians_for
 from temgym_core.utils import fibonacci_spiral
@@ -227,7 +227,7 @@ def test_free_space_propagation_Q_inv_waist_radius(L_factor):
             f"Radius mismatch at L={L}: got {R_out}, expected {R_expected}"
 
 
-def test_beam_field_evaluation():
+def test_beam_field_evaluation_smoke():
     w0 = 1
     rays_in, wavelength, k0 = _make_initial_rays(w0=w0, num_rays=1)
     detector = Detector(z=10, pixel_size=(1e-1, 1e-1), shape=(200, 200))
@@ -268,4 +268,119 @@ def test_parallel_rays_focus_at_back_focal_plane_center(f):
     assert np.max(np.abs(x)) < tol and np.max(np.abs(y)) < tol, (
         f"Rays did not converge to (0,0) at z=f. "
         f"max|x|={np.max(np.abs(x))}, max|y|={np.max(np.abs(y))}, f={f}"
+    )
+
+
+@pytest.mark.parametrize("voltage_ev", [200e3, 80e3])
+def test_sigmoid_aperture_outside(voltage_ev):
+    """
+    If a Gaussian packet impinges on a SigmoidAperture well outside its radius,
+    and the aperture's outside attenuation length L_outside is chosen so that
+    exp(-k * L_outside) = 0.5, then the packet amplitude should be halved.
+
+    We verify by inspecting the change in the imaginary part of the action S.const
+    produced by the aperture: ΔA = exp(k * Im(ΔS)) = exp(-k * L_outside) = 0.5.
+    """
+    # Central ray placed far outside the aperture edge so the sigmoid -> 1
+    radius = 1e-6  # m
+    x_outside = 1e-4  # m (>> radius)
+
+    # Build a single Gaussian packet with unit initial amplitude (C=1)
+    S = TaylorExpofAction(
+        const=jnp.array(0.0 + 0.0j),
+        lin=jnp.zeros((2,), dtype=jnp.complex128),
+        quad=jnp.zeros((2, 2), dtype=jnp.complex128),
+    )
+
+    ray_in = GaussianRayBeta(
+        x=x_outside,
+        y=0.0,
+        dx=0.0,
+        dy=0.0,
+        z=0.0,
+        pathlength=0.0,
+        _one=1.0,
+        S=S,
+        C=1.0 + 0.0j,
+        voltage=voltage_ev,
+    )
+
+    # Choose L_outside so attenuation outside is exactly 0.5
+    k = float(2 * np.pi / ray_in.wavelength)  # use scalar for readability
+    t_outside = 0.1
+
+    # Make the aperture extremely sharp so sigmoid(r - radius) ~ 1 outside
+    aperture = SigmoidAperture(
+        z=0.0,
+        radius=radius,
+        sharpness=1e8,   # large for near-step behaviour
+        t_outside=t_outside,
+    )
+
+    ray_out = aperture(ray_in)
+
+    # Imaginary action increment at the packet centre
+    d_im = float(jnp.imag(ray_out.S.const - ray_in.S.const))
+
+    # Attenuation factor applied to the packet's amplitude
+    attenuation = np.exp(-k * d_im)
+
+    assert attenuation == pytest.approx(t_outside, rel=1e-6, abs=1e-9), (
+        f"Expected amplitude halved; got attenuation={attenuation} (k={k}, ΔImS={d_im})"
+    )
+
+
+def test_beam_field_evaluation_attenuation():
+    # Build a single Gaussian packet placed well outside the aperture so the
+    # sigmoid -> 1 outside and the amplitude should be multiplied by t_outside.
+    radius = 1e-6  # m
+    x_outside = 1e-4  # m (>> radius)
+    t_outside = 0.1
+    sharpness = 1e8
+    voltage_ev = 200e3
+
+    S = TaylorExpofAction(
+        const=jnp.array(0.0 + 0.0j),
+        lin=jnp.zeros((2,), dtype=jnp.complex128),
+        quad=jnp.zeros((2, 2), dtype=jnp.complex128),
+    )
+
+    ray_in = GaussianRayBeta(
+        x=x_outside,
+        y=0.0,
+        dx=0.0,
+        dy=0.0,
+        z=0.0,
+        pathlength=0.0,
+        _one=1.0,
+        S=S,
+        C=1.0 + 0.0j,
+        voltage=voltage_ev,
+    )
+    ray_in = ray_in.to_vector()
+    detector = Detector(z=1e-15, pixel_size=(1e-1, 1e-1), shape=(200, 200))
+    aperture = SigmoidAperture(
+        z=0.0,
+        radius=radius,
+        sharpness=sharpness,
+        t_outside=t_outside,
+    )
+
+    # # Propagate without aperture
+    ray_no_ap = run_to_end(ray_in, [detector])
+    field_no_ap = evaluate_gaussians_for(ray_no_ap, detector)
+
+    # Propagate with aperture in front of the detector
+    ray_with_ap = run_to_end(ray_in, [aperture, detector])
+    field_with_ap = evaluate_gaussians_for(ray_with_ap, detector)
+
+    # Compare peak amplitudes (peak should correspond to beam centre)
+    max_no = np.max(np.abs(field_no_ap))
+    max_with = np.max(np.abs(field_with_ap))
+
+    # Attenuation factor applied by the aperture
+    attenuation = float(max_with / max_no)
+
+    assert attenuation == pytest.approx(t_outside, rel=1e-2, abs=1e-3), (
+        f"Field peak attenuation mismatch: got {attenuation}, expected {t_outside}"
     )
