@@ -77,18 +77,12 @@ class Ray(HasParamsMixin):
 
     @property
     def r_xy(self):
-        # always (B, 2). If single point (2,), add batch dim → (1,2)
-        r = jnp.stack([self.x, self.y], axis=-1)
-        r = r if r.ndim == 2 else r[None, ...]
-        assert r.shape[-1] == 2, f"r_xy must be (B,2), got {r.shape}"
+        r = jnp.array([self.x, self.y])
         return r
 
     @property
     def d_xy(self):
-        # always (B, 2). If single point (2,), add batch dim → (1,2)
-        dr = jnp.stack([self.dx, self.dy], axis=-1)
-        dr = dr if dr.ndim == 2 else dr[None, ...]
-        assert dr.shape[-1] == 2, f"d_xy must be (B,2), got {dr.shape}"
+        dr = jnp.array([self.dx, self.dy])
         return dr
 
     def __getitem__(self, arg):

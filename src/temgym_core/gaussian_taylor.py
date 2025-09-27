@@ -7,59 +7,110 @@ from typing import Sequence, Callable, Any, Generator, Union, NamedTuple
 from temgym_core.components import Detector
 from temgym_core.gaussian import GaussianRayBeta
 from temgym_core.ray import Ray
+from inspect import signature
 
 
-def _as_batch(r):
-    r = r if r.ndim == 2 else r[None, ...]
-    return r
+def grad_complex_action(component, xy, k):
+    """Gradient of complex_action w.r.t xy for a single XY. Returns complex gradient (2,)."""
+    def vec(xy):
+        z = component.complex_action(xy, k)
+        return jnp.stack([jnp.real(z), jnp.imag(z)])  # (2,)
 
-def apply_thin_element_from_complex_opl(ray: GaussianRayBeta,
-                                        dS_const, dS_grad, dS_hess):
+    # jacobian(vec) -> (2,2)
+    J = jax.jacobian(vec)(xy)
+    g_phi = J[0, :]
+    g_imag = J[1, :]
+    return g_phi + 1j * g_imag
 
-    S_out = jdc.replace(
-        ray.S,
-        const=ray.S.const + dS_const,
-        lin=ray.S.lin + dS_grad,
-        quad=ray.S.quad + dS_hess,
-    )
 
-    # −ikS convention: geometric kick from +Re(∇ΔS)
-    dxy_out = ray.d_xy + jnp.real(dS_grad)
+def hess_complex_action(component, xy, k):
+    """Symmetric Hessian of complex_action w.r.t xy for a single XY. Returns complex Hessian (2,2)."""
+    def vec(xy):
+        z = component.complex_action(xy, k)
+        return jnp.stack([jnp.real(z), jnp.imag(z)])
 
-    return ray.derive(
-        S=S_out, C=ray.C,
-        dx=dxy_out[..., 0], dy=dxy_out[..., 1],
-    )
+    # H shape (out=2, in=2, in=2)
+    H = jax.jacfwd(jax.jacrev(vec))(xy)
+    H_phi = H[0, :, :]
+    H_imag = H[1, :, :]
+    Hc = H_phi + 1j * H_imag
+    # ensure symmetry (numerical)
+    return 0.5 * (Hc + jnp.swapaxes(Hc, -1, -2))
 
 
 @jdc.pytree_dataclass
 class Component:
     z: float
 
-    def complex_action(self, xy: jnp.ndarray) -> complex:
-        """Return ΔS(x,y) in meters (complex). Default: transparent."""
-        return jnp.zeros((), dtype=jnp.complex128)
+    def opl_shift(self, xy):
+        raise NotImplementedError
+
+    def transmission(self, xy):
+        raise NotImplementedError
+
+    def complex_action(self, xy, k):
+        # default: compose from the clear channels (keeps k argument for elements that need it)
+        opd = self.opl_shift(xy)
+        t = self.transmission(xy)
+        L = -jnp.log(t + 1e-16)  # attenuation length (meters), t in [0,1]
+        return opd + 1j * (L / k)
 
     def __call__(self, ray: GaussianRayBeta):
-        r_xy = _as_batch(ray.r_xy)
+        # Expect a single ray (no internal vmapping). Users should vmap this __call__ outside.
+        r = jnp.asarray(ray.r_xy)  # shape (2,)
+        k = ray.k
 
-        dS0 = jax.vmap(self.complex_action)(r_xy)
-        dS1 = jax.vmap(jax.jacrev(self.complex_action))(r_xy)
-        dS2 = jax.vmap(jax.jacfwd(jax.jacrev(self.complex_action)))(r_xy)
+        # ΔS and its derivatives (meters, complex) for a single XY
+        dS0 = self.complex_action(r, k)                     # complex scalar
+        dS1 = grad_complex_action(self, r, k)  # complex (2,)
+        dS2 = hess_complex_action(self, r, k)  # complex (2,2)
 
-        out = apply_thin_element_from_complex_opl(ray, dS0, dS1, dS2)
-        return out.derive(z=self.z)
+        S_out = jdc.replace(
+            ray.S,
+            const=ray.S.const + dS0,
+            lin=ray.S.lin + dS1,
+            quad=ray.S.quad + dS2,
+        )
+
+        # −ikS convention: kick from +Re(∇ΔS) only
+        dxy_out = ray.d_xy + jnp.real(dS1)
+
+        dx_new = dxy_out[0]
+        dy_new = dxy_out[1]
+
+        return ray.derive(S=S_out, dx=dx_new, dy=dy_new, z=self.z)
 
 
 @jdc.pytree_dataclass
 class Lens(Component):
     focal_length: float  # f > 0 focusing, f < 0 defocusing
 
-    def complex_action(self, xy):
-        x, y = xy[..., 0], xy[..., 1]
+    def opl_shift(self, xy):
+        x, y = xy[0], xy[1]
         rho2 = x * x + y * y
         # Pure phase (real) ΔS; amplitude unchanged
         return -0.5 * rho2 / self.focal_length
+
+    def transmission(self, xy):
+        return 0.0  # no amplitude change
+
+
+@jdc.pytree_dataclass
+class SigmoidAperture(Component):
+    radius: float
+    sharpness: float = 50.0     # 1/m
+    t_outside: float = 0.1
+    eps: float = 1e-12
+
+    # Clear channel: pure attenuator → no phase
+    def opl_shift(self, xy):
+        return 0.0
+
+    def transmission(self, xy):
+        x, y = xy[..., 0], xy[..., 1]
+        r = jnp.sqrt(x*x + y*y + self.eps)
+        s = jax.nn.sigmoid(self.sharpness * (r - self.radius))  # 0 in → 1 out
+        return (1.0 - s) + s * self.t_outside                   # 1 inside, t_out outside
 
 
 @jdc.pytree_dataclass
@@ -78,24 +129,31 @@ class AberratedLens(Component):
             + self.C_sph * (rho2**2)
             + self.C_coma_x * (x**3 + x*y**2)
             + self.C_coma_y * (y**3 + y*x**2)
-        )
+        ) + 0.0j
 
 
 @jdc.pytree_dataclass
 class SigmoidAperture(Component):
-    radius: float
-    sharpness: float = 50.0
+    """
+    Circular, smooth-rolloff aperture (length-native).
+    Pure attenuation: ΔS = -i * L_a(x,y)   [meters]
+    """
+    radius: float              # aperture radius [m]
+    sharpness: float = 50.0    # edge steepness (1/m scaled into t)
+    L_outside: float = 0.0     # attenuation length far outside [m]
     eps: float = 1e-12
 
     def complex_action(self, xy):
         x, y = xy[..., 0], xy[..., 1]
-        r = jnp.sqrt(x * x + y * y + self.eps)
+        r = jnp.sqrt(x*x + y*y + self.eps)
 
+        # Smooth edge: inside -> 0, outside -> 1
         t = self.sharpness * (r - self.radius)
-        logA = -softplus(t)
+        s = jax.nn.sigmoid(t)            # 0 inside, →1 outside (C∞-smooth)
+        L_a = self.L_outside * s          # meters
 
-        # Pure amplitude mask: ψ = φ - iℓ, here φ=0, ℓ = logA (≤ 0)
-        return -1j * logA
+        # Pure amplitude: imaginary negative ΔS; produces no ray kick
+        return -1j * L_a
 
 
 @jdc.pytree_dataclass
@@ -421,13 +479,10 @@ def run_iter(
     for component in components:
         if isinstance(component, (Component, Detector)):  # Include Detector as a valid type
             ray_z = ray.z
-            if jnp.ndim(ray_z) > 0:
-                ray_z = ray_z[0]
-            distance = float(component.z) - float(ray_z)
-            if distance != 0.0:
-                propagator_d = propagator.with_distance(distance)
-                ray, out = transform(propagator_d)(ray)
-                yield propagator_d, out
+            distance = component.z - ray_z
+            propagator_d = propagator.with_distance(distance)
+            ray, out = transform(propagator_d)(ray)
+            yield propagator_d, out
         ray, out = transform(component)(ray)
         yield component, out
 

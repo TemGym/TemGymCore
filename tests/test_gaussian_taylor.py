@@ -45,6 +45,7 @@ def _make_initial_rays(
         dy=jnp.zeros(num_rays),
         z=jnp.zeros(num_rays),
         pathlength=jnp.zeros(num_rays),
+        _one=jnp.ones(num_rays),
         S=S,
         C=C0,
         voltage=voltage_arr,
@@ -101,7 +102,7 @@ def test_lens_magnification_and_beam_waist(M1, F1):
     detector = Detector(z=L1_z1 + L1_z2, pixel_size=(1e-6, 1e-6), shape=(100, 100))
     model = [lens, detector]
 
-    rays_out = run_to_end(rays_in, model)
+    rays_out = jax.vmap(run_to_end, in_axes=(0, None))(rays_in, model)
 
     mask = np.abs(np.array(rays_in.x)) > 1e-15
     r_in = np.sqrt(np.array(rays_in.x) ** 2 + np.array(rays_in.y) ** 2)
@@ -143,8 +144,8 @@ def test_defocused_plane_radius_and_waist():
     detector = Detector(z=L1_z1 + L1_z2, pixel_size=(1e-6, 1e-6), shape=(100, 100))
     model = [lens, detector]
 
-    rays_im = run_to_end(rays_in, model)
-    q_inv_image = np.array(rays_im.S.quad[0, 0, 0])
+    rays_out = jax.vmap(run_to_end, in_axes=(0, None))(rays_in, model)
+    q_inv_image = np.array(rays_out.S.quad[0, 0, 0])
 
     # At image plane (new waist)
     w_image = _waist_from_Q_inv(q_inv_image, wavelength)
@@ -191,7 +192,7 @@ def test_free_space_propagation_Q_inv_waist_radius(L_factor):
     detector = Detector(z=L, pixel_size=(1e-6, 1e-6), shape=(8, 8))
     model = [detector]
 
-    rays_out = run_to_end(rays_in, model)
+    rays_out = jax.vmap(run_to_end, in_axes=(0, None))(rays_in, model)
 
     q_inv_expected = _expected_q_inv_free_space(w0, wavelength, L)
     w_expected, R_expected = _expected_waist_R(w0, wavelength, L)
@@ -258,7 +259,7 @@ def test_parallel_rays_focus_at_back_focal_plane_center(f):
 
     lens = Lens(focal_length=f, z=0.0)
     detector = Detector(z=f, pixel_size=(1e-6, 1e-6), shape=(8, 8))
-    rays_out = run_to_end(rays_in, [lens, detector])
+    rays_out = jax.vmap(run_to_end, in_axes=(0, None))(rays_in, [lens, detector])
 
     x = np.array(rays_out.x)
     y = np.array(rays_out.y)
