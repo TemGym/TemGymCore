@@ -197,7 +197,7 @@ class TaylorExpofAction:
 
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianRayBeta(Ray):
-    S: TaylorExpofAction  # complex action Taylor (meters)
+    S: TaylorExpofAction  # Action
     C: complex = 1.0 + 0.0j  # geometric prefactor (k-free)
     voltage: float
 
