@@ -59,8 +59,8 @@ class Component:
         # default: compose from the clear channels (keeps k argument for elements that need it)
         opd = self.opl_shift(xy)
         t = self.transmission(xy)
-        L = -jnp.log(t + 1e-16)  # attenuation length (meters), t in [0,1]
-        return opd + 1j * (L / k)
+        L = jnp.log(t + 1e-16)  # attenuation length (meters), t in [0,1]
+        return opd - 1j * (L / k)
 
     def __call__(self, ray: GaussianRayBeta):
         # Expect a single ray (no internal vmapping). Users should vmap this __call__ outside.
@@ -69,11 +69,11 @@ class Component:
 
         # ΔS and its derivatives (meters, complex) for a single XY
         dS0 = self.complex_action(r, k)                     # complex scalar
-        # ensure a single 2-vector (drop leading 1-batch if present)
-        r_vec = jnp.asarray(r).reshape((2,))  # will convert (1,2) -> (2,) or leave (2,) unchanged
+        # # ensure a single 2-vector (drop leading 1-batch if present)
+        # r_vec = jnp.asarray(r).reshape((2,))  # will convert (1,2) -> (2,) or leave (2,) unchanged
 
-        dS1 = grad_complex_action(self, r_vec, k)  # complex (2,)
-        dS2 = hess_complex_action(self, r_vec, k)  # complex (2,2)
+        dS1 = grad_complex_action(self, r, k)  # complex (2,)
+        dS2 = hess_complex_action(self, r, k)  # complex (2,2)
 
         S_out = jdc.replace(
             ray.S,
@@ -82,11 +82,10 @@ class Component:
             quad=ray.S.quad + dS2,
         )
 
-        # −ikS convention: kick from +Re(∇ΔS) only
-        dxy_out = ray.d_xy + jnp.real(dS1[0])
+        dxy_out = ray.d_xy + jnp.real(dS1)
 
-        dx_new = dxy_out[0]
-        dy_new = dxy_out[1]
+        dx_new = jnp.atleast_1d(dxy_out[0])
+        dy_new = jnp.atleast_1d(dxy_out[1])
 
         return ray.derive(S=S_out, dx=dx_new, dy=dy_new, z=self.z)
 
@@ -130,16 +129,20 @@ class AberratedLens(Component):
     C_coma_x: float = 0.0
     C_coma_y: float = 0.0
 
-    def complex_action(self, xy):
-        x, y = xy[..., 0], xy[..., 1]
+    def opl_shift(self, xy):
+        x, y = xy[0], xy[1]
         rho2 = x*x + y*y
 
-        return (
-            -0.5 * rho2 / self.focal_length
+        opl = -(
+            0.5 * rho2 / self.focal_length
             + self.C_sph * (rho2**2)
-            + self.C_coma_x * (x**3 + x*y**2)
-            + self.C_coma_y * (y**3 + y*x**2)
-        ) + 0.0j
+            + self.C_coma_x * (x**3 + x * y**2)
+            + self.C_coma_y * (y**3 + y * x**2)
+        )
+        return opl
+
+    def transmission(self, xy):
+        return 0.0  # no amplitude change
 
 
 @jdc.pytree_dataclass
@@ -234,21 +237,30 @@ class Potential(Component):
 @jdc.pytree_dataclass
 class Biprism(Component):
     """
-    Biprism with inverse sigmoid square aperture (blocked inside, open outside).
+    Biprism that follows the thin-element convention:
+      - Real OPL shift encodes the prism's linear phase → deflection
+      - Transmission encodes an inverse sigmoid rectangular aperture
 
-    Inside the (rotated / shifted) rectangle: amplitude ~ 0.
-    Outside: amplitude ~ 1.
-    Phase: linear in |u| (prism deflection).
+    Inside the (rotated/shifted) rectangle: transmission ~ 0 (blocked).
+    Outside: transmission ~ 1 (open).
 
     Parameters
     ----------
-    strength : phase slope versus |u|
-    width    : filament physical width (defines blocked square of side=width) along u
-    length   : extent along v; if None => treated as infinite (no masking along v)
-    theta    : rotation (radians)
-    x0, y0   : center position
-    sharpness: transition steepness
-    eps      : fraction of half-width used to smooth |.| for differentiability
+    strength : float
+        Phase slope magnitude vs |u| (controls deflection).
+        Units of radians per meter of |u| in OPL units.
+    width : float
+        Physical filament width along u; blocks |u| < width/2.
+    length : float | None
+        Extent along v; if None, no v-aperture (infinite length).
+    theta : float
+        Rotation angle (radians) for the (u,v) axes w.r.t lab (x,y).
+    x0, y0 : float
+        Center position of the filament.
+    sharpness : float
+        Transition steepness for the inverse sigmoid mask.
+    eps : float
+        Small smoothing factor for |.| to remain differentiable at u=0.
     """
     strength: float
     width: float
@@ -261,40 +273,47 @@ class Biprism(Component):
     sharpness: float = 50.0
     eps: float = 1e-12
 
-    def complex_action(self, xy):
-        x, y = xy[..., 0], xy[..., 1]
-
-        # shift & rotate into (u,v)
+    # Helper: rotate/shift to (u,v)
+    def _uv(self, xy):
+        x, y = xy[0], xy[1]
         xr, yr = x - self.x0, y - self.y0
         c, s = jnp.cos(self.theta), jnp.sin(self.theta)
         u = c * xr + s * yr
         v = -s * xr + c * yr
+        return u, v
 
-        # u half-width and smooth abs
+    # Real OPL phase: linear in |u| → produces deflection via ∇_xy(opl)
+    def opl_shift(self, xy):
+        u, _ = self._uv(xy)
         hu = 0.5 * self.width
         eps_u = self.eps * hu
         au = jnp.sqrt(u * u + eps_u * eps_u)
+        return -self.strength * au
 
-        # Soft distance and inverse sigmoid aperture along u
+    # Amplitude transmission: inverse sigmoid rectangle (blocked inside)
+    def transmission(self, xy):
+        u, v = self._uv(xy)
+
+        # u mask
+        hu = 0.5 * self.width
+        eps_u = self.eps * hu
+        au = jnp.sqrt(u * u + eps_u * eps_u)
         tx = self.sharpness * (au - hu)
         logA_u = -softplus(-tx)  # ≈ large negative inside (blocked), 0 outside
 
-        # v dimension: only apply if finite length provided
+        # v mask (optional)
         if self.length is None:
             logA_v = 0.0
         else:
             hv = 0.5 * self.length
-            eps_v = self.eps * hu  # scale smoothing with filament width (could also use hv)
+            eps_v = self.eps * hu  # tie smoothing scale to u half-width
             av = jnp.sqrt(v * v + eps_v * eps_v)
             ty = self.sharpness * (av - hv)
             logA_v = -softplus(-ty)
 
         logA = logA_u + logA_v
-
-        # Linear phase in |u|
-        phi = -self.strength * au
-
-        return phi - 1j * logA
+        # Return transmission in [0,1]
+        return jnp.exp(logA)
 
 
 def jacobian_and_value(fn, argnums: int = 0, **jac_kwargs):

@@ -77,13 +77,19 @@ class Ray(HasParamsMixin):
 
     @property
     def r_xy(self):
-        r = jnp.stack([self.x, self.y], axis=-1)
-        return r[0] if self.x.size == 1 else r
+        # shape: (2,) for scalar rays, (N, 2) for vectorized rays
+        arr = jnp.stack((self.x, self.y), axis=-1)
+        if self.x.size < 2 and self.y.size < 2:
+            return arr.reshape(2)
+        return arr
 
     @property
     def d_xy(self):
-        dr = jnp.stack([self.dx, self.dy], axis=-1)
-        return dr[0] if self.dx.size == 1 else dr
+        # shape: (2,) for scalar rays, (N, 2) for vectorized rays
+        arr = jnp.stack((self.dx, self.dy), axis=-1)
+        if self.dx.size < 2 and self.dy.size < 2:
+            return arr.reshape(2)
+        return arr
 
     def __getitem__(self, arg):
         """Index a vectorized ray to get a single-element Ray.

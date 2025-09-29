@@ -226,28 +226,13 @@ eval_gaussians_differentiable.defvjp(_fwd, _bwd)
 
 
 def _beam_field(r_centre, init_amp, S_const, S_lin, S_quad, k, det_xy):
-    """
-    Field = init_amp * exp(imag(E)) * exp(i * (-real(E))) with E = k * S_total.
-    For attenuation, require imag(S_total) <= 0 (so imag(E) <= 0).
-    S_total = S_const + lin + 0.5 * quad, where S_* are complex lengths.
-    """
-    # Shifted detector to beam coordinates
     delta = det_xy - r_centre
 
-    # Taylor expansion terms of the action added together
     delta_S_lin = jnp.sum(delta * S_lin, axis=-1)
     delta_S_quad = jnp.sum((delta @ S_quad) * delta, axis=-1)
     S_total = S_const + delta_S_lin + 0.5 * delta_S_quad
 
-    E = k * S_total
-
-    A_tot = jnp.imag(E)
-    # Prevent overflow in exp(A_tot) by clipping to a minimum value
-    # Note: exp(-700) ~ 9.859e-305, which is small but not underflowing float64
-    final_amp = jnp.exp(-A_tot)  # Prevent overflow
-    final_phase = -jnp.real(E)
-
-    return init_amp * final_amp * jnp.exp(1j * k * final_phase)
+    return init_amp * jnp.exp(1j * k * S_total)
 
 
 def _beam_field_outer(xs, r2):
@@ -261,7 +246,7 @@ def evaluate_gaussians_jax_scan(
     *,
     batch_size: int | None = 128,
 ):  # Faster solution but not fastest, with grads
-    r_m = gaussian_ray.r_xy
+    r_m = jnp.atleast_2d(gaussian_ray.r_xy)
     C = gaussian_ray.C
     S_const = gaussian_ray.S.const
     S_lin = gaussian_ray.S.lin
@@ -280,9 +265,9 @@ def evaluate_gaussians_jax_scan(
     return out.reshape(grid.shape)
 
 
-evaluate_gaussians_jax_scan = jax.jit(
-    evaluate_gaussians_jax_scan, static_argnames=["batch_size", "grid"]
-)
+# evaluate_gaussians_jax_scan = jax.jit(
+#     evaluate_gaussians_jax_scan, static_argnames=["batch_size", "grid"]
+# )
 
 
 # Slow solution for testing and debugging
@@ -319,9 +304,9 @@ def evaluate_gaussians_for(
         return _beam_field(
             r_centre=r_m,
             init_amp=C,
-            S_const=S_const,
-            S_quad=S_quad,
-            S_lin=S_lin,
+            S_const=S_const[0],
+            S_quad=S_quad[0],
+            S_lin=S_lin[0],
             k=k,
             det_xy=r2,
         ).reshape(grid.shape)

@@ -333,9 +333,6 @@ def wavelength2energy(wavelength: float) -> float:
     float
         Energy [eV].
     """
-    # Convert wavelength from Å to m
-    wavelength
-
     # Constants
     h = units._hplanck
     c = units._c
@@ -348,3 +345,36 @@ def wavelength2energy(wavelength: float) -> float:
     energy_joules = np.sqrt(term1 + term2) - m_e * c**2
 
     return energy_joules / e
+
+def energy2wavelength(energy: float) -> float:
+    """
+    Calculate relativistic de Broglie wavelength from energy.
+
+    Parameters
+    ----------
+    energy : float
+        Kinetic energy [eV].
+
+    Returns
+    -------
+    float
+        Relativistic de Broglie wavelength [Å].
+    """
+    # Constants
+    h = units._hplanck
+    c = units._c
+    m_e = units._me
+    e = units._e
+
+    # Convert energy from eV to J
+    E_j = energy * e
+
+    # total energy (rest + kinetic)
+    E_total = E_j + m_e * c**2
+
+    # momentum p = sqrt(E_total^2 - (m c^2)^2) / c
+    p = np.sqrt(E_total**2 - (m_e * c**2) ** 2) / c
+
+    # wavelength = h / p (in meters), convert to Å
+    wavelength_m = h / p
+    return float(wavelength_m)
