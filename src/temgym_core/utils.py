@@ -175,7 +175,10 @@ def concentric_rings(
 
 
 def random_coords(num: int) -> np.ndarray:
-    """Draw uniformly random points within a unit-radius disc.
+    """
+    Draw uniformly random points within a unit-radius disc.
+
+    Guarantees that at least one coordinate will be returned.
 
     Parameters
     ----------
@@ -187,13 +190,16 @@ def random_coords(num: int) -> np.ndarray:
     yx : numpy.ndarray, shape (N, 2), float64
         Coordinates (y, x) in [-1, 1] within the unit disc.
     """
-    yx = np.random.uniform(
-        -1,
-        1,
-        size=(int(num * 1.28), 2),  # 4 / np.pi
-    )
-    radii = np.sqrt((yx**2).sum(axis=1))
-    mask = radii < 1
+    while True:
+        yx = np.random.uniform(
+            -1,
+            1,
+            size=(max(1, int(num * 1.28)), 2),  # 4 / np.pi
+        )
+        radii = np.sqrt((yx**2).sum(axis=1))
+        mask = radii < 1
+        if mask.sum() > 0:
+            break
     yx = yx[mask, :]
     return yx
 
