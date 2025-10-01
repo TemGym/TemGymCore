@@ -2,7 +2,7 @@ from typing import List, Literal, Any, Sequence
 from typing_extensions import get_type_hints
 import dataclasses
 
-import jax
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 from jax_dataclasses._dataclasses import (
     FieldInfo,
     JDC_STATIC_MARKER,

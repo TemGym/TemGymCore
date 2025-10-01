@@ -1,3 +1,4 @@
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax.numpy as jnp
 import numpy as np
 from temgym_core.transfer import transfer_rays, transfer_rays_pt_src, accumulate_matrices

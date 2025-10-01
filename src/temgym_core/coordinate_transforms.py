@@ -1,3 +1,4 @@
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax.numpy as jnp
 import jax.lax as lax
 from . import Degrees, Radians, ShapeYX, CoordsXY, ScaleYX

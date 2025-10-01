@@ -1,4 +1,5 @@
 from typing import NamedTuple, Dict
+import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax_dataclasses as jdc
 import jax.numpy as jnp
 
