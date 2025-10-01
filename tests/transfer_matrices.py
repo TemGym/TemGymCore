@@ -19,6 +19,36 @@ def imaging_matrix(M, f, xp=sp):
                          dtype=jnp.float64)
 
 
+def imaging_matrix_5x5(M, f, xp=sp):
+    """
+    5x5 imaging matrix acting on [x, y, theta_x, theta_y, 1]^T.
+    """
+    if xp == sp:
+        return xp.Matrix([
+            [M, 0, 0,   0,   0],
+            [0, M, 0,   0,   0],
+            [-1/f, 0, 1/M, 0, 0],
+            [0, -1/f, 0, 1/M, 0],
+            [0, 0, 0,   0,   1],
+        ])
+    elif xp == np:
+        return np.array([
+            [M, 0.0, 0.0, 0.0, 0.0],
+            [0.0, M, 0.0, 0.0, 0.0],
+            [-1.0/f, 0.0, 1.0/M, 0.0, 0.0],
+            [0.0, -1.0/f, 0.0, 1.0/M, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+    elif xp == jnp:
+        return jnp.array([
+            [M, 0.0, 0.0, 0.0, 0.0],
+            [0.0, M, 0.0, 0.0, 0.0],
+            [-1.0/f, 0.0, 1.0/M, 0.0, 0.0],
+            [0.0, -1.0/f, 0.0, 1.0/M, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=jnp.float64)
+
+
 def scale_matrix(M, xp=sp):
     """
     3x3 scaling matrix with last column [0,0,1].
@@ -31,6 +61,36 @@ def scale_matrix(M, xp=sp):
     elif xp == jnp:
         return jnp.array([[M, 0, 0], [0, 1.0 / M, 0], [0, 0, 1.0]],
                          dtype=jnp.float64)
+
+
+def scale_matrix_5x5(M, xp=sp):
+    """
+    5x5 scaling matrix for [x,y,theta_x,theta_y,1]^T, scaling x,y by M and angles by 1/M.
+    """
+    if xp == sp:
+        return xp.Matrix([
+            [M, 0, 0,   0,   0],
+            [0, M, 0,   0,   0],
+            [0, 0, 1/M, 0,   0],
+            [0, 0, 0, 1/M,   0],
+            [0, 0, 0,   0,   1],
+        ])
+    elif xp == np:
+        return np.array([
+            [M, 0.0, 0.0, 0.0, 0.0],
+            [0.0, M, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0/M, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0/M, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+    elif xp == jnp:
+        return jnp.array([
+            [M, 0.0, 0.0, 0.0, 0.0],
+            [0.0, M, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0/M, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0/M, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=jnp.float64)
 
 
 def propagation_matrix(z, xp=sp):
@@ -47,6 +107,37 @@ def propagation_matrix(z, xp=sp):
                          dtype=jnp.float64)
 
 
+def propagation_matrix_5x5(z, xp=sp):
+    """
+    5x5 free space propagation for [x,y,theta_x,theta_y,1]^T.
+    x' = x + z*theta_x; y' = y + z*theta_y.
+    """
+    if xp == sp:
+        return xp.Matrix([
+            [1, 0, z, 0, 0],
+            [0, 1, 0, z, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 1],
+        ])
+    elif xp == np:
+        return np.array([
+            [1.0, 0.0, z,   0.0, 0.0],
+            [0.0, 1.0, 0.0, z,   0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+    elif xp == jnp:
+        return jnp.array([
+            [1.0, 0.0, z,   0.0, 0.0],
+            [0.0, 1.0, 0.0, z,   0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=jnp.float64)
+
+
 def lens_matrix(f, xp=sp):
     """
     Returns the 3x3 ABCD matrix for a thin lens with focal length f.
@@ -61,20 +152,83 @@ def lens_matrix(f, xp=sp):
                          dtype=jnp.float64)
 
 
+def lens_matrix_5x5(f, xp=sp):
+    """
+    5x5 thin lens (same focal length for x and y).
+    theta_x' = theta_x - x/f; theta_y' = theta_y - y/f.
+    """
+    if xp == sp:
+        return xp.Matrix([
+            [1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0],
+            [-1/f, 0, 1, 0, 0],
+            [0, -1/f, 0, 1, 0],
+            [0, 0, 0, 0, 1],
+        ])
+    elif xp == np:
+        return np.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [-1.0/f, 0.0, 1.0, 0.0, 0.0],
+            [0.0, -1.0/f, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+    elif xp == jnp:
+        return jnp.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [-1.0/f, 0.0, 1.0, 0.0, 0.0],
+            [0.0, -1.0/f, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=jnp.float64)
+
+
 def biprism_matrix(biprism_deflection, xp=sp):
     """
-    Returns the 3x3 ABCD matrix for a thin lens with focal length f.
+    Returns the 3x3 matrix adding constant deflection to angle term.
     """
     if xp == sp:
         return xp.Matrix([[1.0, 0.0, 0.0],
                           [0.0, 1.0, biprism_deflection],
                           [0.0, 0.0, 1.0]])
     elif xp == np:
-        return np.array([[1.0, 0.0, 0.0], [0.0, 1.0, biprism_deflection], [0.0, 0.0, 1.0]],
-                        dtype=np.float64)
+        return np.array([[1.0, 0.0, 0.0],
+                         [0.0, 1.0, biprism_deflection],
+                         [0.0, 0.0, 1.0]], dtype=np.float64)
     elif xp == jnp:
-        return jnp.array([[1.0, 0.0, 0.0], [0.0, 1.0, biprism_deflection], [0.0, 0.0, 1.0]],
-                         dtype=jnp.float64)
+        return jnp.array([[1.0, 0.0, 0.0],
+                          [0.0, 1.0, biprism_deflection],
+                          [0.0, 0.0, 1.0]], dtype=jnp.float64)
+
+
+def biprism_matrix_5x5(biprism_deflection, xp=sp):
+    """
+    5x5 version adding same constant deflection to both theta_x and theta_y.
+    """
+    if xp == sp:
+        return xp.Matrix([
+            [1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0],
+            [0, 0, 1, 0, biprism_deflection],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 1],
+        ])
+    elif xp == np:
+        return np.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, biprism_deflection],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+    elif xp == jnp:
+        return jnp.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, biprism_deflection],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=jnp.float64)
 
 
 def propagation_refractive_index(z, n, xp=sp):

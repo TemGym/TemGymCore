@@ -1,5 +1,4 @@
-from typing import NamedTuple
-
+from typing import NamedTuple, Dict
 import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax_dataclasses as jdc
 import jax.numpy as jnp
@@ -8,7 +7,7 @@ from .ray import Ray
 from .grid import Grid
 from . import Degrees, CoordsXY, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
-
+from .aberrations import grad_W_krivanek, W_krivanek
 
 class Component(HasParamsMixin):
     """Base component that transforms a ray without side effects.
@@ -172,6 +171,47 @@ class Lens(Component):
 
         return Ray(
             x=x, y=y, dx=new_dx, dy=new_dy, _one=one, pathlength=pathlength, z=ray.z
+        )
+
+
+@jdc.pytree_dataclass
+class AberratedLensKrivanek(Lens):
+    """Thin lens with Krivanek aberrations.
+
+    Parameters
+    ----------
+    z : float
+        Axial position in metres.
+    focal_length : float
+        Focal length in metres.
+    aber_coeffs : jnp.ndarray
+
+    """
+    coeffs: Dict
+
+    def __call__(self, ray: Ray):
+        f = self.focal_length
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        coeffs = self.coeffs
+
+        # Paraxial thin lens
+        ideal_dx = -x / f + dx
+        ideal_dy = -y / f + dy
+
+        alpha = jnp.hypot(ideal_dx, ideal_dy)    # radians
+        phi = jnp.arctan2(ideal_dy, ideal_dx)    # radians
+
+        dWx, dWy = grad_W_krivanek(ideal_dx, ideal_dy, coeffs)
+        dux, duy = -dWx / f, -dWy / f
+
+        aber_dx = ideal_dx + dux
+        aber_dy = ideal_dy + duy
+
+        pathlength = ray.pathlength - (x**2 + y**2) / (2 * f) + W_krivanek(alpha, phi, coeffs) / f
+        one = ray._one * 1.0
+
+        return Ray(
+            x=x, y=y, dx=aber_dx, dy=aber_dy, _one=one, pathlength=pathlength, z=ray.z
         )
 
 
@@ -436,8 +476,8 @@ class Deflector(Component):
     def __call__(self, ray: Ray):
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
         return ray.derive(
-            dx=dx + self.def_x,
-            dy=dy + self.def_y,
+            dx=dx + self.def_x * ray._one,
+            dy=dy + self.def_y * ray._one,
             pathlength=ray.pathlength + dx * x + dy * y,
         )
 
@@ -507,53 +547,13 @@ class Biprism(Component):
     z: float
     offset: float = 0.0
     rotation: Degrees = 0.0
-    deflection: float = 0.0
+    def_x: float = 0.0
+    side: int = 1
 
-    def __call__(
-        self,
-        ray: Ray,
-    ) -> Ray:
-        pos_x, pos_y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-
-        deflection = self.deflection
-        offset = self.offset
-        rot = jnp.deg2rad(self.rotation)
-
-        rays_v = jnp.array([pos_x, pos_y]).T
-
-        biprism_loc_v = jnp.array([offset * jnp.cos(rot), offset * jnp.sin(rot)])
-
-        biprism_v = jnp.array([-jnp.sin(rot), jnp.cos(rot)])
-        biprism_v /= jnp.linalg.norm(biprism_v)
-
-        rays_v_centred = rays_v - biprism_loc_v
-
-        dot_product = jnp.dot(rays_v_centred, biprism_v) / jnp.dot(biprism_v, biprism_v)
-        projection = jnp.outer(dot_product, biprism_v)
-
-        rejection = rays_v_centred - projection
-        rejection = rejection / jnp.linalg.norm(rejection, axis=1, keepdims=True)
-
-        # If the ray position is located at [zero, zero], rejection_norm returns a nan,
-        # so we convert it to a zero, zero.
-        rejection = jnp.nan_to_num(rejection)
-
-        xdeflection_mag = rejection[:, 0]
-        ydeflection_mag = rejection[:, 1]
-
-        new_dx = (dx + xdeflection_mag * deflection).squeeze()
-        new_dy = (dy + ydeflection_mag * deflection).squeeze()
-
-        pathlength = ray.pathlength + (
-            xdeflection_mag * deflection * pos_x + ydeflection_mag * deflection * pos_y
-        )
-
-        return Ray(
-            x=pos_x.squeeze(),
-            y=pos_y.squeeze(),
-            dx=new_dx,
-            dy=new_dy,
-            _one=ray._one,
-            pathlength=pathlength,
-            z=ray.z,
+    def __call__(self, ray: Ray):
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        return ray.derive(
+            dx=dx + self.def_x * ray._one * jnp.sign(ray.x),
+            dy=dy,
+            pathlength=ray.pathlength + dx * x + dy * y,
         )

@@ -4,7 +4,9 @@ import math
 import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 from jax import jacobian
 import jax.numpy as jnp
-
+from jax import value_and_grad
+from temgym_core.run import run_to_end
+from temgym_core.components import Detector, Deflector, Lens
 from temgym_core.ray import Ray
 from temgym_core.propagator import FreeSpaceParaxial, FreeSpaceDirCosine
 from temgym_core.utils import custom_jacobian_matrix
@@ -35,6 +37,24 @@ def test_propagate_paraxial(runs):
     np.testing.assert_allclose(new.dy, dy0, atol=1e-6)
     np.testing.assert_allclose(new.z, z0 + d, atol=1e-6)
     np.testing.assert_allclose(new.pathlength, pl0 + d, atol=1e-6)
+
+
+def test_propagate_gradient_no_ray_one():
+    # This test ensures that tracing/differentiation through a propagation to
+    # a detector does not introduce an unwanted dependency on ray._one.
+
+    # We are checking that gradient of new_ray.z with respect to ray._one is zero.
+    # This is important because ray._one is a constant carrier for adding offsets
+    # into the system, and should not give gradients with respect to propagation distance.
+    def z_deriv_wrapper(ray_one):
+        ray = Ray(x=0.5, y=-0.5, dx=0.1, dy=-0.2, z=0.0, pathlength=0.0, _one=ray_one)
+        new_ray = FreeSpaceParaxial().propagate(ray, 0.1)
+        return new_ray.z
+
+    val, grad = value_and_grad(z_deriv_wrapper)(1.0)
+
+    # gradient should be exactly zero (no dependency on ray._one)
+    np.testing.assert_allclose(grad, 0.0, atol=1e-12)
 
 
 def test_propagate_dir_cosine():

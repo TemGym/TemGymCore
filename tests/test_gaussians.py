@@ -6,10 +6,12 @@ from temgym_core.gaussian import (
     gaussian_beam,
     Qinv_ABCD,
     propagate_misaligned_gaussian_jax_scan,
-    make_gaussian_image
+    make_gaussian_image,
+    evaluate_gaussian_input_image,
+    GaussianRay,
+    decompose_Q_inv
 )
 
-from temgym_core.gaussian import GaussianRay
 from temgym_core.source import ParallelBeam
 from temgym_core.components import Detector, Lens
 
@@ -25,6 +27,7 @@ import jax; jax.config.update("jax_enable_x64", True)  # noqa: E702
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+jax.config.update("jax_enable_x64", True)
 
 def plot_cross_sections(
     x,
@@ -132,6 +135,35 @@ def plot_overview(field1, field2, det_size_x, det_size_y,
     return fig, axs
 
 
+def _make_single_gaussian_ray_at(x0, y0, dx, dy, wavelength=500e-9, wo=1e-4):
+    xs = jnp.array([x0])
+    ys = jnp.array([y0])
+    dxs = jnp.array([dx])
+    dys = jnp.array([dy])
+    zs = jnp.array([0.0])
+    pathlengths = jnp.array([0.0])
+    ones = jnp.array([1.0])
+    amplitudes = jnp.array([1.0])
+    radii_of_curv = jnp.array([[jnp.inf, jnp.inf]])
+    theta = jnp.array([0.0])
+    wavelengths = jnp.array([wavelength])
+    waist_xy = jnp.array([[wo, wo]])
+    return GaussianRay(
+        x=xs,
+        y=ys,
+        dx=dxs,
+        dy=dys,
+        z=zs,
+        pathlength=pathlengths,
+        _one=ones,
+        amplitude=amplitudes,
+        waist_xy=waist_xy,
+        radii_of_curv=radii_of_curv,
+        wavelength=wavelengths,
+        theta=theta,
+    )
+
+
 def test_zR_wz_R_basic():
     w0 = 1e-3  # 1 mm
     wl = 500e-9  # 500 nm
@@ -167,7 +199,7 @@ def test_q_inv_focus_and_away():
     qz = q_inv(float(zr), w0, wl)
     R_at_zr = float(R(float(zr), zr))
     w_at_zr = float(w_z(w0, float(zr), zr))
-    expected = (1.0 / R_at_zr) - 1j * wl / (np.pi * (w_at_zr ** 2))
+    expected = -(1.0 / R_at_zr) + 1j * wl / (np.pi * (w_at_zr ** 2))
     assert np.allclose(np.array(qz), np.array(expected), rtol=1e-12, atol=0.0)
 
 
@@ -210,6 +242,7 @@ def test_propagate_free_space_matches_expected_formula():
     C = jnp.array([np.zeros((2, 2))])
     D = jnp.array([np.eye(2)])
     e = jnp.array([[0.0, 0.0]])
+    f = jnp.array([[0.0, 0.0]])
 
     # Observation points r2: simple small grid (N,2)
     xs = jnp.array([-1e-4, 0.0, 2e-4])
@@ -220,12 +253,14 @@ def test_propagate_free_space_matches_expected_formula():
     r1m = jnp.array([[0.0, 0.0]])
     theta1m = jnp.array([[0.0, 0.0]])
 
-    amp = jnp.array([1.0 + 0j])
+    amp = jnp.array([1.0])
+    phase_offset = jnp.array([0.0])
+
     kval = jnp.array([k])
 
     # Compute field with implementation
     field = propagate_misaligned_gaussian_jax_scan(
-        amp, Q1_inv, A, B, C, D, e, r2, r1m, theta1m, kval
+        amp, phase_offset, Q1_inv, A, B, C, D, e, f, r1m, theta1m, kval, r2
     )  # (N,)
 
     # Expected: pref * exp(i*k/2 * r^T Q2_inv r)
@@ -615,18 +650,18 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         [unwrap_phase(analytic_phase_cross_section), unwrap_phase(fresnel_phase_cross_section)],
     )
 
-    # plt.savefig("test_two_beam_interference_cross_section.png")
-    # # Overview plots using helper
-    # fig, _ = plot_overview(
-    #     analytic_gauss_image,
-    #     fresnel_gauss_image,
-    #     pixel_size[0]*shape[0],
-    #     pixel_size[1]*shape[1],
-    #     suffix="",
-    #     label1="Analytic Gaussian",
-    #     label2="Fresnel Gaussian"
-    # )
-    # plt.savefig("test_two_beam_interference_overview.png")
+    plt.savefig("test_two_beam_interference_cross_section.png")
+    # Overview plots using helper
+    fig, _ = plot_overview(
+        analytic_gauss_image,
+        fresnel_gauss_image,
+        pixel_size[0]*shape[0],
+        pixel_size[1]*shape[1],
+        suffix="",
+        label1="Analytic Gaussian",
+        label2="Fresnel Gaussian"
+    )
+    plt.savefig("test_two_beam_interference_overview.png")
 
     # Assertions remain unchanged
     np.testing.assert_allclose(
@@ -644,3 +679,319 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         atol=2,
         err_msg="Phase mismatch between analytic and fresnel",
     )
+
+
+def test_gaussian_propagates_to_correct_quadrant():
+    # Setup detector
+    z_prop = 1.0
+    detector = Detector(z=z_prop, pixel_size=(1e-4, 1e-4), shape=(256, 256))
+    det_edge_x, det_edge_y = detector.coords_1d
+    Y, X = np.meshgrid(det_edge_y, det_edge_x, indexing="ij")
+
+    # Use the max of the zero-tilt (central) beam to define the reference center
+    central_ray = _make_single_gaussian_ray_at(0.0, 0.0, 0.0, 0.0)
+    central_img = evaluate_gaussian_input_image(central_ray, detector)
+    cy, cx = np.unravel_index(np.argmax(np.abs(central_img)), central_img.shape)
+    x_center = X[cy, cx]
+    y_center = Y[cy, cx]
+
+    # Small helper for robust sign with tolerance
+    def sign_with_tol(v, eps=1e-12):
+        if v > eps:
+            return 1
+        if v < -eps:
+            return -1
+        return 0
+
+    # Test four tilt combinations: (++), (+-), (-+), (--)
+    tilt_mag = 1e-3
+    combos = [
+        (+tilt_mag, +tilt_mag),  # top-right
+        (+tilt_mag, -tilt_mag),  # bottom-right
+        (-tilt_mag, +tilt_mag),  # top-left
+        (-tilt_mag, -tilt_mag),  # bottom-left
+    ]
+
+    for dx, dy in combos:
+        ray = _make_single_gaussian_ray_at(0.0, 0.0, dx, dy)
+        output_image = make_gaussian_image(ray, [detector])
+        my, mx = np.unravel_index(np.argmax(np.abs(output_image)), output_image.shape)
+        x_max = X[my, mx]
+        y_max = Y[my, mx]
+
+        # Compare quadrant via sign of (max - center) in physical coordinates
+        sx = sign_with_tol(float(x_max - x_center))
+        sy = sign_with_tol(float(y_max - y_center))
+        exp_sx = sign_with_tol(dx)
+        exp_sy = sign_with_tol(dy)
+
+        assert sx == exp_sx, f"dx={dx:+} expected {'right' if exp_sx > 0 else 'left'} shift; got x={x_max:.3e} (center {x_center:.3e})"  # noqa
+        assert sy == exp_sy, f"dy={dy:+} expected {'top' if exp_sy > 0 else 'bottom'} shift; got y={y_max:.3e} (center {y_center:.3e})"  # noqa
+
+
+def _principal_angle(phi):
+    return (phi + np.pi) % (2 * np.pi) - np.pi
+
+
+def test_input_gaussian_phase_ramp_center_and_slope():
+    # Detector and on-grid reference point (ensures exact sampling at r1m)
+    detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
+    det_x, det_y = detector.coords_1d
+    ix = len(det_x) // 2
+    iy = len(det_y) // 2
+    r1m = (float(det_x[ix]), float(det_y[iy]))  # on-grid
+
+    wavelength = 500e-9
+    k = 2 * np.pi / wavelength
+    delta = 8
+
+    cases = [
+        # X-only tilt
+        dict(dx=2e-4, dy=0.0, rtol_x=1e-2, rtol_y=None, atol_y=1e-3),
+        # Y-only tilt
+        dict(dx=0.0, dy=-1e-4, rtol_x=None, atol_x=1e-3, rtol_y=1e-2),
+        # Combined tilt
+        dict(dx=1.5e-4, dy=-1.0e-4, rtol_x=2e-2, rtol_y=2e-2),
+    ]
+
+    for case in cases:
+        dx = case["dx"]
+        dy = case["dy"]
+        ray = _make_single_gaussian_ray_at(r1m[0], r1m[1], dx, dy, wavelength=wavelength, wo=1e-4)
+        img = evaluate_gaussian_input_image(ray, detector)
+
+        # Phase at r1m should be ~0 (mod 2π)
+        phi0 = np.angle(img[iy, ix])
+        assert abs(_principal_angle(phi0)) < 1e-6
+
+        # Local slopes from 1D unwrapped lines through r1m
+        row_phase = np.unwrap(np.angle(img[iy, :]))
+        row_phase -= row_phase[ix]
+        slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (det_x[ix + delta] - det_x[ix - delta])
+
+        col_phase = np.unwrap(np.angle(img[:, ix]))
+        col_phase -= col_phase[iy]
+        slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (det_y[iy + delta] - det_y[iy - delta])
+
+        # Check X slope
+        if case.get("rtol_x") is not None:
+            np.testing.assert_allclose(slope_x_est, k * dx, rtol=case["rtol_x"], atol=0.0)
+        else:
+            np.testing.assert_allclose(slope_x_est, 0.0, atol=case["atol_x"])
+
+        # Check Y slope
+        if case.get("rtol_y") is not None:
+            np.testing.assert_allclose(slope_y_est, k * dy, rtol=case["rtol_y"], atol=0.0)
+        else:
+            np.testing.assert_allclose(slope_y_est, 0.0, atol=case["atol_y"])
+
+def test_random_gaussian_input_slope_and_angle_against_fresnel():
+    execution_number = 5
+    for _ in range(execution_number):
+        z_prop = 1
+        rng = np.random.default_rng()
+        r1m = jnp.array(rng.uniform(-1e-3, 1e-3, size=2))  # m, random in [0, 1e-5]
+        theta1m = jnp.array(rng.uniform(-1e-4, 1e-4, size=2))  # rad, random in [-2e-6, 2e-6]
+        input_ray = GaussianRay(x=r1m[0], y=r1m[1], dx=theta1m[0], dy=theta1m[1], z=0.0, pathlength=0.0,
+                                _one=1.0, amplitude=1.0, waist_xy=jnp.array([1e-4, 1e-4]),
+                                radii_of_curv=jnp.array([jnp.inf, jnp.inf]),
+                                wavelength=500e-9, theta=0.0)
+
+        detector = Detector(z=z_prop, pixel_size=(1e-5, 1e-5), shape=(1024, 1024))
+        detector_width = detector.pixel_size[0] * detector.shape[0]
+        input_image = evaluate_gaussian_input_image(input_ray, detector)
+
+        model = [detector]
+        output_image = make_gaussian_image(input_ray, model)
+
+        fresnel_image = FresnelPropagator(input_image, detector_width, wavelength=input_ray.wavelength, z=z_prop)  # noqa
+
+        max_idx_fresnel = jnp.argmax(jnp.abs(fresnel_image))
+        max_idx_output = jnp.argmax(jnp.abs(output_image))
+
+        np.testing.assert_allclose(
+            max_idx_fresnel,
+            max_idx_output,
+            atol=3,
+            err_msg="Maximum pixel index mismatch between Fresnel and analytic Gaussian"
+        )
+
+
+def test_astigmatic_rotated_gaussian_beam():
+    # Helper to get principal-axis angle (major axis) from intensity image
+    def principal_axis_angle(field, X, Y):
+        I = np.abs(field) ** 2  # noqa
+        wsum = np.sum(I) + 1e-30
+        xbar = np.sum(I * X) / wsum
+        ybar = np.sum(I * Y) / wsum
+        Xc = X - xbar
+        Yc = Y - ybar
+        Cxx = np.sum(I * Xc * Xc) / wsum
+        Cyy = np.sum(I * Yc * Yc) / wsum
+        Cxy = np.sum(I * Xc * Yc) / wsum
+        C = np.array([[Cxx, Cxy], [Cxy, Cyy]])
+        vals, vecs = np.linalg.eigh(C)
+        v = vecs[:, np.argmax(vals)]  # major axis
+        ang = np.arctan2(v[1], v[0])
+        # Map to [-pi/2, pi/2) to remove 180° ambiguity
+        return (ang + np.pi / 2) % np.pi - np.pi / 2
+
+    def angle_diff(a, b):
+        return np.arctan2(np.sin(a - b), np.cos(a - b))
+
+    # Detector and coordinate grids
+    detector = Detector(z=0.0, pixel_size=(1e-5, 1e-5), shape=(512, 512))
+    det_x, det_y = detector.coords_1d
+    Y, X = np.meshgrid(det_y, det_x, indexing="ij")
+
+    # Elliptical (astigmatic) beam: major axis along local x' (w_x > w_y)
+    waist_xy = jnp.array([2e-4, 1e-4])
+
+    # Test several rotations (radians)
+    thetas = np.array([np.pi / 3, np.pi / 6, 0.0, -np.pi / 6, -np.pi / 3, -np.pi / 2 + 0.1])
+    tol = 0.1  # ~5.7 degrees
+
+    for theta in thetas:
+        rays = GaussianRay(
+            x=0.0,
+            y=0.0,
+            dx=0.0,
+            dy=0.0,
+            z=0.0,
+            pathlength=0.0,
+            _one=1.0,
+            amplitude=1.0,
+            waist_xy=waist_xy,
+            radii_of_curv=jnp.array([jnp.inf, jnp.inf]),
+            wavelength=500e-9,
+            theta=theta,
+        )
+        img = evaluate_gaussian_input_image(rays, detector)
+        phi = principal_axis_angle(img, X, Y)
+
+        # plt.figure()
+        # plt.imshow(np.abs(img), extent=(det_x[0], det_x[-1], det_y[0], det_y[-1]))
+        # plt.colorbar(label="|E|")
+        # plt.title(f"Astigmatic Gaussian Input Beam (theta={theta:.2f} rad)")
+        # plt.xlabel("x (m)")
+        # plt.ylabel("y (m)")
+
+        # plt.savefig(f"test_astigmatic_rotated_gaussian_beam_theta_{theta:.2f}_rad.png")
+        # plt.close()
+
+        # Major-axis angle should match theta (up to pi periodicity handled in principal_axis_angle)
+        assert abs(angle_diff(phi, float(theta))) < tol, f"Estimated angle {phi:.3f} rad != theta {theta:.3f} rad"
+
+
+def _angle_diff_mod_pi(a, b):
+    """Smallest angular difference between a and b, modulo pi (axis direction)."""
+    d = np.arctan2(np.sin(a - b), np.cos(a - b))  # wrap to [-pi, pi]
+    # Equivalent directions under 180° flip
+    return min(abs(d), abs(d + np.pi), abs(d - np.pi))
+
+
+def test_decompose_q_inv_batched():
+    wl = 1.3e-6
+    params = [
+        # (w1, w2, R1, R2, theta)
+        (1e-5, 3e-5, np.inf, np.inf, np.pi/6),
+        (1.2e-4, 5e-5, 0.0001, 0.1, -np.pi/4),
+        (1e-4, 3e-4, 0.01, np.inf, -np.pi/3),
+    ]
+
+    for i, (w1, w2, R1, R2, th) in enumerate(params):
+        rays_vec = GaussianRay(
+            x=0.0,
+            y=0.0,
+            dx=0.0,
+            dy=0.0,
+            z=0.0,
+            pathlength=0.0,
+            _one=1.0,
+            amplitude=1.0,
+            waist_xy=jnp.array([[w1, w2]]),
+            radii_of_curv=jnp.array([[R1, R2]]),
+            wavelength=wl,
+            theta=th,
+        ).to_vector()
+
+        Qs = rays_vec.Q_inv
+
+        detector = Detector(z=0.0, pixel_size=(1e-6, 1e-6), shape=(512, 512))
+        original_img = evaluate_gaussian_input_image(rays_vec, detector)
+
+        ow1, ow2, oR1, oR2, otheta = decompose_Q_inv(Qs, wl)
+
+        # Check that re-constructed parameters reproduce the original image
+        recon_rays = GaussianRay(
+            x=0.0,
+            y=0.0,
+            dx=0.0,
+            dy=0.0,
+            z=0.0,
+            pathlength=0.0,
+            _one=1.0,
+            amplitude=1.0,
+            waist_xy=jnp.array([[ow1[0], ow2[0]]]),
+            radii_of_curv=jnp.array([[oR1[0], oR2[0]]]),
+            wavelength=wl,
+            theta=otheta,
+        ).to_vector()
+        recon_img = evaluate_gaussian_input_image(recon_rays, detector)
+
+        np.testing.assert_allclose(
+            np.abs(original_img),
+            np.abs(recon_img),
+            rtol=1e-9,
+        )
+
+        # Amplitude and phase comparison (original vs reconstructed)
+        orig_amp = np.abs(original_img)
+        recon_amp = np.abs(recon_img)
+
+        # Unwrapped phase (optional for clearer visualization)
+        orig_phase = np.angle(original_img)
+        recon_phase = np.angle(recon_img)
+
+        extent = [
+            detector.coords_1d[0][0],
+            detector.coords_1d[0][-1],
+            detector.coords_1d[1][0],
+            detector.coords_1d[1][-1],
+        ]
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        im0 = axes[0, 0].imshow(orig_amp, cmap="viridis", extent=extent)
+        axes[0, 0].set_title("Original Amplitude")
+        fig.colorbar(im0, ax=axes[0, 0], fraction=0.046, pad=0.04)
+
+        im1 = axes[0, 1].imshow(recon_amp, cmap="viridis", extent=extent)
+        axes[0, 1].set_title("Reconstructed Amplitude")
+        fig.colorbar(im1, ax=axes[0, 1], fraction=0.046, pad=0.04)
+
+        im2 = axes[1, 0].imshow(orig_phase, cmap="twilight", extent=extent)
+        axes[1, 0].set_title("Original Phase")
+        fig.colorbar(im2, ax=axes[1, 0], fraction=0.046, pad=0.04)
+
+        im3 = axes[1, 1].imshow(recon_phase, cmap="twilight", extent=extent)
+        axes[1, 1].set_title("Reconstructed Phase")
+        fig.colorbar(im3, ax=axes[1, 1], fraction=0.046, pad=0.04)
+
+        for ax_ in axes.ravel():
+            ax_.set_xlabel("x (m)")
+            ax_.set_ylabel("y (m)")
+
+        plt.tight_layout()
+        plt.savefig(f"test_decompose_q_inv_batched_case_{i}_comparison.png")
+
+        # np.testing.assert_allclose(np.array(ow1[i]), w1, rtol=1e-9, atol=0.0)
+        # np.testing.assert_allclose(np.array(ow2[i]), w2, rtol=1e-9, atol=0.0)
+        # if np.isinf(R1):
+        #     assert np.isinf(oR1[i]) and oR1[i] > 0
+        # else:
+        #     np.testing.assert_allclose(np.array(oR1[i]), R1, rtol=1e-9, atol=0.0)
+        # if np.isinf(R2):
+        #     assert np.isinf(oR2[i]) and oR2[i] > 0
+        # else:
+        #     np.testing.assert_allclose(np.array(oR2[i]), R2, rtol=1e-9, atol=0.0)
+        # assert _angle_diff_mod_pi(float(otheta[i]), th) < 1e-9

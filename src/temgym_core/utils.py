@@ -297,7 +297,7 @@ def fibonacci_spiral(
     # Fibonacci spiral sampling in a unit circle
     # Alpha parameter determines smoothness of boundary - default of 2 means a smooth boundary
     # 0 for a rough boundary.
-    # Returns a tuple of y, x coordinates of the samples
+    # Returns a tuple of x, y coordinates of the samples
 
     ga = np.pi * (3.0 - np.sqrt(5.0))
 
@@ -312,7 +312,8 @@ def fibonacci_spiral(
     )
     rr[0] = 0.
     phi = ii * ga
-    y = rr * np.sin(phi)
-    x = rr * np.cos(phi)
 
-    return y, x
+    x = rr * np.cos(phi)
+    y = rr * np.sin(phi)
+
+    return x, y
