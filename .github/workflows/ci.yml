@@ -63,5 +63,5 @@ jobs:
           uv pip install --system .
           uv pip install --system -r test_requirements.txt
           uv pip install --system ..
-          uv pip install pytest
+          uv pip install --system pytest
           pytest tests/
