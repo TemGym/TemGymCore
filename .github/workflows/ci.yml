@@ -56,7 +56,7 @@ jobs:
         with:
             ssh-private-key: ${{ secrets.MC_DEPLOY_KEY }}
       - name: checkout mc
-        run: git clone git@github.com:TemGym/MicroscopeCalibration.git
+        run: git clone -b dev2 --single-branch git@github.com:uellue/Microscope-Calibration.git
       - name: install mc + test
         working-directory: ./MicroscopeCalibration
         run: |
