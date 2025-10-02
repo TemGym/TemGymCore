@@ -58,8 +58,9 @@ jobs:
       - name: checkout mc
         run: git clone -b dev2 --single-branch git@github.com:uellue/Microscope-Calibration.git
       - name: install mc + test
-        working-directory: ./MicroscopeCalibration
+        working-directory: ./Microscope-Calibration
         run: |
           uv pip install --system .
           uv pip install --system -r test_requirements.txt
+          uv pip install --system ..
           pytest tests/
