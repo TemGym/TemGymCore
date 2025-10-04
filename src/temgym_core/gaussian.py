@@ -376,7 +376,7 @@ def evaluate_gaussian_input_image(gaussian_rays, grid, batch_size=128):
     central_rays = rays.to_ray()
     amplitudes = rays.amplitude
 
-    n_rays = amplitudes.shape[0]
+    n_rays = rays.x.shape[0]
     Q1_invs = rays.Q_inv  # Should be of shape n x 2 x 2
     r1 = grid.coords
     r1ms = jnp.stack([central_rays.x, central_rays.y], axis=-1)

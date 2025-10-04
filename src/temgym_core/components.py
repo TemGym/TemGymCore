@@ -4,7 +4,7 @@ import jax.numpy as jnp
 
 from .ray import Ray
 from .grid import Grid
-from . import Degrees, CoordsXY, ScaleYX, ShapeYX
+from . import Degrees, CoordsXY, Radians, ScaleYX, ShapeYX
 from .tree_utils import HasParamsMixin
 from .aberrations import grad_W_krivanek, W_krivanek
 
@@ -482,44 +482,39 @@ class Deflector(Component):
 
 
 @jdc.pytree_dataclass
-class Rotator(Component):
-    """Rotate positions and slopes by a given angle around the optical axis.
-
-    Parameters
-    ----------
-    z : float
-        Axial position in metres.
-    angle : Degrees
-        Rotation angle in degrees.
-
-    Notes
-    -----
-    Applies the same rotation to (x, y) and (dx, dy).
-    """
-    z: float
-    angle: Degrees
+class LensWithRotation(Lens):
+    k: float = 0.0
 
     def __call__(self, ray: Ray):
-        angle = jnp.deg2rad(self.angle)
+        # rotation angle depends on coupling k and focal length
+        theta = self.k / self.focal_length
 
-        # Rotate the ray's position
-        new_x = ray.x * jnp.cos(angle) - ray.y * jnp.sin(angle)
-        new_y = ray.x * jnp.sin(angle) + ray.y * jnp.cos(angle)
-        # Rotate the ray's slopes
-        new_dx = ray.dx * jnp.cos(angle) - ray.dy * jnp.sin(angle)
-        new_dy = ray.dx * jnp.sin(angle) + ray.dy * jnp.cos(angle)
+        c = jnp.cos(theta)
+        s = jnp.sin(theta)
 
-        pathlength = ray.pathlength
+        # rotate into lens frame (R^T = R^{-1} for rotation)
+        x = ray.x
+        y = ray.y
+        dx = ray.dx
+        dy = ray.dy
 
-        return Ray(
-            x=new_x,
-            y=new_y,
-            dx=new_dx,
-            dy=new_dy,
-            _one=ray._one,
-            pathlength=pathlength,
-            z=ray.z,
-        )
+        # Apply rotation R^T (inverse rotation) to positions and slopes to go into lens frame
+        x_r = c * x + s * y
+        y_r = -s * x + c * y
+        dx_r = c * dx + s * dy
+        dy_r = -s * dx + c * dy
+
+        # apply thin-lens in rotated frame
+        dx_r_new = dx_r - x_r / self.focal_length
+        dy_r_new = dy_r - y_r / self.focal_length
+
+        # rotate back to original frame using R
+        x_new = c * x_r - s * y_r
+        y_new = s * x_r + c * y_r
+        dx_new = c * dx_r_new - s * dy_r_new
+        dy_new = s * dx_r_new + c * dy_r_new
+
+        return Ray(x=x_new, y=y_new, dx=dx_new, dy=dy_new, _one=ray._one, z=ray.z, pathlength=ray.pathlength)
 
 
 @jdc.pytree_dataclass
