@@ -75,7 +75,7 @@ class Component:
             ray.S,
             const=ray.S.const + dS0,
             lin=ray.S.lin + dS1,
-            quad=ray.S.quad + dS2,
+            quad=ray.S.quad - dS2,
         )
 
         dxy_out = ray.d_xy + jnp.real(dS1)
