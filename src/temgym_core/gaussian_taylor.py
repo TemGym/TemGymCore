@@ -4,6 +4,7 @@ import jax_dataclasses as jdc
 from jax.nn import softplus
 import interpax as interp
 from typing import Sequence, Callable, Any, Generator, Union, NamedTuple
+from temgym_core.aberrations import KrivanekCoeffs, W_krivanek
 from temgym_core.components import Detector
 from temgym_core.gaussian import GaussianRayBeta
 from temgym_core.ray import Ray
@@ -67,7 +68,7 @@ class Component:
         k = ray.k
 
         # ΔS and its derivatives (meters, complex) for a single XY
-        dS0 = self.complex_action(r, k) # complex scalar
+        dS0 = self.complex_action(r, k)  # complex scalar
         dS1 = grad_complex_action(self, r, k)  # complex (2,)
         dS2 = hess_complex_action(self, r, k)  # complex (2,2)
 
@@ -135,6 +136,34 @@ class AberratedLens(Component):
             + self.C_coma_x * (x**3 + x * y**2)
             + self.C_coma_y * (y**3 + y * x**2)
         )
+        return opl
+
+    def transmission(self, xy):
+        return 0.0  # no amplitude change
+
+
+@jdc.pytree_dataclass
+class KrivanekLens(Component):
+    focal_length: float
+    coeffs: KrivanekCoeffs
+
+    def opl_shift(self, xy):
+        """
+        Returns OPD shift (metres) to ADD to the pathlength accumulator.
+        Matches your sign convention (negative for a focusing quadratic).
+        """
+        x, y = xy[0], xy[1]
+        f = self.focal_length
+
+        rho2 = x * x + y * y
+        opl = -0.5 * rho2 / f
+
+        h = jnp.sqrt(rho2)
+        phi = jnp.where(h > 1e-15, jnp.arctan2(y, x), 0.0)
+        alpha = h / f
+        Wk = W_krivanek(alpha, phi, self.coeffs)
+        opl += -Wk
+
         return opl
 
     def transmission(self, xy):
