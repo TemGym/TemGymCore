@@ -396,18 +396,107 @@ class FreeSpaceParaxial(BaseGaussianPropagator):
         M_inv = jnp.linalg.solve(M, I2)
 
         Q_new = Q @ M_inv
-        eta_new = (jnp.swapaxes(M_inv, -1, -2) @ ray.S.lin[..., None])[..., 0]
+        lin_new = (jnp.swapaxes(M_inv, -1, -2) @ ray.S.lin[..., None])[..., 0]
         C_new = ray.C / jnp.sqrt(jnp.linalg.det(M))
 
         return ray.derive(
             x=x_new, y=y_new, z=z_new,
-            S=jdc.replace(ray.S, const=S0_new, lin=eta_new, quad=Q_new),
+            S=jdc.replace(ray.S, const=S0_new, lin=lin_new, quad=Q_new),
             C=C_new,
         )
 
 
 TransformT = Callable[[Any], Callable[[Any], tuple[Any, Any]]]
 
+
+@jdc.pytree_dataclass
+class CollinsPropagator(Component):
+    A: jnp.ndarray | float
+    B: jnp.ndarray | float
+    C: jnp.ndarray | float
+    D: jnp.ndarray | float
+    e: jnp.ndarray = jnp.zeros((2,), dtype=jnp.float64)  # position offset (2,)
+    f: jnp.ndarray = jnp.zeros((2,), dtype=jnp.float64)  # angle/slope offset (2,)
+    advance_z: float = 0.0
+
+    def _as_2x2(self, X):
+        if isinstance(X, (int, float)):
+            return jnp.eye(2, dtype=jnp.complex128) * complex(X)
+        X = jnp.asarray(X)
+        if X.shape == (2, 2):
+            return X.astype(jnp.complex128)
+        raise ValueError("A,B,C,D must be scalars or 2x2 matrices")
+
+    def __call__(self, ray: GaussianRayBeta):
+        # Matrices (complex so Q math is safe)
+        A = self._as_2x2(self.A)
+        B = self._as_2x2(self.B)
+        C = self._as_2x2(self.C)
+        D = self._as_2x2(self.D)
+
+        e = jnp.asarray(self.e, dtype=jnp.float64)  # (2,)
+        f = jnp.asarray(self.f, dtype=jnp.float64)  # (2,)
+
+        # Current center & coefficients
+        x = jnp.array([ray.x, ray.y], dtype=jnp.float64)  # (2,)
+        d = jnp.array([ray.dx, ray.dy], dtype=jnp.float64)  # (2,)
+        Q = ray.S.quad.astype(jnp.complex128)  # (2,2)
+        eta = ray.S.lin.astype(jnp.complex128)  # (2,)
+
+        # Central ray map (affine)
+        x_new = (A @ x.astype(jnp.complex128) + B @ d.astype(jnp.complex128)).real + e
+        d_new = (C @ x.astype(jnp.complex128) + D @ d.astype(jnp.complex128)).real + f
+
+        # Deviations map (same Jacobian as LCT): δx' = (A + BQ) δx etc.
+        M = A + B @ Q
+        M_inv = jnp.linalg.inv(M)
+
+        # Quadratic & linear-in-δx' terms
+        Q_new = (C + D @ Q) @ M_inv  # (2,2)
+        eta_new = (M_inv.T @ eta) + f.astype(jnp.complex128)       # add linear phase ramp from f
+
+        # Constant term picks up the absolute piston from the ramp:  f·x_center
+        S0_new = ray.S.const + jnp.dot(f, x_new).astype(jnp.complex128)
+
+        # Amplitude from the Jacobian
+        C_new = ray.C / jnp.sqrt(jnp.linalg.det(M))
+
+        return ray.derive(
+            x=x_new[0], y=x_new[1],
+            dx=d_new[0], dy=d_new[1],
+            z=self.z + self.advance_z,
+            S=jdc.replace(ray.S, const=S0_new, lin=eta_new, quad=Q_new),
+            C=C_new,
+        )
+
+
+@jdc.pytree_dataclass
+class FourierTransform(CollinsPropagator):
+    f: float
+    direction: int = +1
+
+    def __init__(self, z: float, f: float, direction: int = +1):
+        # A fourier transform in the ABCD transfer matrix formalism
+        # is a coordinate swap with scaling by some distance f
+        # x' = B * θ,
+        # θ' = -C * x
+        # with B = f, C = -1/f
+        # and A = D = 0
+        # The sign of f determines the direction of the transform
+        # (i.e. whether it is a FT or an inverse FT)
+        # The advance_z is set to 2*f*sign to place the output plane
+        # at the back focal plane of the lens.
+        sign = float(direction)
+        super().__init__(
+            z=z,
+            A=0.0,
+            B=sign * f,
+            C=-(sign / f),
+            D=0.0,
+            advance_z=2.0 * sign * f,
+        )
+        self.f = f
+        self.direction = direction
 
 def run_iter(
     ray: Union[GaussianRayBeta, Any],
