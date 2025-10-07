@@ -10,47 +10,88 @@ from .gaussian import GaussianRayBeta, map_reduce
 def evaluate_gaussians_gpu_kernel(
     r_centre: jnp.ndarray,   # (N,2) float64
     C: jnp.ndarray,          # (N,)  complex128  (init_amp)
-    S_const: jnp.ndarray,    # (N,)  float64
-    S_lin: jnp.ndarray,      # (N,2) float64
-    S_quad: jnp.ndarray,     # (N,2,2) float64
+    S_const: jnp.ndarray,    # (N,)  complex128
+    S_lin: jnp.ndarray,      # (N,2) complex128
+    S_quad: jnp.ndarray,     # (N,2,2) complex128
     k: jnp.ndarray,          # (N,)  float64
     r2: jnp.ndarray,         # (P,2) float64 (detector coords)
     *,
     tile_pixels: int = 16,
     tile_beams: int = 16,
-):  # Matches new beam_field; still no grads
+):
+    """
+    Computes sum_b C_b * exp(i * k_b * (S_const_b + (r-r_b)·S_lin_b -
+    0.5*(r-r_b)^T S_quad_b (r-r_b)))
+    with full complex S_* and symmetric cross-term (Qxy + Qyx).
+    """
+
+    # Shapes / sizes
     N = r_centre.shape[0]
     P = r2.shape[0]
 
+    # Dtypes
     r_dtype = jnp.float64
     c_dtype = jnp.complex128
 
-    # dtype sanity (and flatten shapes the way we need)
-    r2_f = r2.astype(r_dtype)
-    r_centref = r_centre.astype(r_dtype)
-    S_constf = S_const.astype(r_dtype).reshape((N,))
-    S_linf = S_lin.astype(r_dtype)
-    S_quadf = S_quad.astype(r_dtype)
-    kf = jnp.asarray(k, r_dtype).reshape((N,))
-    Cc = C.astype(c_dtype)
+    # ---- Host-side casting / preparation ----
+    r2_f = jnp.asarray(r2, r_dtype)
+    r_centref = jnp.asarray(r_centre, r_dtype)
 
+    # Keep complex parts for S_*
+    S_constc = jnp.asarray(S_const, c_dtype).reshape((N,))
+    S_linc = jnp.asarray(S_lin, c_dtype).reshape((N, 2))
+    S_quadc = jnp.asarray(S_quad, c_dtype).reshape((N, 2, 2))
+
+    # Optional (defensive) symmetrization if you want:
+    # S_quadc = 0.5 * (S_quadc + jnp.swapaxes(S_quadc, -1, -2))
+
+    kf = jnp.asarray(k, r_dtype).reshape((N,))
+    Cc = jnp.asarray(C, c_dtype).reshape((N,))
+
+    # Split helper
     def split_re_im(xc):
         return jnp.real(xc).astype(r_dtype), jnp.imag(xc).astype(r_dtype)
 
+    # C (init amplitudes)
     Cr, Ci = split_re_im(Cc)
 
+    # S_const
+    Scr, Sci = split_re_im(S_constc)
+
+    # S_lin (x,y components)
+    Slxr, Slxi = split_re_im(S_linc[:, 0])
+    Slyr, Slyi = split_re_im(S_linc[:, 1])
+
+    # S_quad components (xx, xy, yx, yy)
+    Qxxr, Qxxi = split_re_im(S_quadc[:, 0, 0])
+    Qxyr, Qxyi = split_re_im(S_quadc[:, 0, 1])
+    Qyxr, Qyxi = split_re_im(S_quadc[:, 1, 0])
+    Qyyr, Qyyi = split_re_im(S_quadc[:, 1, 1])
+
+    # Tiling params
     T_PIX = int(tile_pixels)
     T_BEAMS = int(tile_beams)
 
+    # Outputs: real & imag tiles
     out_shape = (
         jax.ShapeDtypeStruct((P,), r_dtype),  # real
         jax.ShapeDtypeStruct((P,), r_dtype),  # imag
     )
 
+    # ---- Kernel ----
     def kernel(r2_ref, r_m_ref,
-               Slin_ref, Squad_ref, Sconst_ref, k_vec_ref,
-               Cr_ref, Ci_ref,
+               # linear (re/im)
+               Slxr_ref, Slxi_ref, Slyr_ref, Slyi_ref,
+               # quad (re/im)
+               Qxxr_ref, Qxxi_ref, Qxyr_ref, Qxyi_ref,
+               Qyxr_ref, Qyxi_ref, Qyyr_ref, Qyyi_ref,
+               # const (re/im)
+               Scr_ref, Sci_ref,
+               # k and C
+               k_vec_ref, Cr_ref, Ci_ref,
+               # sizes
                P_ref, N_ref,
+               # outputs
                out_re_ref, out_im_ref):
 
         pid = pl.program_id(axis=0)
@@ -72,43 +113,62 @@ def evaluate_gaussians_gpu_kernel(
             b_idx = t * T_BEAMS + jnp.arange(T_BEAMS, dtype=jnp.int32)
             b_mask = b_idx < N_rt
 
+            # centers
             mx = pl.load(r_m_ref, (b_idx, 0), mask=b_mask, other=0.0)
             my = pl.load(r_m_ref, (b_idx, 1), mask=b_mask, other=0.0)
 
-            slx = pl.load(Slin_ref, (b_idx, 0), mask=b_mask, other=0.0)
-            sly = pl.load(Slin_ref, (b_idx, 1), mask=b_mask, other=0.0)
+            # linear (re/im)
+            slxr = pl.load(Slxr_ref, (b_idx,), mask=b_mask, other=0.0)
+            slxi = pl.load(Slxi_ref, (b_idx,), mask=b_mask, other=0.0)
+            slyr = pl.load(Slyr_ref, (b_idx,), mask=b_mask, other=0.0)
+            slyi = pl.load(Slyi_ref, (b_idx,), mask=b_mask, other=0.0)
 
-            Qxx = pl.load(Squad_ref, (b_idx, 0, 0), mask=b_mask, other=0.0)
-            Qxy = pl.load(Squad_ref, (b_idx, 0, 1), mask=b_mask, other=0.0)
-            Qyx = pl.load(Squad_ref, (b_idx, 1, 0), mask=b_mask, other=0.0)
-            Qyy = pl.load(Squad_ref, (b_idx, 1, 1), mask=b_mask, other=0.0)
+            # quad (re/im)
+            Qxx_r = pl.load(Qxxr_ref, (b_idx,), mask=b_mask, other=0.0)
+            Qxx_i = pl.load(Qxxi_ref, (b_idx,), mask=b_mask, other=0.0)
+            Qxy_r = pl.load(Qxyr_ref, (b_idx,), mask=b_mask, other=0.0)
+            Qxy_i = pl.load(Qxyi_ref, (b_idx,), mask=b_mask, other=0.0)
+            Qyx_r = pl.load(Qyxr_ref, (b_idx,), mask=b_mask, other=0.0)
+            Qyx_i = pl.load(Qyxi_ref, (b_idx,), mask=b_mask, other=0.0)
+            Qyy_r = pl.load(Qyyr_ref, (b_idx,), mask=b_mask, other=0.0)
+            Qyy_i = pl.load(Qyyi_ref, (b_idx,), mask=b_mask, other=0.0)
 
-            Sc = pl.load(Sconst_ref, (b_idx,), mask=b_mask, other=0.0)
+            # constants (re/im)
+            Sc_r = pl.load(Scr_ref, (b_idx,), mask=b_mask, other=0.0)
+            Sc_i = pl.load(Sci_ref, (b_idx,), mask=b_mask, other=0.0)
+
+            # k and C
             kv = pl.load(k_vec_ref, (b_idx,), mask=b_mask, other=0.0)
+            Crb = pl.load(Cr_ref,     (b_idx,), mask=b_mask, other=0.0)
+            Cib = pl.load(Ci_ref,     (b_idx,), mask=b_mask, other=0.0)
 
-            Crb = pl.load(Cr_ref, (b_idx,), mask=b_mask, other=0.0)
-            Cib = pl.load(Ci_ref, (b_idx,), mask=b_mask, other=0.0)
-
+            # deltas
             dx = x[:, None] - mx[None, :]
             dy = y[:, None] - my[None, :]
 
-            # linear term: delta · S_lin
-            linear = dx * slx[None, :] + dy * sly[None, :]
+            # linear term (re & im)
+            linear_r = dx * slxr[None, :] + dy * slyr[None, :]
+            linear_i = dx * slxi[None, :] + dy * slyi[None, :]
 
-            # quadratic term: delta · (S_quad @ delta)
-            vx = Qxx[None, :] * dx + Qxy[None, :] * dy
-            vy = Qyx[None, :] * dx + Qyy[None, :] * dy
-            quad = dx * vx + dy * vy
+            # quadratic form (re & im) with symmetric cross term
+            cross_r = (Qxy_r[None, :] + Qyx_r[None, :]) * dx * dy
+            cross_i = (Qxy_i[None, :] + Qyx_i[None, :]) * dx * dy
 
-            # phase a = k * (S_const + linear + 0.5 * quad)
-            a = kv[None, :] * (Sc[None, :] + linear + 0.5 * quad)
+            quad_r = dx**2 * Qxx_r[None, :] + cross_r + dy**2 * Qyy_r[None, :]
+            quad_i = dx**2 * Qxx_i[None, :] + cross_i + dy**2 * Qyy_i[None, :]
 
-            s, c = jnp.sin(a), jnp.cos(a)
+            # a = k * (S_const + linear - 0.5 * quad) = ar + i ai
+            ar = kv[None, :] * (Sc_r[None, :] + linear_r - 0.5 * quad_r)
+            ai = kv[None, :] * (Sc_i[None, :] + linear_i - 0.5 * quad_i)
 
-            # (Cr + i Ci) * (c + i s) = (Cr*c - Ci*s) + i (Cr*s + Ci*c)
-            real_tb = Crb[None, :] * c - Cib[None, :] * s
-            imag_tb = Crb[None, :] * s + Cib[None, :] * c
+            # exp(i(ar + i ai)) = exp(-ai) * (cos ar + i sin ar)
+            atten = jnp.exp(-ai)
+            s, c = jnp.sin(ar), jnp.cos(ar)
 
+            real_tb = atten * (Crb[None, :] * c - Cib[None, :] * s)
+            imag_tb = atten * (Crb[None, :] * s + Cib[None, :] * c)
+
+            # mask beams outside range
             real_tb = jnp.where(b_mask[None, :], real_tb, 0.0)
             imag_tb = jnp.where(b_mask[None, :], imag_tb, 0.0)
 
@@ -116,7 +176,7 @@ def evaluate_gaussians_gpu_kernel(
             acc_im = acc_im + jnp.sum(imag_tb, axis=1)
             return t + jnp.int32(1), acc_re, acc_im
 
-        # runtime number of tiles
+        # number of beam tiles at runtime
         num_tiles_rt = (N_rt + T_BEAMS - 1) // T_BEAMS
         state0 = (jnp.int32(0), acc_re0, acc_im0)
 
@@ -141,14 +201,29 @@ def evaluate_gaussians_gpu_kernel(
         out_shape=out_shape,
         grid=(grid_n,),
     )(
+        # positions
         r2_f, r_centref,
-        S_linf, S_quadf, S_constf, kf,
-        Cr, Ci,
+        # S_lin (re/im)
+        Slxr, Slxi, Slyr, Slyi,
+        # S_quad (re/im)
+        Qxxr, Qxxi, Qxyr, Qxyi,
+        Qyxr, Qyxi, Qyyr, Qyyi,
+        # S_const (re/im)
+        Scr, Sci,
+        # k and C
+        kf, Cr, Ci,
+        # sizes
         jnp.asarray(P, dtype=jnp.int32),
         jnp.asarray(N, dtype=jnp.int32),
     )
 
     return (out_re + 1j * out_im).astype(c_dtype)
+
+
+# (unchanged) keep JIT + static args
+evaluate_gaussians_gpu_kernel = jax.jit(
+    evaluate_gaussians_gpu_kernel, static_argnames=["tile_pixels", "tile_beams"]
+)
 
 
 def evaluate_gaussians_gpu_kernel_wrapper(
@@ -208,7 +283,7 @@ def _beam_field(r_centre, init_amp, S_const, S_lin, S_quad, k, det_xy):
     delta = det_xy - r_centre
     linear = jnp.sum(delta * S_lin, axis=-1)
     quadratic = jnp.sum((delta @ S_quad) * delta, axis=-1)
-    phase = S_const + linear + 0.5 * quadratic
+    phase = S_const + linear - 0.5 * quadratic
     return init_amp * jnp.exp(1j * k * phase)
 
 
