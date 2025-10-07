@@ -63,15 +63,11 @@ class Component:
         return opd - 1j * (L / k)
 
     def __call__(self, ray: GaussianRayBeta):
-        # Expect a single ray (no internal vmapping). Users should vmap this __call__ outside.
-        r = jnp.asarray(ray.r_xy)  # shape (2,)
+        r = jnp.asarray(ray.r_xy)
         k = ray.k
 
         # ΔS and its derivatives (meters, complex) for a single XY
-        dS0 = self.complex_action(r, k)                     # complex scalar
-        # # ensure a single 2-vector (drop leading 1-batch if present)
-        # r_vec = jnp.asarray(r).reshape((2,))  # will convert (1,2) -> (2,) or leave (2,) unchanged
-
+        dS0 = self.complex_action(r, k) # complex scalar
         dS1 = grad_complex_action(self, r, k)  # complex (2,)
         dS2 = hess_complex_action(self, r, k)  # complex (2,2)
 
@@ -84,8 +80,8 @@ class Component:
 
         dxy_out = ray.d_xy + jnp.real(dS1)
 
-        dx_new = jnp.atleast_1d(dxy_out[0])
-        dy_new = jnp.atleast_1d(dxy_out[1])
+        dx_new = dxy_out[0]
+        dy_new = dxy_out[1]
 
         return ray.derive(S=S_out, dx=dx_new, dy=dy_new, z=self.z)
 
