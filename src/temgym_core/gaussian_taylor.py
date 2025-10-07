@@ -372,8 +372,6 @@ class FreeSpaceParaxial(BaseGaussianPropagator):
 
         Q_new = Q @ M_inv
         eta_new = (jnp.swapaxes(M_inv, -1, -2) @ ray.S.lin[..., None])[..., 0]
-
-        # geometric spreading (k-free)
         C_new = ray.C / jnp.sqrt(jnp.linalg.det(M))
 
         return ray.derive(
