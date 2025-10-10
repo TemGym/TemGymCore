@@ -135,7 +135,7 @@ def _make_initial_rays(
     rx, ry = fibonacci_spiral(nb_samples=num_rays, radius=aperture_radius, alpha=0)
 
     # Complex beam parameter inverse at waist: 1/q =  -i λ / (π w0^2)
-    q_inv_waist = -1j * (wavelength / (np.pi * w0**2))
+    q_inv_waist = 1j * (wavelength / (np.pi * w0**2))
     Q_inv = jnp.array([[q_inv_waist, 0.0], [0.0, q_inv_waist]])
     Q_inv = jnp.tile(Q_inv, (num_rays, 1, 1))
 
@@ -166,7 +166,7 @@ def _make_initial_rays(
 def _waist_from_Q_inv(Q_inv_elem, wavelength):
     # Im(1/q) = - λ / (π w^2)
     im_part = Q_inv_elem.imag
-    return np.sqrt(-wavelength / (np.pi * im_part))
+    return np.sqrt(wavelength / (np.pi * im_part))
 
 
 def _radius_from_Q_inv(Q_inv_elem):
