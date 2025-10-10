@@ -7,10 +7,120 @@ from temgym_core.gaussian import GaussianRayBeta, TaylorExpofAction
 from temgym_core.gaussian_taylor import Lens, run_to_end, SigmoidAperture
 from temgym_core.components import Detector
 from temgym_core.evaluate import evaluate_gaussians_for
-from temgym_core.utils import fibonacci_spiral
-from abtem.core.energy import energy2wavelength
+from temgym_core.utils import fibonacci_spiral, zero_phase, energy2wavelength
+from temgym_core.gaussian import q_inv, gaussian_beam
+from temgym_core.utils import make_aperture, fresnel_lens_imaging_solution
+
+from skimage.restoration import unwrap_phase
+import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)
+
+
+def plot_cross_sections(
+    x,
+    amplitudes,
+    phases,
+    labels=None,
+    xlabel="x (m)",
+    suffix="",
+    linestyle="-",
+    fig=None,
+):
+    """
+    Plot n amplitude/phase cross sections side-by-side.
+
+    Parameters
+    ----------
+    x : 1D array
+        Common x-axis for all series.
+    amplitudes : Sequence[1D array]
+        List/tuple of amplitude arrays, one per series.
+    phases : Sequence[1D array]
+        List/tuple of phase arrays, one per series (same length as amplitudes).
+    labels : Sequence[str] | None
+        Labels for each series; if None, uses "Input i".
+    xlabel : str
+        Label for x-axis.
+    suffix : str
+        Suffix appended to labels in legends.
+    """
+    if len(amplitudes) != len(phases):
+        raise ValueError("amplitudes and phases must have the same length")
+    n = len(amplitudes)
+    if labels is None:
+        labels = [f"Input {i+1}" for i in range(n)]
+    if len(labels) != n:
+        raise ValueError("labels length must match number of series")
+
+    if fig is None:
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+    else:
+        axs = fig.axes
+
+    # Amplitude cross sections
+    for ampl, lab in zip(amplitudes, labels):
+        axs[0].plot(x, ampl, label=f"{lab} {suffix} Amplitude", linestyle=linestyle)
+    axs[0].set_xlabel(xlabel)
+    axs[0].set_ylabel("Amplitude")
+    axs[0].set_title("Central Row Amplitude Cross Section")
+    axs[0].legend()
+    axs[0].grid(True)
+
+    # Phase cross sections
+    for ph, lab in zip(phases, labels):
+        axs[1].plot(x, ph, label=f"{lab} {suffix} Phase", linestyle=linestyle)
+    axs[1].set_xlabel(xlabel)
+    axs[1].set_ylabel("Phase (rad)")
+    axs[1].set_title("Central Row Phase Cross Section")
+    axs[1].legend()
+    axs[1].grid(True)
+
+    plt.tight_layout()
+    return fig, axs
+
+
+def plot_overview(field1, field2, det_size_x, det_size_y,
+                  label1='Input 1', label2='Input 2',
+                  suffix='', unwrap=True):
+    fig, axs = plt.subplots(2, 2, figsize=(12, 12))
+    cbar_kwargs = dict(fraction=0.046, pad=0.04)
+
+    im0 = axs[0, 0].imshow(
+        np.abs(field1),
+        extent=(-det_size_x/2, det_size_x/2, -det_size_y/2, det_size_y/2),
+        cmap="gray",
+    )
+    axs[0, 0].set_title(f"{label1} Amplitude {suffix}")
+    fig.colorbar(im0, ax=axs[0, 0], **cbar_kwargs)
+
+    im1 = axs[0, 1].imshow(
+        np.angle(field1) if unwrap else np.angle(field1),
+        extent=(-det_size_x/2, det_size_x/2, -det_size_y/2, det_size_y/2),
+        cmap="viridis",
+    )
+    axs[0, 1].set_title(f"{label1} Phase {suffix}")
+    fig.colorbar(im1, ax=axs[0, 1], **cbar_kwargs)
+
+    im2 = axs[1, 0].imshow(
+        np.abs(field2),
+        extent=(-det_size_x/2, det_size_x/2, -det_size_y/2, det_size_y/2),
+        cmap="gray",
+    )
+    axs[1, 0].set_title(f"{label2} Amplitude {suffix}")
+    fig.colorbar(im2, ax=axs[1, 0], **cbar_kwargs)
+
+    im3 = axs[1, 1].imshow(
+        np.angle(field2) if unwrap else np.angle(field2),
+        extent=(-det_size_x/2, det_size_x/2, -det_size_y/2, det_size_y/2),
+        cmap="viridis",
+    )
+    axs[1, 1].set_title(f"{label2} Phase {suffix}")
+    fig.colorbar(im3, ax=axs[1, 1], **cbar_kwargs)
+
+    plt.tight_layout()
+
+    return fig, axs
 
 
 def _make_initial_rays(
@@ -20,7 +130,7 @@ def _make_initial_rays(
     voltage=200e3,
     x_shift=0.0,
 ):
-    wavelength = energy2wavelength(voltage) / 1e10  # Å -> m
+    wavelength = energy2wavelength(voltage)
     k0 = 2 * np.pi / wavelength
     rx, ry = fibonacci_spiral(nb_samples=num_rays, radius=aperture_radius, alpha=0)
 
@@ -84,7 +194,7 @@ def _expected_waist_R(w0, wavelength, L):
 
 
 @pytest.mark.parametrize("M1,F1", [(-10, 2.5)])
-def test_lens_magnification_and_beam_waist(M1, F1):
+def test_lens_magnification_and_beam_waist_output_variables(M1, F1):
     """
     Verifies:
     1. Transverse coordinate magnification matches target M1.
@@ -92,7 +202,8 @@ def test_lens_magnification_and_beam_waist(M1, F1):
     3. Radius of curvature ~ 1/M*F at image plane.
     """
     w0 = 1.0
-    rays_in, wavelength, _ = _make_initial_rays(w0=w0, aperture_radius=1e-2, voltage=2000, num_rays=100)
+    voltage = 200e3
+    rays_in, wavelength, k0 = _make_initial_rays(w0=w0, aperture_radius=1e-2, voltage=voltage, num_rays=1000)
 
     L1_z1 = F1 * (1.0 / M1 - 1.0)
     L1_z2 = F1 * (1.0 - M1)
@@ -104,12 +215,12 @@ def test_lens_magnification_and_beam_waist(M1, F1):
 
     rays_out = jax.vmap(run_to_end, in_axes=(0, None))(rays_in, model)
 
-    # mask = np.abs(np.array(rays_in.x)) > 1e-15
-    # r_in = np.sqrt(np.array(rays_in.x) ** 2 + np.array(rays_in.y) ** 2)
-    # r_out = np.sqrt(np.array(rays_out.x) ** 2 + np.array(rays_out.y) ** 2)
-    # mask = r_in > 1e-15
-    # measured_M = np.mean(r_out[mask] / r_in[mask])
-    # assert np.isclose(measured_M, np.abs(M1), rtol=5e-3, atol=5e-3), f"Magnification mismatch: got {measured_M}, expected {M1}"
+    mask = np.abs(np.array(rays_in.x)) > 1e-15
+    r_in = np.sqrt(np.array(rays_in.x) ** 2 + np.array(rays_in.y) ** 2)
+    r_out = np.sqrt(np.array(rays_out.x) ** 2 + np.array(rays_out.y) ** 2)
+    mask = r_in > 1e-15
+    measured_M = np.mean(r_out[mask] / r_in[mask])
+    assert np.isclose(measured_M, np.abs(M1), rtol=5e-3, atol=5e-3), f"Magnification mismatch: got {measured_M}, expected {M1}"
 
     # Beam waist from Q_inv
     q_inv_elem = np.array(rays_out.S.quad[0, 0, 0])
@@ -123,6 +234,209 @@ def test_lens_magnification_and_beam_waist(M1, F1):
     # In the case of a lens system, this is -1/(M*F)
     R = _radius_from_Q_inv(q_inv_elem)
     np.allclose(R, -1/(M1*F1))
+
+
+@pytest.mark.parametrize("L, description, plotfile", [
+    (1e-2, "free-space propagation", "test_evaluate_gaussians_for_vs_analytic.png"),
+    (0.0, "waist (z=0)", "test_evaluate_gaussians_for_vs_analytic_z0.png"),
+])
+def test_evaluate_gaussians_for_matches_analytic_beam_param(L, description, plotfile):
+    """
+    Test that evaluate_gaussians_for produces a field matching the analytic Gaussian beam
+    at the detector plane for a simple free-space propagation (no lens), or at the waist (z=0).
+    Checks both amplitude and phase, and plots both for visual inspection.
+    """
+    w0 = 2e-6
+    voltage = 200e3
+    num_rays = 1
+    aperture_radius = 1e-2
+    rays_in, wavelength, k0 = _make_initial_rays(num_rays=num_rays, w0=w0, aperture_radius=aperture_radius, voltage=voltage)
+    pixel_size = (2e-7, 2e-7)
+    shape = (256, 256)
+    detector = Detector(z=L, pixel_size=pixel_size, shape=shape)
+    model = [detector]
+    rays_out = jax.vmap(run_to_end, in_axes=(0, None))(rays_in, model)
+    # Evaluate field using the code under test
+    field = evaluate_gaussians_for(rays_out, detector)
+    field = zero_phase(field, field.shape[0] // 2, field.shape[1] // 2)
+    # Build analytic solution
+    det_edge_x, det_edge_y = detector.coords_1d
+    Y, X = np.meshgrid(det_edge_y, det_edge_x, indexing="ij")
+    z_R = np.pi * w0**2 / wavelength
+
+    # Analytic Gaussian beam field at plane z=L, using your sign conventions:
+    # q(z) = L + 1j * z_R
+    # 1/q(z) = 1/R(z) - 1j * λ/(π w(z)^2)
+    # The field: E(x, y, z) = (w0/wz) * exp(-r^2/wz^2) * exp[+i k0 L + i k0 r^2/(2 Rz) - i psi]
+    # Note: The sign of the quadratic phase (r^2) and Gouy phase (-psi) matches the convention
+    # where the Taylor expansion is S = const + lin - quad.
+
+    if L == 0.0:
+        wz = w0
+        Rz = np.inf
+        psi = 0.0
+    else:
+        wz = w0 * np.sqrt(1 + (L / z_R) ** 2)
+        Rz = L * (1 + (z_R / L) ** 2)
+        psi = np.arctan(L / z_R)
+    r2 = X**2 + Y**2
+
+    analytic = (w0 / wz) * np.exp(-r2 / wz**2) * np.exp(
+        -1j * (k0 * L + k0 * r2 / (2 * Rz) - psi)   # note overall minus; Gouy inside becomes +i*psi
+    )
+    analytic = zero_phase(analytic, analytic.shape[0] // 2, analytic.shape[1] // 2)
+    # Normalize both fields for fair comparison
+    field /= np.max(np.abs(field))
+    analytic /= np.max(np.abs(analytic))
+    # Compare amplitude and phase
+    np.testing.assert_allclose(
+        np.abs(field), np.abs(analytic), rtol=1e-2, atol=1e-2,
+        err_msg=f"Amplitude mismatch between evaluate_gaussians_for and analytic ({description})"
+    )
+    np.testing.assert_allclose(
+        unwrap_phase(np.angle(field)),
+        unwrap_phase(np.angle(analytic)),
+        rtol=1e-2, atol=1e-2,
+        err_msg=f"Phase mismatch between evaluate_gaussians_for and analytic ({description})"
+    )
+
+    # Plot amplitude and phase of both images
+    import matplotlib.pyplot as plt
+    fig, axs = plt.subplots(2, 2, figsize=(10, 10))
+    im0 = axs[0, 0].imshow(np.abs(field), cmap='gray')
+    axs[0, 0].set_title(f"evaluate_gaussians_for Amplitude ({description})")
+    fig.colorbar(im0, ax=axs[0, 0])
+    im1 = axs[0, 1].imshow(unwrap_phase(np.angle(field)), cmap='twilight')
+    axs[0, 1].set_title(f"evaluate_gaussians_for Phase ({description})")
+    fig.colorbar(im1, ax=axs[0, 1])
+    im2 = axs[1, 0].imshow(np.abs(analytic), cmap='gray')
+    axs[1, 0].set_title(f"Analytic Amplitude ({description})")
+    fig.colorbar(im2, ax=axs[1, 0])
+    im3 = axs[1, 1].imshow(unwrap_phase(np.angle(analytic)), cmap='twilight')
+    axs[1, 1].set_title(f"Analytic Phase ({description})")
+    fig.colorbar(im3, ax=axs[1, 1])
+    plt.tight_layout()
+    plt.savefig(plotfile)
+    plt.close(fig)
+
+# ...existing code...
+
+
+@pytest.mark.parametrize("M1,F1", [(-10, 2.5)])
+def test_lens_magnification_and_beam_waist_output_image(M1, F1):
+    """
+    Verifies:
+    1. Transverse coordinate magnification matches target M1.
+    2. Beam waist scales as |M1| * w0 at image plane.
+    3. Radius of curvature ~ 1/M*F at image plane.
+    """
+    w0 = 1e-6
+    rays_in, wavelength, k0 = _make_initial_rays(num_rays=1, w0=w0, aperture_radius=1e-2, voltage=200e3)
+
+    L1_z1 = F1 * (1.0 / M1 - 1.0)
+    L1_z2 = F1 * (1.0 - M1)
+    L1_z1, L1_z2 = map(abs, (L1_z1, L1_z2))
+
+    lens = Lens(focal_length=F1, z=L1_z1)
+    pixel_size = (1e-7, 1e-7)
+    shape = (2048, 2048)
+    detector = Detector(z=L1_z1 + L1_z2, pixel_size=pixel_size, shape=shape)
+    model = [lens, detector]
+
+    rays_out = jax.vmap(run_to_end, in_axes=(0, None))(rays_in, model)
+
+    det_edge_x, det_edge_y = detector.coords_1d
+
+    Y, X = np.meshgrid(det_edge_y, det_edge_x, indexing="ij")
+
+    analytic_gauss_image = evaluate_gaussians_for(rays_out, detector)
+    analytic_gauss_image = zero_phase(
+        analytic_gauss_image,
+        analytic_gauss_image.shape[0] // 2,
+        analytic_gauss_image.shape[1] // 2,
+    )
+    # Fresnel Version
+    q1_inv = q_inv(0.0, w0, wavelength)
+    gauss_input = gaussian_beam(X, Y, q1_inv, 2 * np.pi / wavelength)
+    gauss_input = zero_phase(
+        gauss_input,
+        gauss_input.shape[0] // 2,
+        gauss_input.shape[1] // 2,
+    )
+
+    fresnel_gauss_image = fresnel_lens_imaging_solution(gauss_input, Y, X, pixel_size[0], wavelength,
+                                                       L1_z1, F1, L1_z2)
+
+    fresnel_gauss_image = zero_phase(
+        fresnel_gauss_image,
+        fresnel_gauss_image.shape[0] // 2,
+        fresnel_gauss_image.shape[1] // 2,
+    )
+
+    # Normalize amplitude so the maximum magnitude is 1
+    analytic_gauss_image /= np.max(np.abs(analytic_gauss_image))
+    fresnel_gauss_image /= np.max(np.abs(fresnel_gauss_image))
+
+    # replace placeholder with
+    det_circular_mask = make_aperture(X, Y, aperture_ratio=0.4)
+
+    # mask amplitude
+    analytic_gauss_image *= det_circular_mask
+    fresnel_gauss_image *= det_circular_mask
+
+    # force zero phase outside the aperture by replacing
+    # the field there with its absolute‐value (i.e. exp(0j))
+    analytic_gauss_image = np.where(det_circular_mask,
+                                analytic_gauss_image,
+                                np.abs(analytic_gauss_image))
+    fresnel_gauss_image = np.where(det_circular_mask,
+                                fresnel_gauss_image,
+                                np.abs(fresnel_gauss_image))
+
+    # Uncomment to plot cross-sections and overview plots
+    central_index = analytic_gauss_image.shape[0] // 2
+    analytic_phase_cross_section = np.angle(analytic_gauss_image[central_index, :])
+    fresnel_phase_cross_section = np.angle(fresnel_gauss_image[central_index, :])
+
+    analytic_amplitude_cross_section = np.abs(analytic_gauss_image[central_index, :])
+    fresnel_amplitude_cross_section = np.abs(fresnel_gauss_image[central_index, :])
+
+    # Plot cross-sections using helper
+    fig, _ = plot_cross_sections(
+        det_edge_x,
+        [analytic_amplitude_cross_section, fresnel_amplitude_cross_section],
+        [analytic_phase_cross_section, fresnel_phase_cross_section],
+    )
+
+    plt.savefig("test_gaussian_lens_vs_fresnel_cross_sections.png")
+    # Overview plots using helper
+    fig, _ = plot_overview(
+        analytic_gauss_image,
+        fresnel_gauss_image,
+        pixel_size[0]*shape[0],
+        pixel_size[1]*shape[1],
+        suffix="",
+        label1="Analytic Gaussian",
+        label2="FFT"
+    )
+    plt.savefig("test_gaussian_lens_vs_fresnel_overview.png")
+
+    # Assertions remain unchanged
+    np.testing.assert_allclose(
+        np.abs(analytic_gauss_image),
+        np.abs(fresnel_gauss_image),
+        rtol=5e-1,
+        atol=5e-1,
+        err_msg="Amplitude mismatch between analytic and fresnel",
+    )
+
+    np.testing.assert_allclose(
+        unwrap_phase(np.angle(analytic_gauss_image)),
+        unwrap_phase(np.angle(fresnel_gauss_image)),
+        rtol=2,
+        atol=2,
+        err_msg="Phase mismatch between analytic and fresnel",
+    )
 
 
 def test_defocused_plane_radius_and_waist():
@@ -149,7 +463,7 @@ def test_defocused_plane_radius_and_waist():
 
     # At image plane (new waist)
     w_image = _waist_from_Q_inv(q_inv_image, wavelength)
-    assert np.isclose(w_image, w0 * abs(M1), rtol=1e-2)
+    assert np.isclose(w_image, w0 * abs(M1), rtol=1e-8)
 
     # Now emulate defocus: propagate a distance dz past the waist analytically,
     # compare against constructed analytic Q_inv.
@@ -215,7 +529,7 @@ def test_free_space_propagation_Q_inv_waist_radius(L_factor):
 
     # Waist from Q_inv
     w_out = _waist_from_Q_inv(q_inv_out, wavelength)
-    assert np.allclose(w_out, w_expected, rtol=2e-3), \
+    assert np.allclose(w_out, w_expected, rtol=1e-12), \
         f"Waist mismatch at L={L}: got {w_out}, expected {w_expected}"
 
     # Radius from Q_inv
