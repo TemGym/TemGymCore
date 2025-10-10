@@ -279,12 +279,12 @@ def _prepare_gaussian_params(gaussian_ray: GaussianRayBeta):
     return r_m, C, S_const, S_lin, S_quad, k
 
 
-def _beam_field(r_centre, init_amp, S_const, S_lin, S_quad, k, det_xy):
+def _beam_field(r_centre, C, S_const, S_lin, S_quad, k, det_xy):
     delta = det_xy - r_centre
     linear = jnp.sum(delta * S_lin, axis=-1)
     quadratic = jnp.sum((delta @ S_quad) * delta, axis=-1)
-    phase = S_const + linear + 0.5 * quadratic
-    return init_amp * jnp.exp(1j * k * phase)
+    S_tot = S_const + linear + 0.5 * quadratic
+    return C * jnp.exp(1j * k * S_tot)
 
 
 def evaluate_gaussians_jax_scan(
