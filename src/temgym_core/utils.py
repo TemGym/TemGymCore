@@ -250,7 +250,7 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np):
     FX, FY = xp.meshgrid(fx, fy)
 
     # transfer function in unshifted FFT domain
-    H = xp.exp(+1j * xp.pi * wavelength * z * (FX**2 + FY**2))
+    H = xp.exp(-1j * xp.pi * wavelength * z * (FX**2 + FY**2))
 
     # forward FFT, multiply, and inverse FFT
     U1 = xp.fft.fft2(u1)
@@ -263,7 +263,7 @@ def fresnel_lens_imaging_solution(E0, Y, X, ps, lambda0, z1, f, z2):
     k = 2 * np.pi / lambda0
     L = E0.shape[0] * ps
     E_lens = FresnelPropagator(E0, L, lambda0, z1).copy()
-    E_lens *= np.exp((+1j * k) / (2 * f) * (X ** 2 + Y ** 2)).copy()
+    E_lens *= np.exp((-1j * k) / (2 * f) * (X ** 2 + Y ** 2)).copy()
     E_final = FresnelPropagator(E_lens, L, lambda0, z2)
 
     return E_final

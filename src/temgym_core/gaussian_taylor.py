@@ -75,7 +75,7 @@ class Component:
             ray.S,
             const=ray.S.const + dS0,
             lin=ray.S.lin + dS1,
-            quad=ray.S.quad - dS2,
+            quad=ray.S.quad + dS2,
         )
 
         dxy_out = ray.d_xy + jnp.real(dS1)
@@ -94,7 +94,7 @@ class Lens(Component):
         x, y = xy[0], xy[1]
         rho2 = x * x + y * y
         # Pure phase (real) ΔS; amplitude unchanged
-        return 0.5 * rho2 / self.focal_length
+        return -0.5 * rho2 / self.focal_length
 
     def transmission(self, xy):
         return 0.0  # no amplitude change
@@ -129,7 +129,7 @@ class AberratedLens(Component):
         x, y = xy[0], xy[1]
         rho2 = x*x + y*y
 
-        opl = (
+        opl = -(
             0.5 * rho2 / self.focal_length
             + self.C_sph * (rho2**2)
             + self.C_coma_x * (x**3 + x * y**2)

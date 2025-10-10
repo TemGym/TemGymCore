@@ -158,8 +158,8 @@ def evaluate_gaussians_gpu_kernel(
             quad_i = dx**2 * Qxx_i[None, :] + cross_i + dy**2 * Qyy_i[None, :]
 
             # a = k * (S_const + linear - 0.5 * quad) = ar + i ai
-            ar = kv[None, :] * (Sc_r[None, :] + linear_r - 0.5 * quad_r)
-            ai = kv[None, :] * (Sc_i[None, :] + linear_i - 0.5 * quad_i)
+            ar = kv[None, :] * (Sc_r[None, :] + linear_r + 0.5 * quad_r)
+            ai = kv[None, :] * (Sc_i[None, :] + linear_i + 0.5 * quad_i)
 
             # exp(i(ar + i ai)) = exp(-ai) * (cos ar + i sin ar)
             atten = jnp.exp(-ai)
@@ -283,7 +283,7 @@ def _beam_field(r_centre, init_amp, S_const, S_lin, S_quad, k, det_xy):
     delta = det_xy - r_centre
     linear = jnp.sum(delta * S_lin, axis=-1)
     quadratic = jnp.sum((delta @ S_quad) * delta, axis=-1)
-    phase = S_const + linear - 0.5 * quadratic
+    phase = S_const + linear + 0.5 * quadratic
     return init_amp * jnp.exp(1j * k * phase)
 
 
