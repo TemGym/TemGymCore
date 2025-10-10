@@ -34,7 +34,7 @@ def R(z, z_r):
 
 
 def gaussian_beam(x, y, q_inv, k, offset_x=0, offset_y=0):
-    return jnp.exp(1j * k * ((x + offset_x) ** 2 + (y + offset_y) ** 2) / 2 * q_inv)
+    return jnp.exp(-1j * k * ((x + offset_x) ** 2 + (y + offset_y) ** 2) / 2 * q_inv)
 
 
 def decompose_Q_inv(Q_inv, wavelength, eps=1e-12):
@@ -113,8 +113,8 @@ def q_inv(z, w0, wl):
 
     q_inv = jnp.where(
         cond,
-        +1j * wl / (jnp.pi * w0**2),
-        -1.0 / R_val + 1j * wl / (jnp.pi * wz_val**2),
+        -1j * wl / (jnp.pi * w0**2),
+        1.0 / R_val - 1j * wl / (jnp.pi * wz_val**2),
     )
     return q_inv
 
@@ -152,14 +152,14 @@ class GaussianRay(Ray):
         # 1/q on each principal axis
         inv_qx = jnp.where(
             jnp.isinf(R_x),
-            1j * wavelength / ((jnp.pi * w_x**2)),
-            -1.0 / R_x + 1j * wavelength / (jnp.pi * w_x**2),
+            -1j * wavelength / ((jnp.pi * w_x**2)),
+            1.0 / R_x - 1j * wavelength / (jnp.pi * w_x**2),
         )
 
         inv_qy = jnp.where(
             jnp.isinf(R_y),
-            1j * wavelength / ((jnp.pi * w_y**2)),
-            -1.0 / R_y + 1j * wavelength / (jnp.pi * w_y**2),
+            -1j * wavelength / ((jnp.pi * w_y**2)),
+            1.0 / R_y - 1j * wavelength / (jnp.pi * w_y**2),
         )
         return inv_qx, inv_qy
 
@@ -339,11 +339,9 @@ def make_gaussian_image(gaussian_rays, model, batch_size=128):
     theta1ms = jnp.stack([central_rays.dx, central_rays.dy], axis=-1)
     wavelengths = rays.wavelength
     k = 2 * jnp.pi / wavelengths
-    phase_offset = k * output_rays.pathlength
 
     output_field = propagate_misaligned_gaussian_jax_scan(
         amplitudes,
-        phase_offset,
         Q1_invs,
         As,
         Bs,
@@ -360,7 +358,7 @@ def make_gaussian_image(gaussian_rays, model, batch_size=128):
     return output_field
 
 
-def _beam_field(amp, phase_offset, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k, r2):
+def _beam_field(amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k, r2):
     """Single-beam field at all observation points r2 -> (np,)
     r2 is at the end since it represents the grid, and is not batched.
     All other inputs are batched over the number of beams (nb, ...)"""
@@ -400,21 +398,21 @@ def _beam_field(amp, phase_offset, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k, 
     # f is of shape 2, and r is (np,2), and we need f_offset * r2 to be (np,)
     f_offset = 2 * r2 @ f  # (np,)
     phase = (k / 2) * (Q2t + phi1 - phi2 + f_offset)  # (np,)
-    return pref * jnp.exp(1j * (phase + phase_offset))  # (np,)
+    return pref * jnp.exp(-1j * (phase))  # (np,)
 
 
 def propagate_misaligned_gaussian_jax_scan(
-    amp, phase_offset, Q1_inv, A, B, C, D, e, f, r1m, theta1m, k, r2, batch_size=128
+    amp, Q1_inv, A, B, C, D, e, f, r1m, theta1m, k, r2, batch_size=128
 ):
     npix = r2.shape[0]
     Q2_inv = Qinv_ABCD(Q1_inv, A, B, C, D)  # (nb,2,2)
 
     def _beam_field_outer(xs):
-        a_i, p_i, q1_i, q2_i, r1m_i, t1m_i, A_i, B_i, e_i, f_i, k_i = xs
-        return _beam_field(a_i, p_i, q1_i, q2_i, r1m_i, t1m_i, A_i, B_i, e_i, f_i, k_i, r2)
+        a_i, q1_i, q2_i, r1m_i, t1m_i, A_i, B_i, e_i, f_i, k_i = xs
+        return _beam_field(a_i, q1_i, q2_i, r1m_i, t1m_i, A_i, B_i, e_i, f_i, k_i, r2)
 
     init = jnp.zeros((npix,), dtype=jnp.complex128)
-    xs = (amp, phase_offset, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k)
+    xs = (amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k)
     out = map_reduce(_beam_field_outer, jnp.add, init, xs, batch_size=batch_size)
     return out  # (npix,)
 

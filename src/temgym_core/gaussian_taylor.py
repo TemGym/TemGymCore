@@ -7,8 +7,7 @@ from typing import Sequence, Callable, Any, Generator, Union, NamedTuple
 from temgym_core.aberrations import KrivanekCoeffs, W_krivanek
 from temgym_core.components import Detector
 from temgym_core.gaussian import GaussianRayBeta
-from temgym_core.ray import Ray
-from inspect import signature
+from dataclasses import field
 
 
 def _grad_vjp(component, xy, k):
@@ -95,7 +94,7 @@ class Lens(Component):
         x, y = xy[0], xy[1]
         rho2 = x * x + y * y
         # Pure phase (real) ΔS; amplitude unchanged
-        return -0.5 * rho2 / self.focal_length
+        return 0.5 * rho2 / self.focal_length
 
     def transmission(self, xy):
         return 0.0  # no amplitude change
@@ -130,7 +129,7 @@ class AberratedLens(Component):
         x, y = xy[0], xy[1]
         rho2 = x*x + y*y
 
-        opl = -(
+        opl = (
             0.5 * rho2 / self.focal_length
             + self.C_sph * (rho2**2)
             + self.C_coma_x * (x**3 + x * y**2)
@@ -409,14 +408,14 @@ class FreeSpaceParaxial(BaseGaussianPropagator):
 TransformT = Callable[[Any], Callable[[Any], tuple[Any, Any]]]
 
 
-@jdc.pytree_dataclass
+@jdc.pytree_dataclass(kw_only=True)
 class CollinsPropagator(Component):
     A: jnp.ndarray | float
     B: jnp.ndarray | float
     C: jnp.ndarray | float
     D: jnp.ndarray | float
-    e: jnp.ndarray = jnp.zeros((2,), dtype=jnp.float64)  # position offset (2,)
-    f: jnp.ndarray = jnp.zeros((2,), dtype=jnp.float64)  # angle/slope offset (2,)
+    e: jnp.ndarray = field(default_factory=lambda: jnp.zeros((2,), dtype=jnp.float64))  # position offset (2,)
+    f: jnp.ndarray = field(default_factory=lambda: jnp.zeros((2,), dtype=jnp.float64))  # angle/slope offset (2,)
     advance_z: float = 0.0
 
     def _as_2x2(self, X):
@@ -497,6 +496,7 @@ class FourierTransform(CollinsPropagator):
         )
         self.f = f
         self.direction = direction
+
 
 def run_iter(
     ray: Union[GaussianRayBeta, Any],
