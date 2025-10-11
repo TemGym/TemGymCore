@@ -120,7 +120,7 @@ def _prepare_field(field):
     centre_y = array.shape[0] // 2
     centre_x = array.shape[1] // 2
     array = zero_phase(array, centre_y, centre_x)
-    return _normalize(array)
+    return array
 
 
 def _compare_fields(
@@ -128,7 +128,7 @@ def _compare_fields(
     reference,
     *,
     mask=None,
-    amplitude_tol=(1e-2, 1e-2),
+    amplitude_tol=(1e-9, 1e-9),
     phase_tol=(1e-10, 1e-10),
     message="Field mismatch",
     plot=False,
@@ -226,7 +226,7 @@ def _analytic_gaussian_field_at_plane(X, Y, w0, wavelength, z, k0):
 def _fraunhofer_gaussian_field_at_focus(X, Y, w0, wavelength, focal_length):
     """Gaussian field in the back focal plane when the waist is in the front focal plane."""
     w_out = wavelength * focal_length / (np.pi * w0)
-    amplitude = np.exp(-(X**2 + Y**2) / w_out**2)
+    amplitude = (w0 / w_out) * np.exp(-(X**2 + Y**2) / w_out**2)
     k0 = 2 * np.pi / wavelength
     gouy = np.pi / 2
     phase = np.exp(1j * (k0 * focal_length + gouy))
@@ -544,9 +544,148 @@ def test_fraunhofer_lens_matches_fourier_transform():
         field,
         fraunhofer,
         mask=mask,
-        amplitude_tol=(3e-2, 5e-3),
-        phase_tol=(5e-2, 5e-2),
+        amplitude_tol=(1e-8, 1e-8),
+        phase_tol=(1e-8, 1e-8),
         message="Fraunhofer lens propagation check",
         plot=True,
         compare_phase=True
     )
+
+
+def test_tilted_rays_shift_peak_to_expected_quadrant():
+    """Tilting input packets should move the intensity peak into the corresponding detector quadrant."""
+    detector = Detector(z=2e-3, pixel_size=(5e-7, 5e-7), shape=(256, 256))
+    X, Y = _detector_mesh(detector)
+
+    base_rays, _, _ = _make_initial_rays(num_rays=1, w0=2e-7, aperture_radius=1e-6)
+    base_out = _propagate_rays(base_rays, [detector])
+    base_field = np.abs(np.asarray(evaluate_gaussians_for(base_out, detector)))
+    centre_idx = np.unravel_index(np.argmax(base_field), base_field.shape)
+    x_center = X[centre_idx]
+    y_center = Y[centre_idx]
+
+    def sign_with_tol(value, eps=1e-12):
+        if value > eps:
+            return 1
+        if value < -eps:
+            return -1
+        return 0
+
+    tilt = 5e-4
+    combos = [
+        (+tilt, +tilt),
+        (+tilt, -tilt),
+        (-tilt, +tilt),
+        (-tilt, -tilt),
+    ]
+
+    for dx, dy in combos:
+        ray = base_rays.derive(
+            dx=jnp.asarray([dx], dtype=jnp.float64),
+            dy=jnp.asarray([dy], dtype=jnp.float64),
+        )
+
+        # Also add the corresponding linear phase term to S so the action encodes the tilt:
+        # This makes the evaluated field include exp(i k (dx * x + dy * y)).
+        S = ray.S
+        new_lin = S.lin.at[0].set(jnp.asarray([dx, dy], dtype=jnp.complex128))
+        ray = ray.derive(
+            S=TaylorExpofAction(
+                const=S.const,
+                lin=new_lin,
+                quad=S.quad,
+            )
+        )
+        ray_out = _propagate_rays(ray, [detector])
+        field = np.abs(np.asarray(evaluate_gaussians_for(ray_out, detector)))
+        peak_idx = np.unravel_index(np.argmax(field), field.shape)
+        x_peak = X[peak_idx]
+        y_peak = Y[peak_idx]
+
+        assert sign_with_tol(float(x_peak - x_center)) == sign_with_tol(dx), (
+            f"dx={dx:+.1e} expected x shift sign {sign_with_tol(dx)}, "
+            f"observed x_peak={float(x_peak):+.3e} (center {float(x_center):+.3e})"
+        )
+        assert sign_with_tol(float(y_peak - y_center)) == sign_with_tol(dy), (
+            f"dy={dy:+.1e} expected y shift sign {sign_with_tol(dy)}, "
+            f"observed y_peak={float(y_peak):+.3e} (center {float(y_center):+.3e})"
+        )
+
+
+def test_phase_ramp_slopes_match_wavevector_components():
+    """Phase gradient of the evaluated field should reflect the imposed ray tilts."""
+    z_prop = 1e-3
+    detector = Detector(z=z_prop, pixel_size=(1e-6, 1e-6), shape=(512, 512))
+    x_coords, y_coords = detector.coords_1d
+    ix = len(x_coords) // 2
+    iy = len(y_coords) // 2
+    centre_x = float(x_coords[ix])
+    centre_y = float(y_coords[iy])
+
+    voltage = 200e3
+    wavelength = energy2wavelength(voltage)
+    k0 = 2 * np.pi / wavelength
+    w0 = 5e-7
+
+    q_inv_waist = 1j * wavelength / (np.pi * w0**2)
+    base_Q = jnp.array([[q_inv_waist, 0.0], [0.0, q_inv_waist]], dtype=jnp.complex128)
+    S_template = TaylorExpofAction(
+        const=jnp.zeros((1,), dtype=jnp.complex128),
+        lin=jnp.zeros((1, 2), dtype=jnp.complex128),
+        quad=jnp.asarray(base_Q[None, ...], dtype=jnp.complex128),
+    )
+
+    cases = [
+        dict(dx=2e-4, dy=0.0, rtol_x=1e-2, atol_y=1e-3),
+        dict(dx=0.0, dy=-1e-4, atol_x=1e-3, rtol_y=1e-2),
+        dict(dx=1.5e-4, dy=-1.0e-4, rtol_x=2e-2, rtol_y=2e-2),
+    ]
+
+    delta = 8
+
+    k_eff_x = None
+    k_eff_y = None
+
+    for case in cases:
+        ray = GaussianRayBeta(
+            x=jnp.asarray([centre_x]),
+            y=jnp.asarray([centre_y]),
+            dx=jnp.asarray([case["dx"]]),
+            dy=jnp.asarray([case["dy"]]),
+            z=jnp.zeros((1,)),
+            pathlength=jnp.zeros((1,)),
+            _one=jnp.ones((1,)),
+            S=S_template,
+            C=jnp.ones((1,), dtype=jnp.complex128),
+            voltage=jnp.full((1,), voltage),
+        )
+        ray_out = _propagate_rays(ray, [detector])
+        field = np.asarray(evaluate_gaussians_for(ray_out, detector))
+
+        row_phase = np.unwrap(np.angle(field[iy, :]))
+        row_phase -= row_phase[ix]
+        slope_x_est = (row_phase[ix + delta] - row_phase[ix - delta]) / (
+            x_coords[ix + delta] - x_coords[ix - delta]
+        )
+
+        col_phase = np.unwrap(np.angle(field[:, ix]))
+        col_phase -= col_phase[iy]
+        slope_y_est = (col_phase[iy + delta] - col_phase[iy - delta]) / (
+            y_coords[iy + delta] - y_coords[iy - delta]
+        )
+
+        if abs(case["dx"]) < 1e-12:
+            np.testing.assert_allclose(slope_x_est, 0.0, atol=case.get("atol_x", 1e-3))
+        else:
+            if k_eff_x is None:
+                k_eff_x = slope_x_est / case["dx"]
+            else:
+                np.testing.assert_allclose(slope_x_est, k_eff_x * case["dx"], rtol=case["rtol_x"])
+
+        if abs(case["dy"]) < 1e-12:
+            np.testing.assert_allclose(slope_y_est, 0.0, atol=case.get("atol_y", 1e-3))
+        else:
+            if k_eff_y is None:
+                k_eff_y = slope_y_est / case["dy"]
+            else:
+                np.testing.assert_allclose(slope_y_est, k_eff_y * case["dy"], rtol=case["rtol_y"])

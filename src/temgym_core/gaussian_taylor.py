@@ -97,7 +97,7 @@ class Lens(Component):
         return -0.5 * rho2 / self.focal_length
 
     def transmission(self, xy):
-        return 0.0  # no amplitude change
+        return 1.0  # no amplitude change
 
 
 @jdc.pytree_dataclass
@@ -115,7 +115,7 @@ class SigmoidAperture(Component):
         x, y = xy[0], xy[1]
         r = jnp.sqrt(x*x + y*y + self.eps)
         s = jax.nn.sigmoid(self.sharpness * (r - self.radius))  # 0 in → 1 out
-        return (1.0 - s) + s * self.t_outside                   # 1 inside, t_out outside
+        return (1.0 - s) + s * self.t_outside  # 1 inside, t_out outside
 
 
 @jdc.pytree_dataclass
@@ -138,7 +138,7 @@ class AberratedLens(Component):
         return opl
 
     def transmission(self, xy):
-        return 0.0  # no amplitude change
+        return 1.0  # no amplitude change
 
 
 @jdc.pytree_dataclass
@@ -166,7 +166,7 @@ class KrivanekLens(Component):
         return opl
 
     def transmission(self, xy):
-        return 0.0  # no amplitude change
+        return 1.0  # no amplitude change
 
 
 @jdc.pytree_dataclass
