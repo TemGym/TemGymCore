@@ -10,13 +10,13 @@ from temgym_core.gaussian import (
     GaussianRayBeta,
     TaylorExpofAction,
     gaussian_beam,
+    make_gaussian_aperture,
     q_inv,
 )
 from temgym_core.gaussian_taylor import Lens, SigmoidAperture, run_to_end
 import matplotlib
 from temgym_core.utils import (
     energy2wavelength,
-    fibonacci_spiral,
     fresnel_lens_imaging_solution,
     make_aperture,
     zero_phase,
@@ -32,41 +32,6 @@ def _lens_planes(magnification, focal_length):
     return abs(z1), abs(z2)
 
 
-def _make_initial_rays(
-    num_rays=1000,
-    w0=1e-9,
-    aperture_radius=50e-9,
-    voltage=200e3,
-    x_shift=0.0,
-):
-    """Create a batch of Gaussian packets centred at a waist located at z=0."""
-    wavelength = energy2wavelength(voltage)
-    k0 = 2 * np.pi / wavelength
-    rx, ry = fibonacci_spiral(nb_samples=num_rays, radius=aperture_radius, alpha=0)
-
-    q_inv_waist = 1j * wavelength / (np.pi * w0**2)
-    base_Q = jnp.array([[q_inv_waist, 0.0], [0.0, q_inv_waist]], dtype=jnp.complex128)
-    Q_inv = jnp.tile(base_Q, (num_rays, 1, 1))
-
-    S = TaylorExpofAction(
-        const=jnp.zeros(num_rays, dtype=jnp.complex128),
-        lin=jnp.zeros((num_rays, 2), dtype=jnp.complex128),
-        quad=Q_inv,
-    )
-
-    rays_in = GaussianRayBeta(
-        x=jnp.asarray(rx + x_shift),
-        y=jnp.asarray(ry),
-        dx=jnp.zeros(num_rays),
-        dy=jnp.zeros(num_rays),
-        z=jnp.zeros(num_rays),
-        pathlength=jnp.zeros(num_rays),
-        _one=jnp.ones(num_rays),
-        S=S,
-        C=jnp.ones(num_rays, dtype=jnp.complex128),
-        voltage=jnp.full((num_rays,), voltage),
-    )
-    return rays_in, wavelength, k0
 
 
 def _waist_from_Q_inv(q_inv_elem, wavelength):
@@ -237,8 +202,8 @@ def _fraunhofer_gaussian_field_at_focus(X, Y, w0, wavelength, focal_length):
 def test_lens_magnification_and_beam_waist_output_variables(magnification, focal_length):
     """Thin-lens magnification should match both coordinates and Gaussian waist."""
     w0 = 1.0
-    rays_in, wavelength, _ = _make_initial_rays(
-        num_rays=1000, w0=w0, aperture_radius=1e-2, voltage=200e3
+    rays_in, wavelength, _ = make_gaussian_aperture(
+        num_rays=1000, waist_radius=w0, aperture_radius=1e-2, voltage=200e3
     )
 
     z1, z2 = _lens_planes(magnification, focal_length)
@@ -273,8 +238,8 @@ def test_lens_magnification_and_beam_waist_output_variables(magnification, focal
 def test_evaluate_gaussians_for_matches_analytic_beam_param(distance, description):
     """evaluate_gaussians_for must reproduce the analytic Gaussian field."""
     w0 = 2e-6
-    rays_in, wavelength, k0 = _make_initial_rays(
-        num_rays=1, w0=w0, aperture_radius=1e-2, voltage=200e3
+    rays_in, wavelength, k0 = make_gaussian_aperture(
+        num_rays=1, waist_radius=w0, aperture_radius=1e-2, voltage=200e3
     )
     detector = Detector(z=distance, pixel_size=(2e-7, 2e-7), shape=(256, 256))
 
@@ -299,8 +264,8 @@ def test_evaluate_gaussians_for_matches_analytic_beam_param(distance, descriptio
 def test_lens_magnification_and_beam_waist_output_image(magnification, focal_length):
     """Image-plane field must agree with Fresnel FFT propagation of an input Gaussian."""
     w0 = 1e-6
-    rays_in, wavelength, k0 = _make_initial_rays(
-        num_rays=1, w0=w0, aperture_radius=1e-2, voltage=200e3
+    rays_in, wavelength, k0 = make_gaussian_aperture(
+        num_rays=1, waist_radius=w0, aperture_radius=1e-2, voltage=200e3
     )
 
     z1, z2 = _lens_planes(magnification, focal_length)
@@ -334,7 +299,7 @@ def test_defocused_plane_radius_and_waist():
     """After deliberate defocus, waist and curvature should follow Gaussian optics."""
     magnification, focal_length = -200.0, 3e-3
     w0 = 1.2e-6
-    rays_in, wavelength, _ = _make_initial_rays(w0=w0)
+    rays_in, wavelength, _ = make_gaussian_aperture(waist_radius=w0)
 
     z1, z2 = _lens_planes(magnification, focal_length)
     lens = Lens(focal_length=focal_length, z=z1)
@@ -365,7 +330,7 @@ def test_defocused_plane_radius_and_waist():
 def test_free_space_propagation_q_inv_waist_radius(distance_factor):
     """Free-space propagation must match analytic 1/(z + i z_R) evolution."""
     w0 = 1e-9
-    rays_in, wavelength, _ = _make_initial_rays(w0=w0)
+    rays_in, wavelength, _ = make_gaussian_aperture(waist_radius=w0)
     z_R = np.pi * w0**2 / wavelength
     distance = distance_factor * z_R
 
@@ -398,7 +363,7 @@ def test_free_space_propagation_q_inv_waist_radius(distance_factor):
 
 def test_beam_field_evaluation_smoke():
     """Basic smoke test: evaluating a single packet should produce a finite field."""
-    rays_in, _, _ = _make_initial_rays(w0=1.0, num_rays=1)
+    rays_in, _, _ = make_gaussian_aperture(waist_radius=1.0, num_rays=1)
     detector = Detector(z=10.0, pixel_size=(1e-1, 1e-1), shape=(200, 200))
 
     rays_out = _propagate_rays(rays_in, [detector])
@@ -411,7 +376,7 @@ def test_beam_field_evaluation_smoke():
 @pytest.mark.parametrize("focal_length", [1e-3, 3e-3, 1e-2])
 def test_parallel_rays_focus_at_back_focal_plane_center(focal_length):
     """Parallel input rays should intersect at (0, 0) in the back focal plane."""
-    rays_in, _, _ = _make_initial_rays(num_rays=2000, aperture_radius=2e-4)
+    rays_in, _, _ = make_gaussian_aperture(num_rays=2000, aperture_radius=2e-4)
 
     assert np.allclose(np.asarray(rays_in.dx), 0.0)
     assert np.allclose(np.asarray(rays_in.dy), 0.0)
@@ -522,8 +487,8 @@ def test_fraunhofer_lens_matches_fourier_transform():
     """Gaussian at the front focal plane should equal the Fraunhofer pattern at the back."""
     w0 = 1e-7
     focal_length = 1e-2
-    rays_in, wavelength, k0 = _make_initial_rays(
-        num_rays=1, w0=w0, aperture_radius=5e-6, voltage=1
+    rays_in, wavelength, k0 = make_gaussian_aperture(
+        num_rays=1, waist_radius=w0, aperture_radius=5e-6, voltage=1
     )
 
     lens = Lens(focal_length=focal_length, z=focal_length)
@@ -557,7 +522,7 @@ def test_tilted_rays_shift_peak_to_expected_quadrant():
     detector = Detector(z=2e-3, pixel_size=(5e-7, 5e-7), shape=(256, 256))
     X, Y = _detector_mesh(detector)
 
-    base_rays, _, _ = _make_initial_rays(num_rays=1, w0=2e-7, aperture_radius=1e-6)
+    base_rays, _, _ = make_gaussian_aperture(num_rays=1, waist_radius=2e-7, aperture_radius=1e-6)
     base_out = _propagate_rays(base_rays, [detector])
     base_field = np.abs(np.asarray(evaluate_gaussians_for(base_out, detector)))
     centre_idx = np.unravel_index(np.argmax(base_field), base_field.shape)

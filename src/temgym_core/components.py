@@ -393,6 +393,8 @@ class Detector(Component, Grid):
     Notes
     -----
     The component itself is a no-op; conversions are on the `Grid` base.
+    The inherited :attr:`Grid.extent` property returns the plot extent
+    ``(xmin, xmax, ymin, ymax)`` in metres for convenience.
     """
     z: float
     pixel_size: ScaleYX
