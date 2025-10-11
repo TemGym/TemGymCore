@@ -116,6 +116,23 @@ class Grid:
         y_coords = self.pixels_to_metres((yy_px[:, 0], xx_px[:, 0]))[1]
         return x_coords, y_coords
 
+    @property
+    def extent(self) -> tuple[float, float, float, float]:
+        """Return Matplotlib-style extent tuple ``(xmin, xmax, ymin, ymax)`` in metres.
+
+        Returns
+        -------
+        tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+            Scalar JAX arrays carrying the coordinate bounds.
+        """
+        x_coords, y_coords = self.coords_1d
+        return (
+            x_coords[0],
+            x_coords[-1],
+            y_coords[0],
+            y_coords[-1],
+        )
+
     def metres_to_pixels(self, coords: CoordsXY, cast: bool = True) -> PixelsYX:
         """Convert metric coordinates to pixel indices.
 

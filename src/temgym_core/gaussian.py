@@ -1,9 +1,14 @@
 import dataclasses
+import numpy as np
 import jax.numpy as jnp
 import jax
 from .grid import Grid
 from .run import run_to_end
-from .utils import custom_jacobian_matrix
+from .utils import (
+    custom_jacobian_matrix,
+    energy2wavelength,
+    fibonacci_spiral,
+)
 from .ray import Ray
 import jax_dataclasses as jdc
 from jax._src.lax.control_flow.loops import _batch_and_remainder
@@ -195,11 +200,48 @@ class TaylorExpofAction:
     lin: jnp.ndarray
     quad: jnp.ndarray
 
+    @classmethod
+    def from_q_inv(
+        cls,
+        Q_inv,
+        *,
+        const=0.0 + 0.0j,
+        lin=None,
+    ) -> "TaylorExpofAction":
+        """Build an action expansion with quadratic term ``Q_inv``.
+
+        Parameters
+        ----------
+        Q_inv : array-like
+            Quadratic coefficient(s) shaped (..., 2, 2).
+        const : complex or array-like, optional
+            Constant term to broadcast over the leading batch dimensions.
+        lin : array-like, optional
+            Linear term(s) shaped (..., 2). Defaults to zeros.
+        """
+        Q_inv_arr = jnp.asarray(Q_inv, dtype=jnp.complex128)
+        batch_shape = Q_inv_arr.shape[:-2]
+        const_arr = jnp.asarray(const, dtype=jnp.complex128)
+        const_arr = jnp.broadcast_to(const_arr, batch_shape)
+        if lin is None:
+            lin_arr = jnp.zeros(batch_shape + (2,), dtype=jnp.complex128)
+        else:
+            lin_arr = jnp.asarray(lin, dtype=jnp.complex128)
+            lin_arr = jnp.broadcast_to(lin_arr, batch_shape + (2,))
+        return cls(const=const_arr, lin=lin_arr, quad=Q_inv_arr)
+
 
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianRayBeta(Ray):
+    """Gaussian ray carrying a quadratic expansion of the complex action.
+
+    Notes
+    -----
+    The constant term ``S.const`` stores the accumulated complex action, while
+    ``C`` holds only the geometric ABCD prefactor.
+    """
     S: TaylorExpofAction  # Action
-    C: complex = 1.0 + 0.0j  # geometric prefactor (k-free)
+    C: complex = 1.0 + 0.0j  # geometric prefactor
     voltage: float
 
     def derive(self, **updates):
@@ -220,6 +262,11 @@ class GaussianRayBeta(Ray):
             else:
                 params[k] = jnp.atleast_1d(v)
         return type(self)(**params)
+
+    @property
+    def prefactor(self) -> complex:
+        """Complex amplitude prefactor stored in ``C``."""
+        return self.C
 
     @property
     def mass(self) -> float:
@@ -261,6 +308,89 @@ class GaussianRayBeta(Ray):
     def k(self) -> float:
         """Wave number k = 2*pi / wavelength (1/Å)."""
         return 2 * jnp.pi / self.wavelength
+
+
+def make_gaussian_aperture(
+    *,
+    voltage: float = 200e3,
+    aperture_radius: float = 50e-9,
+    waist_radius: float = 1e-9,
+    num_rays: int = 1000,
+    sampler=fibonacci_spiral,
+    sampler_kwargs: dict | None = None,
+    normalization: str = 'unit',
+) -> tuple[GaussianRayBeta, float, float]:
+    """
+    Build a batch of ``GaussianRayBeta`` packets sampled on a circular aperture.
+
+    Parameters
+    ----------
+    voltage : float
+        Acceleration voltage in eV. Used to set `ray.voltage` and derive wavelength.
+    aperture_radius : float
+        Radius of the source aperture in metres.
+    waist_radius : float
+        1/e waist radius (w0) of the input Gaussian in metres.
+    num_rays : int
+        Number of Gaussian packets to spawn.
+    sampler : Callable, optional
+        Function returning `(x, y)` coordinates within the aperture.
+    sampler_kwargs : dict, optional
+        Extra keyword arguments for the sampler.
+    normalization : {'unit', 'flux'}, optional
+        How to scale the initial prefactor `C`. 'unit' keeps it at 1, 'flux'
+        matches the area-based scale used in notebooks.
+
+    Returns
+    -------
+    rays : GaussianRayBeta
+        Vectorised ray batch sampled over the aperture.
+    wavelength : float
+        Relativistic de Broglie wavelength in metres.
+    k0 : float
+        Magnitude of the wave-vector, `2*pi / wavelength`.
+    """
+    sampler_kwargs = sampler_kwargs or {}
+    rx, ry = sampler(num_rays, radius=aperture_radius, **sampler_kwargs)
+
+    rx = jnp.asarray(rx, dtype=jnp.float64)
+    ry = jnp.asarray(ry, dtype=jnp.float64)
+    zeros = jnp.zeros(num_rays, dtype=jnp.float64)
+    ones = jnp.ones(num_rays, dtype=jnp.float64)
+
+    wavelength = float(energy2wavelength(voltage))
+    k0 = float(2 * np.pi / wavelength)
+
+    q = 1j * (wavelength / (np.pi * waist_radius**2))
+    Q_inv = jnp.tile(
+        jnp.array([[q, 0.0], [0.0, q]], dtype=jnp.complex128),
+        (num_rays, 1, 1),
+    )
+
+    S = TaylorExpofAction.from_q_inv(Q_inv)
+
+    if normalization == 'flux':
+        aperture_area = np.pi * aperture_radius**2
+        scale_factor = aperture_area / (waist_radius**2 * num_rays * np.pi)
+    elif normalization == 'unit':
+        scale_factor = 1.0
+    else:
+        raise ValueError(f"Unknown normalization mode: {normalization}")
+    C = jnp.full(num_rays, scale_factor, dtype=jnp.complex128)
+
+    rays = GaussianRayBeta(
+        x=rx,
+        y=ry,
+        dx=zeros,
+        dy=zeros,
+        z=zeros,
+        pathlength=zeros,
+        _one=ones,
+        C=C,
+        S=S,
+        voltage=jnp.full((num_rays,), voltage, dtype=jnp.float64),
+    )
+    return rays, wavelength, k0
 
 
 def matrix_vector_mul(M, v):
