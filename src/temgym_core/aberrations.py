@@ -2,7 +2,7 @@ import jax.numpy as jnp
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True)
 class KrivanekCoeffs:
     C10: float = 0.0
     C12: float = 0.0
