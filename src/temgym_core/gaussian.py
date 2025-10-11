@@ -310,7 +310,7 @@ class GaussianRayBeta(Ray):
         return 2 * jnp.pi / self.wavelength
 
 
-def make_gaussian_aperture(
+def make_gaussian_plane_wave_round_aperture(
     *,
     voltage: float = 200e3,
     aperture_radius: float = 50e-9,
@@ -389,6 +389,96 @@ def make_gaussian_aperture(
         C=C,
         S=S,
         voltage=jnp.full((num_rays,), voltage, dtype=jnp.float64),
+    )
+    return rays, wavelength, k0
+
+
+def make_gaussian_plane_wave_square_aperture(
+    *,
+    voltage: float = 200e3,
+    side_length: float = 100e-9,
+    waist_radius: float = 1e-9,
+    samples_per_side: int | None = None,
+    num_rays: int | None = None,
+    normalization: str = 'flux',
+) -> tuple[GaussianRayBeta, float, float]:
+    """
+    Build a batch of ``GaussianRayBeta`` packets on a square lattice.
+
+    Parameters
+    ----------
+    voltage : float
+        Acceleration voltage in eV.
+    side_length : float
+        Physical width of the square in metres.
+    waist_radius : float
+        1/e waist radius of the underlying Gaussian (metres).
+    samples_per_side : int, optional
+        Number of samples along each axis. If omitted, derived from ``num_rays``.
+    num_rays : int, optional
+        Desired number of packets. If specified, the lattice is trimmed to this count.
+        Defaults to using the full square grid.
+    normalization : {'unit', 'flux'}
+        Scale for the initial prefactor ``C`` (`'unit'` keeps C==1, `'flux'` matches area scaling).
+
+    Returns
+    -------
+    rays : GaussianRayBeta
+        Vectorised square-lattice packets.
+    wavelength : float
+        Relativistic wavelength in metres.
+    k0 : float
+        Wave number magnitude, `2*pi / wavelength`.
+    """
+    if samples_per_side is None and num_rays is None:
+        raise ValueError("Provide either samples_per_side or num_rays.")
+
+    if samples_per_side is None:
+        samples_per_side = int(np.ceil(np.sqrt(num_rays)))
+        samples_per_side = max(samples_per_side, 1)
+
+    total_points = samples_per_side**2
+    use_count = total_points if num_rays is None else min(num_rays, total_points)
+
+    coords_1d = jnp.linspace(-0.5 * side_length, 0.5 * side_length, samples_per_side)
+    X, Y = jnp.meshgrid(coords_1d, coords_1d, indexing="xy")
+    rx = X.reshape(-1)[:use_count]
+    ry = Y.reshape(-1)[:use_count]
+
+    zeros = jnp.zeros(use_count, dtype=jnp.float64)
+    ones = jnp.ones(use_count, dtype=jnp.float64)
+
+    wavelength = float(energy2wavelength(voltage))
+    k0 = float(2 * np.pi / wavelength)
+
+    q = 1j * (wavelength / (np.pi * waist_radius**2))
+    Q_inv = jnp.tile(
+        jnp.array([[q, 0.0], [0.0, q]], dtype=jnp.complex128),
+        (use_count, 1, 1),
+    )
+
+    S = TaylorExpofAction.from_q_inv(Q_inv)
+
+    if normalization == 'flux':
+        area = side_length**2
+        scale_factor = area / (waist_radius**2 * use_count * np.pi)
+    elif normalization == 'unit':
+        scale_factor = 1.0
+    else:
+        raise ValueError(f"Unknown normalization mode: {normalization}")
+    C = jnp.full(use_count, scale_factor, dtype=jnp.complex128)
+
+    rays = GaussianRayBeta(
+        x=rx,
+        y=ry,
+        dx=zeros,
+        dy=zeros,
+        z=zeros,
+        pathlength=zeros,
+        _one=ones,
+        C=C,
+        S=S,
+        voltage=jnp.full((use_count,), voltage, dtype=jnp.float64),
     )
     return rays, wavelength, k0
 
