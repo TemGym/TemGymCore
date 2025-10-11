@@ -8,6 +8,7 @@ from temgym_core.aberrations import KrivanekCoeffs, W_krivanek
 from temgym_core.components import Detector
 from temgym_core.gaussian import GaussianRayBeta
 from dataclasses import field
+from jax import lax
 
 
 def _grad_vjp(component, xy, k):
@@ -119,32 +120,9 @@ class SigmoidAperture(Component):
 
 
 @jdc.pytree_dataclass
-class AberratedLens(Component):
-    focal_length: float
-    C_sph: float = 0.0
-    C_coma_x: float = 0.0
-    C_coma_y: float = 0.0
-
-    def opl_shift(self, xy):
-        x, y = xy[0], xy[1]
-        rho2 = x*x + y*y
-
-        opl = -(
-            0.5 * rho2 / self.focal_length
-            + self.C_sph * (rho2**2)
-            + self.C_coma_x * (x**3 + x * y**2)
-            + self.C_coma_y * (y**3 + y * x**2)
-        )
-        return opl
-
-    def transmission(self, xy):
-        return 1.0  # no amplitude change
-
-
-@jdc.pytree_dataclass
 class KrivanekLens(Component):
     focal_length: float
-    coeffs: KrivanekCoeffs
+    coeffs: jdc.Static[KrivanekCoeffs]
 
     def opl_shift(self, xy):
         """
@@ -155,15 +133,17 @@ class KrivanekLens(Component):
         f = self.focal_length
 
         rho2 = x * x + y * y
-        opl = -0.5 * rho2 / f
 
-        h = jnp.sqrt(rho2)
-        phi = jnp.where(h > 1e-15, jnp.arctan2(y, x), 0.0)
-        alpha = h / f
-        Wk = W_krivanek(alpha, phi, self.coeffs)
-        opl += -Wk
+        def _with_aberrations(_):
+            rho = jnp.sqrt(rho2)
+            phi = jnp.arctan2(y, x)
+            alpha = rho / f
+            return -0.5 * rho2 / f - W_krivanek(alpha, phi, self.coeffs)
 
-        return opl
+        def _on_axis(_):
+            return -0.5 * rho2 / f
+
+        return lax.cond(rho2 > 1e-24, _with_aberrations, _on_axis, operand=None)
 
     def transmission(self, xy):
         return 1.0  # no amplitude change
