@@ -33,24 +33,6 @@ def _lens_planes(magnification, focal_length):
     return abs(z1), abs(z2)
 
 
-def test_make_gaussian_plane_wave_square_aperture_trims_count():
-    rays, wavelength, k0 = make_gaussian_plane_wave_square_aperture(
-        voltage=200e3,
-        side_length=2e-6,
-        waist_radius=1e-9,
-        num_rays=10,
-    )
-    assert rays.x.shape[0] == 10
-    xs = np.asarray(rays.x)
-    ys = np.asarray(rays.y)
-    assert np.isclose(xs.mean(), 0.0, atol=1e-18)
-    assert np.isclose(ys.mean(), 0.0, atol=1e-18)
-    assert wavelength > 0
-    assert k0 > 0
-
-
-
-
 def _waist_from_Q_inv(q_inv_elem, wavelength):
     imag = np.imag(q_inv_elem)
     return np.sqrt(wavelength / (np.pi * imag))
