@@ -259,6 +259,46 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np):
     return u2
 
 
+def AngularSpectrumPropagator(u1, L, wavelength, z, xp=np):
+    """Propagate a complex field by distance z using the angular spectrum method.
+
+    Parameters
+    ----------
+    u1 : array_like, shape (M, N)
+        Complex field at the source plane.
+    L : float
+        Side length of the simulation window (metres).
+    wavelength : float
+        Wavelength (metres).
+    z : float
+        Propagation distance (metres).
+    xp : module, optional
+        Array module providing FFT routines (defaults to numpy).
+
+    Returns
+    -------
+    u2 : array_like, shape (M, N)
+        Propagated field at distance z.
+    """
+    M, N = u1.shape
+    dx = L / M
+
+    fx = xp.fft.fftfreq(N, d=dx)
+    fy = xp.fft.fftfreq(M, d=dx)
+    FX, FY = xp.meshgrid(fx, fy)
+
+    k = 2 * xp.pi / wavelength
+    kxky_sq = (2 * xp.pi) ** 2 * (FX ** 2 + FY ** 2)
+    kz_sq = (k ** 2) - kxky_sq
+    kz = xp.sqrt(kz_sq + 0j)
+
+    U1 = xp.fft.fft2(u1)
+    H = xp.exp(1j * kz * z)
+    U2 = H * U1
+    u2 = xp.fft.ifft2(U2)
+    return u2
+
+
 def fresnel_lens_imaging_solution(E0, Y, X, ps, lambda0, z1, f, z2):
     k = 2 * np.pi / lambda0
     L = E0.shape[0] * ps
