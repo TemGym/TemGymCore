@@ -14,7 +14,7 @@ from temgym_core.gaussian import (
     make_gaussian_plane_wave_square_aperture,
     q_inv,
 )
-from temgym_core.gaussian_taylor import Lens, SigmoidAperture, run_to_end
+from temgym_core.gaussian_taylor import Lens, SigmoidAperture, FreeSpaceParaxial, run_to_end
 import matplotlib
 from temgym_core.utils import (
     energy2wavelength,
@@ -57,6 +57,50 @@ def _expected_waist_R(w0, wavelength, distance):
     waist = w0 * np.sqrt(1.0 + (distance / z_R) ** 2)
     radius = distance * (1.0 + (z_R**2 / distance**2))
     return waist, radius
+
+
+def test_free_space_paraxial_updates_q_inv_and_radius():
+    """Free-space propagator should advance q by distance, sending R -> inf at the waist."""
+    q_elem = -100.0 + 1j * 39167.0146892521
+    Q_in = jnp.array([[q_elem, 0.0], [0.0, q_elem]], dtype=jnp.complex128)
+    action = TaylorExpofAction.from_q_inv(Q_in)
+
+    base_ray = GaussianRayBeta(
+        x=0.0,
+        y=0.0,
+        dx=0.0,
+        dy=0.0,
+        z=0.0,
+        pathlength=0.0,
+        _one=1.0,
+        S=action,
+        C=1.0 + 0.0j,
+        voltage=200e3,
+    )
+
+    propagator = FreeSpaceParaxial()
+
+    delta = 0.01
+    ray_out = propagator.propagate(base_ray, delta)
+
+    I2 = jnp.eye(2, dtype=jnp.complex128)
+    expected_Q = Q_in @ jnp.linalg.inv(I2 + delta * Q_in)
+    np.testing.assert_allclose(
+        np.asarray(ray_out.S.quad),
+        np.asarray(expected_Q),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+    q_in = np.linalg.inv(np.asarray(Q_in))
+    q_out = np.linalg.inv(np.asarray(ray_out.S.quad))
+    expected_q = q_in + delta * np.eye(2, dtype=np.complex128)
+    np.testing.assert_allclose(q_out, expected_q, rtol=1e-12, atol=1e-12)
+
+    distance_to_waist = -float(np.real(q_in[0, 0]))
+    ray_at_waist = propagator.propagate(base_ray, distance_to_waist)
+    q_inv_at_waist = np.asarray(ray_at_waist.S.quad)
+    assert np.isclose(np.real(q_inv_at_waist[0, 0]), 0.0, atol=1e-9)
 
 
 def _propagate_rays(rays, components):

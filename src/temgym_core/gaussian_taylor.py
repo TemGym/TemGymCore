@@ -369,18 +369,19 @@ class FreeSpaceParaxial(BaseGaussianPropagator):
         dS_real = L * (1.0 + 0.5 * (ray.dx**2 + ray.dy**2))
         S0_new = ray.S.const + dS_real
 
-        Q = ray.S.quad
+        Q_old = ray.S.quad
         I2 = jnp.eye(2, dtype=jnp.complex128)
-        M = I2 + L * Q
+        M = I2 + L * Q_old
         M_inv = jnp.linalg.solve(M, I2)
 
-        Q_new = Q @ M_inv
+        Q_trans = Q_old @ M_inv
+        dQ = Q_trans - Q_old
         lin_new = (jnp.swapaxes(M_inv, -1, -2) @ ray.S.lin[..., None])[..., 0]
         C_new = ray.C / jnp.sqrt(jnp.linalg.det(M))
 
         return ray.derive(
             x=x_new, y=y_new, z=z_new,
-            S=jdc.replace(ray.S, const=S0_new, lin=lin_new, quad=Q_new),
+            S=jdc.replace(ray.S, const=S0_new, lin=lin_new, quad=ray.S.quad + dQ),
             C=C_new,
         )
 
