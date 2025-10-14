@@ -120,6 +120,140 @@ class SigmoidAperture(Component):
 
 
 @jdc.pytree_dataclass
+class MagneticPhaseSample(Component):
+    """
+    Smooth magnetic phase mask with an internal textured profile.
+
+    Parameters
+    ----------
+    strength : float
+        Peak optical path-length change in metres applied near the centre.
+    width, height : float
+        Extents of the rectangle (metres) before optional rotation.
+    x0, y0 : float
+        Centre of the phase object in laboratory coordinates (metres).
+    theta : float
+        Rotation angle (radians) applied counter-clockwise.
+    edge_sharpness : float
+        Steepness of the soft-rectangle edges (1/metre). Higher → sharper.
+    modulation_strength, skew_strength, radial_strength : float
+        Coefficients for internal phase structure to mimic magnetic texture.
+    eps : float
+        Small constant to keep divisions numerically stable.
+    """
+    strength: float
+    width: float
+    height: float
+    x0: float = 0.0
+    y0: float = 0.0
+    theta: float = 0.0
+    edge_sharpness: float = 5e6
+    modulation_strength: float = 0.3
+    skew_strength: float = 0.2
+    radial_strength: float = 0.15
+    eps: float = 1e-9
+
+    def _local_coords(self, xy):
+        x = xy[0] - self.x0
+        y = xy[1] - self.y0
+        c = jnp.cos(self.theta)
+        s = jnp.sin(self.theta)
+        u = c * x + s * y
+        v = -s * x + c * y
+        return u, v
+
+    def _soft_indicator(self, coord, half_extent):
+        sharp = self.edge_sharpness
+        pos = jax.nn.sigmoid(sharp * (coord + half_extent))
+        neg = jax.nn.sigmoid(sharp * (coord - half_extent))
+        plateau = jax.nn.sigmoid(sharp * half_extent) - jax.nn.sigmoid(-sharp * half_extent)
+        plateau = jnp.maximum(plateau, 1e-9)
+        return (pos - neg) / plateau
+
+    def opl_shift(self, xy):
+        u, v = self._local_coords(xy)
+
+        hx = 0.5 * self.width
+        hy = 0.5 * self.height
+
+        mask = self._soft_indicator(u, hx) * self._soft_indicator(v, hy)
+
+        u_norm = u / (hx + self.eps)
+        v_norm = v / (hy + self.eps)
+        radial = jnp.sqrt(u_norm * u_norm + v_norm * v_norm + self.eps)
+
+        texture = jnp.sin(jnp.pi * u_norm) * jnp.cos(jnp.pi * v_norm)
+        skew = u_norm * v_norm
+        radial_term = radial - 0.5
+
+        profile = (
+            1.0
+            + self.modulation_strength * texture
+            + self.skew_strength * skew
+            + self.radial_strength * radial_term
+        )
+
+        return self.strength * mask * profile
+
+    def transmission(self, xy):
+        return 1.0
+
+
+def magnetic_phase_sample(
+    z: float,
+    *,
+    strength: float,
+    width: float,
+    height: float,
+    center: tuple[float, float] = (0.0, 0.0),
+    theta: float = 0.0,
+    edge_sharpness: float = 5e6,
+    modulation_strength: float = 0.3,
+    skew_strength: float = 0.2,
+    radial_strength: float = 0.15,
+) -> MagneticPhaseSample:
+    """
+    Build a ``MagneticPhaseSample`` component with convenient keyword arguments.
+
+    Parameters
+    ----------
+    z : float
+        Axial location of the sample (metres).
+    strength : float
+        Peak optical path-length change in metres (positive → phase advance).
+    width, height : float
+        Extents of the rectangular footprint (metres).
+    center : tuple[float, float]
+        (x, y) position of the rectangle centre (metres).
+    theta : float, optional
+        Rotation angle (radians) for the rectangle.
+    edge_sharpness : float, optional
+        Soft-edge sharpness (1/metre) passed through to the component.
+    modulation_strength, skew_strength, radial_strength : float, optional
+        Internal phase modulation coefficients inside the mask.
+
+    Returns
+    -------
+    MagneticPhaseSample
+        Configured component that contributes only a phase (OPL) shift.
+    """
+    x0, y0 = center
+    return MagneticPhaseSample(
+        z=z,
+        strength=strength,
+        width=width,
+        height=height,
+        x0=x0,
+        y0=y0,
+        theta=theta,
+        edge_sharpness=edge_sharpness,
+        modulation_strength=modulation_strength,
+        skew_strength=skew_strength,
+        radial_strength=radial_strength,
+    )
+
+
+@jdc.pytree_dataclass
 class KrivanekLens(Component):
     focal_length: float
     coeffs: jdc.Static[KrivanekCoeffs]
