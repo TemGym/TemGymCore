@@ -245,9 +245,10 @@ def _fraunhofer_gaussian_field_at_focus(X, Y, w0, wavelength, focal_length):
 def test_lens_magnification_and_beam_waist_output_variables(magnification, focal_length):
     """Thin-lens magnification should match both coordinates and Gaussian waist."""
     w0 = 1.0
-    rays_in, wavelength, _ = make_gaussian_plane_wave_round_aperture(
+    rays_in = make_gaussian_plane_wave_round_aperture(
         num_rays=1000, waist_radius=w0, aperture_radius=1e-2, voltage=200e3
     )
+    wavelength = rays_in.wavelength[0]
 
     z1, z2 = _lens_planes(magnification, focal_length)
     lens = Lens(focal_length=focal_length, z=z1)
@@ -281,9 +282,11 @@ def test_lens_magnification_and_beam_waist_output_variables(magnification, focal
 def test_evaluate_gaussians_for_matches_analytic_beam_param(distance, description):
     """evaluate_gaussians_for must reproduce the analytic Gaussian field."""
     w0 = 2e-6
-    rays_in, wavelength, k0 = make_gaussian_plane_wave_round_aperture(
-        num_rays=1, waist_radius=w0, aperture_radius=1e-2, voltage=200e3
+    rays_in = make_gaussian_plane_wave_round_aperture(
+        num_rays=1, waist_radius=w0, aperture_radius=1e-2, voltage=200e3, normalization="none"
     )
+    wavelength = rays_in.wavelength[0]
+    k0 = 2 * jnp.pi / wavelength
     detector = Detector(z=distance, pixel_size=(2e-7, 2e-7), shape=(256, 256))
 
     rays_out = _propagate_rays(rays_in, [detector])
@@ -300,6 +303,7 @@ def test_evaluate_gaussians_for_matches_analytic_beam_param(distance, descriptio
         amplitude_tol=(1e-2, 1e-2),
         phase_tol=(1e-2, 1e-2),
         message=f"evaluate_gaussians_for vs analytic ({description})",
+        plot=True,
     )
 
 
@@ -307,9 +311,11 @@ def test_evaluate_gaussians_for_matches_analytic_beam_param(distance, descriptio
 def test_lens_magnification_and_beam_waist_output_image(magnification, focal_length):
     """Image-plane field must agree with Fresnel FFT propagation of an input Gaussian."""
     w0 = 1e-6
-    rays_in, wavelength, k0 = make_gaussian_plane_wave_round_aperture(
-        num_rays=1, waist_radius=w0, aperture_radius=1e-2, voltage=200e3
+    rays_in = make_gaussian_plane_wave_round_aperture(
+        num_rays=1, waist_radius=w0, aperture_radius=1e-2, voltage=200e3, normalization="none"
     )
+    wavelength = rays_in.wavelength[0]
+    k0 = 2 * jnp.pi / wavelength
 
     z1, z2 = _lens_planes(magnification, focal_length)
     lens = Lens(focal_length=focal_length, z=z1)
@@ -342,7 +348,8 @@ def test_defocused_plane_radius_and_waist():
     """After deliberate defocus, waist and curvature should follow Gaussian optics."""
     magnification, focal_length = -200.0, 3e-3
     w0 = 1.2e-6
-    rays_in, wavelength, _ = make_gaussian_plane_wave_round_aperture(waist_radius=w0)
+    rays_in = make_gaussian_plane_wave_round_aperture(waist_radius=w0)
+    wavelength = rays_in.wavelength[0]
 
     z1, z2 = _lens_planes(magnification, focal_length)
     lens = Lens(focal_length=focal_length, z=z1)
@@ -373,7 +380,8 @@ def test_defocused_plane_radius_and_waist():
 def test_free_space_propagation_q_inv_waist_radius(distance_factor):
     """Free-space propagation must match analytic 1/(z + i z_R) evolution."""
     w0 = 1e-9
-    rays_in, wavelength, _ = make_gaussian_plane_wave_round_aperture(waist_radius=w0)
+    rays_in = make_gaussian_plane_wave_round_aperture(waist_radius=w0)
+    wavelength = rays_in.wavelength[0]
     z_R = np.pi * w0**2 / wavelength
     distance = distance_factor * z_R
 
@@ -406,7 +414,7 @@ def test_free_space_propagation_q_inv_waist_radius(distance_factor):
 
 def test_beam_field_evaluation_smoke():
     """Basic smoke test: evaluating a single packet should produce a finite field."""
-    rays_in, _, _ = make_gaussian_plane_wave_round_aperture(waist_radius=1.0, num_rays=1)
+    rays_in = make_gaussian_plane_wave_round_aperture(waist_radius=1.0, num_rays=1)
     detector = Detector(z=10.0, pixel_size=(1e-1, 1e-1), shape=(200, 200))
 
     rays_out = _propagate_rays(rays_in, [detector])
@@ -419,7 +427,7 @@ def test_beam_field_evaluation_smoke():
 @pytest.mark.parametrize("focal_length", [1e-3, 3e-3, 1e-2])
 def test_parallel_rays_focus_at_back_focal_plane_center(focal_length):
     """Parallel input rays should intersect at (0, 0) in the back focal plane."""
-    rays_in, _, _ = make_gaussian_plane_wave_round_aperture(num_rays=2000, aperture_radius=2e-4)
+    rays_in = make_gaussian_plane_wave_round_aperture(num_rays=2000, aperture_radius=2e-4)
 
     assert np.allclose(np.asarray(rays_in.dx), 0.0)
     assert np.allclose(np.asarray(rays_in.dy), 0.0)
@@ -433,6 +441,45 @@ def test_parallel_rays_focus_at_back_focal_plane_center(focal_length):
     tol = 1e-9
     assert np.max(np.abs(x)) < tol
     assert np.max(np.abs(y)) < tol
+
+
+def test_round_aperture_lens_preserves_packet_amplitudes():
+    """Regression: the lens propagation in the notebook scenario must not amplify packets."""
+    W = 100e-9
+    Nx = Ny = 128
+    dx = W / Nx
+    dy = W / Ny
+
+    input_grid = Detector(z=0.0, pixel_size=(dx, dy), shape=(Nx, Ny))
+    voltage = 1.0
+
+    rays_in = make_gaussian_plane_wave_round_aperture(
+        voltage=voltage,
+        aperture_radius=W / 4,
+        overlap_factor=0.1,
+        num_rays=3,
+        normalization="none",
+        sampling="uniform",
+    ).to_vector()
+
+    magnification = -10.0
+    focal_length = 0.5e-3
+    z1 = focal_length * (1.0 / magnification - 1.0)
+    z2 = focal_length * (1.0 - magnification)
+
+    lens = Lens(focal_length=focal_length, z=abs(z1))
+    output_grid = Detector(
+        z=abs(z1) + abs(z2),
+        pixel_size=(dx * 50, dy * 50),
+        shape=(Nx, Ny),
+    )
+
+    rays_out = jax.vmap(run_to_end, in_axes=(0, None))(rays_in, [input_grid, lens, output_grid])
+    field = evaluate_gaussians_for(rays_out, output_grid)
+
+    max_field_amp = float(np.max(np.abs(field)))
+    expected_amp = float(np.max(np.abs(np.asarray(rays_out.C))))
+    np.testing.assert_allclose(max_field_amp, expected_amp, rtol=1e-6, atol=1e-9)
 
 
 @pytest.mark.parametrize("voltage_ev", [200e3, 80e3])
@@ -530,10 +577,10 @@ def test_fraunhofer_lens_matches_fourier_transform():
     """Gaussian at the front focal plane should equal the Fraunhofer pattern at the back."""
     w0 = 1e-7
     focal_length = 1e-2
-    rays_in, wavelength, k0 = make_gaussian_plane_wave_round_aperture(
-        num_rays=1, waist_radius=w0, aperture_radius=5e-6, voltage=1
+    rays_in = make_gaussian_plane_wave_round_aperture(
+        num_rays=1, waist_radius=w0, aperture_radius=5e-6, voltage=1, normalization="none"
     )
-
+    wavelength = rays_in.wavelength[0]
     lens = Lens(focal_length=focal_length, z=focal_length)
     detector = Detector(
         z=2 * focal_length,
@@ -565,7 +612,7 @@ def test_tilted_rays_shift_peak_to_expected_quadrant():
     detector = Detector(z=2e-3, pixel_size=(5e-7, 5e-7), shape=(256, 256))
     X, Y = _detector_mesh(detector)
 
-    base_rays, _, _ = make_gaussian_plane_wave_round_aperture(num_rays=1, waist_radius=2e-7, aperture_radius=1e-6)
+    base_rays = make_gaussian_plane_wave_round_aperture(num_rays=1, waist_radius=2e-7, aperture_radius=1e-6)
     base_out = _propagate_rays(base_rays, [detector])
     base_field = np.abs(np.asarray(evaluate_gaussians_for(base_out, detector)))
     centre_idx = np.unravel_index(np.argmax(base_field), base_field.shape)
