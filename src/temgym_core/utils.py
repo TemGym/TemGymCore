@@ -259,6 +259,48 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np):
     return u2
 
 
+def FresnelPropagator1D(u1, L, wavelength, z, xp=np):
+    """1D Fresnel propagation via transfer function (frequency-domain).
+
+    Parameters
+    ----------
+    u1 : array_like, shape (N,)
+        Complex field at the source line.
+    L : float
+        Physical length of the simulation window (metres).
+    wavelength : float
+        Wavelength (metres).
+    z : float
+        Propagation distance (metres).
+    xp : module, optional
+        Array module providing FFT routines (defaults to numpy).
+
+    Returns
+    -------
+    u2 : array_like, shape (N,)
+        Propagated 1D field at distance z.
+    """
+    u1 = xp.asarray(u1)
+    if u1.ndim != 1:
+        raise ValueError("u1 must be a 1D array.")
+
+    N = u1.shape[0]
+    dx = L / N
+
+    # frequency coordinate (cycles per metre)
+    f = xp.fft.fftfreq(N, d=dx)
+
+    # 1D Fresnel transfer function in unshifted FFT domain
+    H = xp.exp(-1j * xp.pi * wavelength * z * (f**2))
+
+    # forward FFT, multiply by transfer function, and inverse FFT
+    U1 = xp.fft.fft(u1)
+    U2 = H * U1
+    u2 = xp.fft.ifft(U2)
+    u2 *= xp.exp(1j * 2 * xp.pi * z / wavelength)        # e^{ikz}
+    return u2
+
+
 def AngularSpectrumPropagator(u1, L, wavelength, z, xp=np):
     """Propagate a complex field by distance z using the angular spectrum method.
 
