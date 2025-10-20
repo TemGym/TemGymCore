@@ -332,6 +332,7 @@ def fibonacci_spiral(
     nb_samples: int,
     radius: float,
     alpha=2,
+    **_,
 ):
     # From https://github.com/matt77hias/fibpy/blob/master/src/sampling.py
     # Fibonacci spiral sampling in a unit circle
@@ -357,6 +358,121 @@ def fibonacci_spiral(
     y = rr * np.sin(phi)
 
     return x, y
+
+
+def uniform_disk(
+    nb_samples: int,
+    radius: float,
+    *,
+    waist_radius: float | None = None,
+    overlap_factor: float | None = None,
+    max_iterations: int = 20,
+    **_,
+):
+    if nb_samples < 0:
+        raise ValueError("nb_samples must be non-negative.")
+    if radius <= 0.0 and nb_samples > 0:
+        raise ValueError("radius must be positive for non-zero samples.")
+    if nb_samples == 0:
+        empty = np.empty(0, dtype=float)
+        return empty, empty
+    if nb_samples == 1:
+        return np.array([0.0], dtype=float), np.array([0.0], dtype=float)
+
+    if overlap_factor is not None and overlap_factor <= 0.0:
+        raise ValueError("overlap_factor must be positive when provided.")
+
+    area = np.pi * radius**2
+    if area == 0.0:
+        return np.zeros(nb_samples, dtype=float), np.zeros(nb_samples, dtype=float)
+
+    if waist_radius is not None and overlap_factor is not None:
+        base_spacing = waist_radius / overlap_factor
+    else:
+        base_spacing = np.sqrt(area / nb_samples)
+    if base_spacing <= 0.0:
+        raise ValueError("Computed spacing must be positive.")
+
+    tol = 1e-12
+
+    def build_rings(spacing: float) -> list[np.ndarray]:
+        rings: list[np.ndarray] = []
+        rings.append(np.array([[0.0, 0.0]], dtype=float))
+        total = 1
+        ring_idx = 1
+        while True:
+            r = ring_idx * spacing
+            if r > radius + tol:
+                break
+            circumference = 2.0 * np.pi * r
+            points_on_ring = max(1, int(np.round(circumference / spacing)))
+            angles = np.linspace(0.0, 2.0 * np.pi, points_on_ring, endpoint=False, dtype=float)
+            coords = np.stack((r * np.cos(angles), r * np.sin(angles)), axis=1)
+            rings.append(coords)
+            total += points_on_ring
+            if total >= nb_samples:
+                break
+            ring_idx += 1
+        return rings
+
+    spacing = base_spacing
+    for _ in range(max_iterations):
+        rings = build_rings(spacing)
+        counts = [ring.shape[0] for ring in rings]
+        total_points = sum(counts)
+
+        if total_points < nb_samples:
+            ratio = total_points / nb_samples if total_points > 0 else 0.5
+            spacing *= max(0.2, np.sqrt(max(ratio, 1e-6)))
+            continue
+
+        excess = total_points - nb_samples
+        if excess > 0:
+            last_ring = rings[-1]
+            last_count = last_ring.shape[0]
+            if excess >= last_count:
+                rings.pop()
+                total_points -= last_count
+                excess = total_points - nb_samples
+                if excess > 0 and rings:
+                    last_ring = rings[-1]
+                    last_count = last_ring.shape[0]
+            if rings and excess > 0:
+                keep = last_count - excess
+                if keep <= 0:
+                    rings.pop()
+                else:
+                    idx = np.linspace(0, last_count - 1, keep, endpoint=False, dtype=float)
+                    idx = np.clip(np.round(idx).astype(int), 0, last_count - 1)
+                    rings[-1] = last_ring[idx]
+        coords = np.concatenate(rings, axis=0)
+        if coords.shape[0] == nb_samples:
+            coords = _snap_to_spacing(coords, base_spacing, radius, tol)
+            return coords[:, 0], coords[:, 1]
+        if coords.shape[0] > nb_samples:
+            coords = coords[:nb_samples]
+            coords = _snap_to_spacing(coords, base_spacing, radius, tol)
+            return coords[:, 0], coords[:, 1]
+        spacing *= 0.9
+
+    raise RuntimeError("Could not construct uniform disk sampling with the requested parameters.")
+
+
+def _snap_to_spacing(coords: np.ndarray, spacing: float, radius: float, tol: float) -> np.ndarray:
+    radii = np.linalg.norm(coords, axis=1)
+    snapped = coords.copy()
+    mask = radii > tol
+    if not np.any(mask):
+        return snapped
+
+    snap_spacing = np.round(spacing, decimals=12)
+    snap_spacing = snap_spacing if snap_spacing > 0 else spacing
+    target = np.round(radii[mask] / snap_spacing) * snap_spacing
+    max_multiple = np.floor(radius / snap_spacing)
+    target = np.clip(target, 0.0, max_multiple * snap_spacing)
+    scale = np.where(radii[mask] > 0.0, target / radii[mask], 1.0)
+    snapped[mask] *= scale[:, None]
+    return snapped
 
 
 def wavelength2energy(wavelength: float) -> float:

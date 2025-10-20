@@ -78,16 +78,20 @@ class Ray(HasParamsMixin):
     @property
     def r_xy(self):
         # shape: (2,) for scalar rays, (N, 2) for vectorized rays
-        arr = jnp.stack((self.x, self.y), axis=-1)
-        if self.x.size < 2 and self.y.size < 2:
+        x = jnp.asarray(self.x)
+        y = jnp.asarray(self.y)
+        arr = jnp.stack((x, y), axis=-1)
+        if x.ndim == 0 and y.ndim == 0:
             return arr.reshape(2)
         return arr
 
     @property
     def d_xy(self):
         # shape: (2,) for scalar rays, (N, 2) for vectorized rays
-        arr = jnp.stack((self.dx, self.dy), axis=-1)
-        if self.dx.size < 2 and self.dy.size < 2:
+        dx = jnp.asarray(self.dx)
+        dy = jnp.asarray(self.dy)
+        arr = jnp.stack((dx, dy), axis=-1)
+        if dx.ndim == 0 and dy.ndim == 0:
             return arr.reshape(2)
         return arr
 
