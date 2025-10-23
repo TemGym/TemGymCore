@@ -256,6 +256,7 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np):
     U1 = xp.fft.fft2(u1)
     U2 = H * U1
     u2 = xp.fft.ifft2(U2)
+    u2 *= xp.exp(1j * 2 * xp.pi * z / wavelength)        # e^{ikz}
     return u2
 
 
