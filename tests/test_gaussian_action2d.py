@@ -1,8 +1,15 @@
 import numpy as np
 import jax
 import jax.numpy as jnp
+import pytest
 
-from temgym_core.gaussian_action2D import ThinLens2D, AberratedLens2D
+from temgym_core.gaussian_action2D import (
+    ThinLens2D,
+    AberratedLens2D,
+    GaussianBeamFactory,
+    GaussianBeamBundle,
+    GaussianBeam,
+)
 
 jax.config.update("jax_enable_x64", True)
 
@@ -58,3 +65,28 @@ def test_aberrated_lens_differs_from_thin_lens_when_aberration_nonzero():
     phase_aberrated = aberrated.phase_shift(xy)
 
     assert not np.isclose(float(phase_thin), float(phase_aberrated))
+
+
+def test_gaussian_beam_factory_round_aperture_outputs_gaussian_rays():
+    factory = GaussianBeamFactory(
+        voltage=200e3,
+        waist_radius=5e-9,
+        normalization="unit",
+    )
+    beam = factory.round_aperture(aperture_radius=1e-8, num_rays=4)
+
+    assert isinstance(beam, GaussianBeamBundle)
+    assert len(beam) == 4
+    assert beam.rays and all(isinstance(ray, GaussianBeam) for ray in beam.rays)
+
+    stacked = beam.stack_parameters()
+    assert stacked["C"].shape == (4,)
+    assert stacked["S1"].shape == (4, 2)
+    assert stacked["S2"].shape == (4, 2, 2)
+    assert stacked["voltage"].shape == (4,)
+
+    first_ray = beam.rays[0]
+    assert first_ray.voltage == pytest.approx(factory.voltage)
+    assert first_ray.wavelength > 0.0
+    assert first_ray.mass > 0.0
+    assert first_ray.sigma > 0.0
