@@ -5,7 +5,13 @@ import jax_dataclasses as jdc
 import numpy as np
 from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tuple
 
+from ase import units
+
 from .utils import energy2wavelength, fibonacci_spiral, uniform_disk
+
+
+def relativistic_mass_correction(energy: float) -> float:
+    return 1 + units._e * energy / (units._me * units._c**2)
 
 
 def _sym(M: jnp.ndarray) -> jnp.ndarray:
@@ -18,17 +24,17 @@ def _slogdet_complex(M: jnp.ndarray) -> jnp.ndarray:
 
 
 @jdc.pytree_dataclass
-class GaussianRay2D:
+class GaussianBeam:
     """
-    ψ(x) = C * exp(i k S(x)),  S(x) = S1·(x - r0) + 1/2 (x - r0)^T S2 (x - r0)
+    ψ(x) = C · exp(i k S(x)), S(x) = S1·(x - r0) + 1/2 (x - r0)^T S2 (x - r0)
     S1 ∈ C^2, S2 ∈ C^{2×2} (symmetric), r0 ∈ R^2
     """
     C: complex
     S1: jnp.ndarray
     S2: jnp.ndarray
     r0: jnp.ndarray
-    k: float = 1.0
     z: float = 0.0
+    voltage: float | None = None
 
     def action(self, xy: jnp.ndarray) -> jnp.ndarray:
         xy = jnp.asarray(xy, dtype=jnp.float64)
@@ -61,59 +67,105 @@ class GaussianRay2D:
         p = jnp.real(self.S1 + _sym(self.S2) @ xi_c)
         return p / self.k
 
-    def recenter(self, C, S1, S2, r0, k):
+    def recenter(self, C, S1, S2, r0):
         S1 = jnp.asarray(S1, dtype=jnp.complex128)
         S2s = _sym(jnp.asarray(S2, dtype=jnp.complex128))
         r0 = jnp.asarray(r0, dtype=jnp.float64)
         xi_c = jnp.linalg.solve(jnp.imag(S2s), -jnp.imag(S1))
         x_c = r0 + xi_c
         phase = (S1 @ xi_c) + 0.5 * (xi_c @ (S2s @ xi_c))
-        Cn = C * jnp.exp(1j * k * phase)
+        Cn = C * jnp.exp(1j * self.k * phase)
         S1n = S1 + S2s @ xi_c
         return Cn, S1n, S2s, x_c
 
-    def _with_params(self, C=None, S1=None, S2=None, r0=None, k=None, z=None):
+    def _with_params(self, C=None, S1=None, S2=None, r0=None, z=None):
         C = self.C if C is None else C
         S1 = self.S1 if S1 is None else S1
         S2 = self.S2 if S2 is None else S2
         r0 = self.r0 if r0 is None else r0
-        k = self.k if k is None else k
         z = self.z if z is None else z
-        C, S1, S2, r0 = self.recenter(C, S1, S2, r0, k)
-        return GaussianRay2D(C=C, S1=S1, S2=S2, r0=r0, k=k, z=z)
+        C, S1, S2, r0 = self.recenter(C, S1, S2, r0)
+        return GaussianBeam(C=C, S1=S1, S2=S2, r0=r0, z=z, voltage=self.voltage)
+
+    @property
+    def prefactor(self) -> complex:
+        return self.C
+
+    @property
+    def wavelength(self) -> float:
+        return float(energy2wavelength(self.voltage))
+
+    @property
+    def mass(self) -> float:
+        return relativistic_mass_correction(self.voltage) * units._me
+
+    @property
+    def sigma(self) -> float:
+        return (
+            2
+            * jnp.pi
+            * self.mass
+            * units.kg
+            * units._e
+            * units.C
+            * self.wavelength
+            / (units._hplanck * units.s * units.J) ** 2
+        )
+
+    @property
+    def k(self) -> float:
+        return float(2 * jnp.pi / self.wavelength)
 
     @staticmethod
     def make_gaussian(
-        x: float, y: float,
-        dx: float = 0.0, dy: float = 0.0,
-        InitAmp: float = 1.0, InitPhase: float = 0.0,
-        waist_x: float = 1.0, waist_y: float = 1.0,
+        x: float,
+        y: float,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        InitAmp: float = 1.0,
+        InitPhase: float = 0.0,
+        waist_x: float = 1.0,
+        waist_y: float = 1.0,
         RadiusOfCurvature_x: float = jnp.inf,
         RadiusOfCurvature_y: float = jnp.inf,
-        k: float = 1.0, z: float = 0.0,
-    ) -> "GaussianRay2D":
-        r0 = jnp.array([x, y], dtype=jnp.float64)
-        S1 = jnp.array([k * dx, k * dy], dtype=jnp.complex128)
+        z: float = 0.0,
+        voltage: float | None = None,
+    ) -> "GaussianBeam":
+        k_val = 2.0 * jnp.pi / energy2wavelength(voltage)
 
-        def curv(R): return 0.0 if jnp.isinf(R) else 1.0 / R
-        S2_real = jnp.diag(jnp.array([curv(RadiusOfCurvature_x), curv(RadiusOfCurvature_y)],
-                                     dtype=jnp.float64))
-        S2_imag = jnp.diag(jnp.array([
-            1.0 / (2.0 * k * max(waist_x ** 2, 1e-12)),
-            1.0 / (2.0 * k * max(waist_y ** 2, 1e-12)),
-        ], dtype=jnp.float64))
+        r0 = jnp.array([x, y], dtype=jnp.float64)
+        S1 = jnp.array([k_val * dx, k_val * dy], dtype=jnp.complex128)
+
+        def curv(R):
+            return 0.0 if jnp.isinf(R) else 1.0 / R
+
+        S2_real = jnp.diag(
+            jnp.array(
+                [curv(RadiusOfCurvature_x), curv(RadiusOfCurvature_y)],
+                dtype=jnp.float64,
+            )
+        )
+        S2_imag = jnp.diag(
+            jnp.array(
+                [
+                    1.0 / (2.0 * k_val * max(waist_x**2, 1e-12)),
+                    1.0 / (2.0 * k_val * max(waist_y**2, 1e-12)),
+                ],
+                dtype=jnp.float64,
+            )
+        )
         S2 = (S2_real + 1j * S2_imag).astype(jnp.complex128)
         C = InitAmp * jnp.exp(1j * InitPhase)
-        return GaussianRay2D(C=C, S1=S1, S2=S2, r0=r0, k=k, z=float(z))
+        return GaussianBeam(C=C, S1=S1, S2=S2, r0=r0, z=float(z), voltage=voltage)
 
 
 def apply_action_delta(
-    ray: GaussianRay2D,
+    ray: GaussianBeam,
     dS0: complex = 0.0 + 0.0j,
     dS1: jnp.ndarray | complex = 0.0 + 0.0j,  # scalar or (2,)
     dS2: Optional[jnp.ndarray] = None,        # (2,2) or None
     *, z: Optional[float] = None,
-) -> GaussianRay2D:
+) -> GaussianBeam:
 
     phi0, phi1, phi2 = jnp.real(dS0), jnp.real(dS1), jnp.real(dS2)
     ell0 = -ray.k * jnp.imag(dS0)
@@ -160,7 +212,7 @@ class Component2D:
     def complex_action(self, xy: jnp.ndarray, k: float) -> complex:
         return self.phase_shift(xy) - 1j * self.log_transmission(xy) / k
 
-    def __call__(self, ray: GaussianRay2D) -> GaussianRay2D:
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
         xy_ref = jnp.asarray(ray.ray_position(), dtype=jnp.float64)
         k = ray.k
 
@@ -173,7 +225,7 @@ class Component2D:
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class ThinLens2D(Component2D):
+class Lens(Component2D):
     focal_length: float
     center: tuple[float, float] = (0.0, 0.0)
 
@@ -234,7 +286,7 @@ class ABCDPropagator2D:
     L: float = 0.0
     eps: float = 1e-12
 
-    def __call__(self, ray: GaussianRay2D) -> GaussianRay2D:
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
         A, B, C, D = self.A, self.B, self.C, self.D
         L = jnp.asarray(self.L, dtype=jnp.float64)
 
@@ -245,7 +297,7 @@ class ABCDPropagator2D:
         # predicate: imaging-like if ||B|| is tiny
         pred = jnp.less(jnp.linalg.norm(B), self.eps)
 
-        def imaging_fn(r: GaussianRay2D):
+        def imaging_fn(r: GaussianBeam):
             den = A  # B ~ 0
             r0p = jnp.real(den @ r.r0)                     # keep center real
             S2p = (C + D @ r.S2) @ jnp.linalg.solve(den, jnp.eye(2, dtype=den.dtype))
@@ -256,7 +308,7 @@ class ABCDPropagator2D:
             Cp = r.C * jnp.exp(-0.5 * logdet) * jnp.exp(1j * r.k * (dS0 + L))
             return r._with_params(C=Cp, S1=S1p, S2=S2p, r0=r0p, z=r.z + self.L)
 
-        def general_fn(r: GaussianRay2D):
+        def general_fn(r: GaussianBeam):
             den = A + B @ r.S2
             den_inv = jnp.linalg.solve(den, jnp.eye(2, dtype=den.dtype))
             S2p = (C + D @ r.S2) @ den_inv
@@ -320,7 +372,7 @@ def passthrough_transform(component):
 
 
 class BaseGaussianPropagator2D:
-    def propagate(self, ray: GaussianRay2D, distance: float):
+    def propagate(self, ray: GaussianBeam, distance: float):
         raise NotImplementedError
 
     def with_distance(self, distance: float):
@@ -331,19 +383,19 @@ class GaussianPropagator2D(NamedTuple):
     distance: float
     propagator: BaseGaussianPropagator2D
 
-    def __call__(self, ray: GaussianRay2D):
+    def __call__(self, ray: GaussianBeam):
         return self.propagator.propagate(ray, self.distance)
 
 
 class FreeSpaceParaxial2D(BaseGaussianPropagator2D):
-    def propagate(self, ray: GaussianRay2D, distance: float):
+    def propagate(self, ray: GaussianBeam, distance: float):
         if abs(distance) <= 1e-12:
             return ray
         return ABCDPropagator2D.free_space(distance)(ray)
 
 
 def run_iter(
-    ray: GaussianRay2D,
+    ray: GaussianBeam,
     components: Sequence[Any],
     transform: TransformT = passthrough_transform,
     propagator: BaseGaussianPropagator2D = FreeSpaceParaxial2D(),
@@ -364,24 +416,23 @@ def run_iter(
 
 
 def run_to_end(
-    ray: GaussianRay2D,
+    ray: GaussianBeam,
     components: Sequence[Any],
     propagator: BaseGaussianPropagator2D = FreeSpaceParaxial2D(),
-) -> GaussianRay2D:
+) -> GaussianBeam:
     for _, ray in run_iter(ray, components, propagator=propagator):
         pass
     return ray
 
 
 @jdc.pytree_dataclass
-class GaussianBeam2D:
-    rays: tuple[GaussianRay2D, ...]
+class GaussianBeamBundle:
+    rays: tuple[GaussianBeam, ...]
     coords: jnp.ndarray
     waist: tuple[float, float]
     radius_of_curvature: tuple[float, float]
     voltage: float
     wavelength: float
-    k: float
 
     def __len__(self) -> int:
         return len(self.rays)
@@ -401,20 +452,20 @@ class GaussianBeam2D:
                 "S2": empty_mat,
                 "r0": empty_vec,
                 "z": empty_real,
-                "k": jnp.zeros((0,), dtype=jnp.float64),
+                "voltage": jnp.zeros((0,), dtype=jnp.float64),
             }
         Cs = jnp.stack([ray.C for ray in self.rays], axis=0)
         S1s = jnp.stack([ray.S1 for ray in self.rays], axis=0)
         S2s = jnp.stack([ray.S2 for ray in self.rays], axis=0)
         r0s = jnp.stack([ray.r0 for ray in self.rays], axis=0)
         zs = jnp.stack([jnp.asarray(ray.z, dtype=jnp.float64) for ray in self.rays], axis=0)
-        ks = jnp.full((len(self),), self.k, dtype=jnp.float64)
-        return {"C": Cs, "S1": S1s, "S2": S2s, "r0": r0s, "z": zs, "k": ks}
+        voltages = jnp.full((len(self),), self.voltage, dtype=jnp.float64)
+        return {"C": Cs, "S1": S1s, "S2": S2s, "r0": r0s, "z": zs, "voltage": voltages}
 
 
-class GaussianBeamFactory2D:
+class GaussianBeamFactory:
     """
-    Factory for constructing collections of :class:`GaussianRay2D` packets
+    Factory for constructing collections of :class:`GaussianBeam` packets
     with configurable sampling over common aperture shapes.
     """
 
@@ -430,23 +481,11 @@ class GaussianBeamFactory2D:
         sampler_kwargs: Optional[dict[str, Any]] = None,
         initial_z: float = 0.0,
         dtype=jnp.float64,
-        wavelength: float | None = None,
-        k: float | None = None,
     ):
         self.voltage = float(voltage)
-        if k is not None and wavelength is not None:
-            raise ValueError("Provide either wavelength or k, not both.")
-        if k is not None:
-            if k <= 0.0:
-                raise ValueError("k must be positive.")
-            self.k = float(k)
-            self.wavelength = float(2.0 * np.pi / self.k)
-        else:
-            wl = wavelength if wavelength is not None else energy2wavelength(self.voltage)
-            if wl <= 0.0:
-                raise ValueError("wavelength must be positive.")
-            self.wavelength = float(wl)
-            self.k = 2.0 * np.pi / self.wavelength
+        self.wavelength = energy2wavelength(self.voltage)
+        self.k = 2.0 * jnp.pi / self.wavelength
+
         if waist_radius is not None and waist_radius <= 0.0:
             raise ValueError("waist_radius must be positive when provided.")
         if overlap_factor is not None and overlap_factor <= 0.0:
@@ -533,20 +572,19 @@ class GaussianBeamFactory2D:
         dy: float,
         amplitude: float | Sequence[float] = 1.0,
         phase: float | Sequence[float] = 0.0,
-    ) -> GaussianBeam2D:
+    ) -> GaussianBeamBundle:
         xs = jnp.asarray(xs, dtype=self.dtype)
         ys = jnp.asarray(ys, dtype=self.dtype)
         num = int(xs.shape[0])
         if num == 0:
             coords = jnp.zeros((0, 2), dtype=self.dtype)
-            return GaussianBeam2D(
+            return GaussianBeamBundle(
                 rays=tuple(),
                 coords=coords,
                 waist=waist_xy,
                 radius_of_curvature=radius_of_curvature_xy,
                 voltage=self.voltage,
                 wavelength=self.wavelength,
-                k=self.k,
             )
 
         prefactors = self._prefactor(num, area, waist_xy[0])
@@ -576,7 +614,7 @@ class GaussianBeamFactory2D:
         rcx, rcy = radius_of_curvature_xy
         wx, wy = waist_xy
         rays = tuple(
-            GaussianRay2D.make_gaussian(
+            GaussianBeam.make_gaussian(
                 x=float(x),
                 y=float(y),
                 dx=float(dx),
@@ -587,20 +625,19 @@ class GaussianBeamFactory2D:
                 waist_y=float(wy),
                 RadiusOfCurvature_x=float(rcx),
                 RadiusOfCurvature_y=float(rcy),
-                k=self.k,
                 z=float(initial_z),
+                voltage=self.voltage,
             )
             for x, y, amp, ph in zip(xs_np, ys_np, amp_np, phase_np)
         )
         coords = jnp.asarray(np.column_stack((xs_np, ys_np)), dtype=self.dtype)
-        return GaussianBeam2D(
+        return GaussianBeamBundle(
             rays=rays,
             coords=coords,
             waist=waist_xy,
             radius_of_curvature=radius_of_curvature_xy,
             voltage=self.voltage,
             wavelength=self.wavelength,
-            k=self.k,
         )
 
     def round_aperture(
@@ -617,7 +654,7 @@ class GaussianBeamFactory2D:
         dy: float = 0.0,
         amplitude: float | Sequence[float] = 1.0,
         phase: float | Sequence[float] = 0.0,
-    ) -> GaussianBeam2D:
+    ) -> GaussianBeamBundle:
         sampler = sampler or self.sampler
         combined_kwargs = dict(self.sampler_kwargs)
         if sampler_kwargs:
@@ -661,7 +698,7 @@ class GaussianBeamFactory2D:
         dy: float = 0.0,
         amplitude: float | Sequence[float] = 1.0,
         phase: float | Sequence[float] = 0.0,
-    ) -> GaussianBeam2D:
+    ) -> GaussianBeamBundle:
         if semi_axis_x <= 0.0 or semi_axis_y <= 0.0:
             raise ValueError("Ellipse semi-axes must be positive.")
         sampler = sampler or self.sampler
@@ -731,7 +768,7 @@ class GaussianBeamFactory2D:
         dy: float = 0.0,
         amplitude: float | Sequence[float] = 1.0,
         phase: float | Sequence[float] = 0.0,
-    ) -> GaussianBeam2D:
+    ) -> GaussianBeamBundle:
         width = side_length
         height = side_length if side_length_y is None else side_length_y
         if width <= 0.0 or height <= 0.0:
@@ -827,65 +864,3 @@ class GaussianBeamFactory2D:
                 if count == num_points:
                     break
         return np.asarray(coords, dtype=float)
-
-
-def beam_to_gaussian_ray_beta(beam: GaussianBeam2D):
-    """
-    Convert a :class:`GaussianBeam2D` into the legacy :class:`GaussianRayBeta`
-    batch for interoperability with the older propagation utilities.
-    """
-    from .gaussian import GaussianRayBeta, TaylorExpofAction  # lazy import to avoid cycles
-
-    num = len(beam)
-    if num == 0:
-        zeros = jnp.zeros((0,), dtype=jnp.float64)
-        ones = jnp.zeros((0,), dtype=jnp.float64)
-        empty_complex = jnp.zeros((0,), dtype=jnp.complex128)
-        S = TaylorExpofAction(
-            const=empty_complex,
-            lin=jnp.zeros((0, 2), dtype=jnp.complex128),
-            quad=jnp.zeros((0, 2, 2), dtype=jnp.complex128),
-        )
-        return GaussianRayBeta(
-            x=zeros,
-            y=zeros,
-            dx=zeros,
-            dy=zeros,
-            z=zeros,
-            pathlength=zeros,
-            _one=ones,
-            C=empty_complex,
-            S=S,
-            voltage=zeros,
-        )
-
-    dtype = jnp.float64
-    complex_dtype = jnp.complex128
-    r0 = jnp.stack([ray.r0 for ray in beam.rays], axis=0).astype(dtype)
-    x = r0[:, 0]
-    y = r0[:, 1]
-    slopes = jnp.stack([ray.ray_slope() for ray in beam.rays], axis=0)
-    dx = slopes[:, 0]
-    dy = slopes[:, 1]
-    z = jnp.stack([jnp.asarray(ray.z, dtype=dtype) for ray in beam.rays], axis=0)
-    zeros = jnp.zeros(num, dtype=dtype)
-    ones = jnp.ones(num, dtype=dtype)
-    C = jnp.stack([ray.C for ray in beam.rays], axis=0).astype(complex_dtype)
-    lin = jnp.stack([ray.S1 for ray in beam.rays], axis=0).astype(complex_dtype)
-    quad = jnp.stack([ray.S2 for ray in beam.rays], axis=0).astype(complex_dtype)
-    const = jnp.zeros(num, dtype=complex_dtype)
-    S = TaylorExpofAction(const=const, lin=lin, quad=quad)
-    voltage = jnp.full((num,), beam.voltage, dtype=dtype)
-
-    return GaussianRayBeta(
-        x=x,
-        y=y,
-        dx=dx,
-        dy=dy,
-        z=z,
-        pathlength=zeros,
-        _one=ones,
-        C=C,
-        S=S,
-        voltage=voltage,
-    )
