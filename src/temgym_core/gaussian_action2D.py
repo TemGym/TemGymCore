@@ -2,7 +2,10 @@ import jax
 import jax.numpy as jnp
 import jax.nn as jnn
 import jax_dataclasses as jdc
+import numpy as np
 from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tuple
+
+from .utils import energy2wavelength, fibonacci_spiral, uniform_disk
 
 
 def _sym(M: jnp.ndarray) -> jnp.ndarray:
@@ -368,3 +371,521 @@ def run_to_end(
     for _, ray in run_iter(ray, components, propagator=propagator):
         pass
     return ray
+
+
+@jdc.pytree_dataclass
+class GaussianBeam2D:
+    rays: tuple[GaussianRay2D, ...]
+    coords: jnp.ndarray
+    waist: tuple[float, float]
+    radius_of_curvature: tuple[float, float]
+    voltage: float
+    wavelength: float
+    k: float
+
+    def __len__(self) -> int:
+        return len(self.rays)
+
+    def __iter__(self):
+        return iter(self.rays)
+
+    def stack_parameters(self) -> dict[str, jnp.ndarray]:
+        if not self.rays:
+            empty_complex = jnp.zeros((0,), dtype=jnp.complex128)
+            empty_real = jnp.zeros((0,), dtype=jnp.float64)
+            empty_vec = jnp.zeros((0, 2), dtype=jnp.float64)
+            empty_mat = jnp.zeros((0, 2, 2), dtype=jnp.complex128)
+            return {
+                "C": empty_complex,
+                "S1": empty_mat[..., 0],  # share empty view
+                "S2": empty_mat,
+                "r0": empty_vec,
+                "z": empty_real,
+                "k": jnp.zeros((0,), dtype=jnp.float64),
+            }
+        Cs = jnp.stack([ray.C for ray in self.rays], axis=0)
+        S1s = jnp.stack([ray.S1 for ray in self.rays], axis=0)
+        S2s = jnp.stack([ray.S2 for ray in self.rays], axis=0)
+        r0s = jnp.stack([ray.r0 for ray in self.rays], axis=0)
+        zs = jnp.stack([jnp.asarray(ray.z, dtype=jnp.float64) for ray in self.rays], axis=0)
+        ks = jnp.full((len(self),), self.k, dtype=jnp.float64)
+        return {"C": Cs, "S1": S1s, "S2": S2s, "r0": r0s, "z": zs, "k": ks}
+
+
+class GaussianBeamFactory2D:
+    """
+    Factory for constructing collections of :class:`GaussianRay2D` packets
+    with configurable sampling over common aperture shapes.
+    """
+
+    def __init__(
+        self,
+        *,
+        voltage: float = 200e3,
+        waist_radius: float | None = None,
+        overlap_factor: float | None = None,
+        normalization: str = "unit",
+        sampler: Optional[Callable[..., tuple[np.ndarray, np.ndarray]]] = None,
+        sampling: str | None = None,
+        sampler_kwargs: Optional[dict[str, Any]] = None,
+        initial_z: float = 0.0,
+        dtype=jnp.float64,
+        wavelength: float | None = None,
+        k: float | None = None,
+    ):
+        self.voltage = float(voltage)
+        if k is not None and wavelength is not None:
+            raise ValueError("Provide either wavelength or k, not both.")
+        if k is not None:
+            if k <= 0.0:
+                raise ValueError("k must be positive.")
+            self.k = float(k)
+            self.wavelength = float(2.0 * np.pi / self.k)
+        else:
+            wl = wavelength if wavelength is not None else energy2wavelength(self.voltage)
+            if wl <= 0.0:
+                raise ValueError("wavelength must be positive.")
+            self.wavelength = float(wl)
+            self.k = 2.0 * np.pi / self.wavelength
+        if waist_radius is not None and waist_radius <= 0.0:
+            raise ValueError("waist_radius must be positive when provided.")
+        if overlap_factor is not None and overlap_factor <= 0.0:
+            raise ValueError("overlap_factor must be positive when provided.")
+        if waist_radius is None and overlap_factor is None:
+            raise ValueError("Provide either waist_radius or overlap_factor.")
+        self.waist_radius = float(waist_radius) if waist_radius is not None else None
+        self.overlap_factor = float(overlap_factor) if overlap_factor is not None else None
+        self._last_waist_radius = self.waist_radius
+
+        if normalization not in ("unit", "none"):
+            raise ValueError(f"Unknown normalization mode: {normalization}")
+        self.normalization = normalization
+
+        if sampler is not None and sampling is not None:
+            raise ValueError("Provide either sampler or sampling, not both.")
+        if sampler is None:
+            sampling = sampling or "fibonacci"
+            if sampling == "fibonacci":
+                sampler = fibonacci_spiral
+            elif sampling == "uniform":
+                sampler = uniform_disk
+            else:
+                raise ValueError(f"Unknown sampling mode: {sampling}")
+        self.sampler = sampler
+        self.sampling_mode = sampling
+
+        self.sampler_kwargs = sampler_kwargs or {}
+        self.initial_z = float(initial_z)
+        self.dtype = dtype
+
+    @staticmethod
+    def _as_pair(value: float | tuple[float, float] | None, *, default: tuple[float, float]) -> tuple[float, float]:
+        if value is None:
+            return default
+        if np.isscalar(value):
+            scalar = float(value)
+            return scalar, scalar
+        if len(value) != 2:
+            raise ValueError("Expected a pair of values.")
+        return float(value[0]), float(value[1])
+
+    def _resolve_waist_radius(self, num: int, area: float | None) -> float:
+        if self.waist_radius is not None:
+            value = self.waist_radius
+        else:
+            if self.overlap_factor is None:
+                raise ValueError(
+                    "Cannot resolve waist radius without either a manual waist radius "
+                    "or an overlap factor."
+                )
+            if area is None or area <= 0.0:
+                raise ValueError("A positive aperture area is required to infer waist radius.")
+            if num <= 0:
+                raise ValueError("Number of rays must be positive to infer waist radius.")
+            value = float(self.overlap_factor * np.sqrt(area / num))
+        self._last_waist_radius = value
+        return value
+
+    def _resolve_initial_z(self, value: float | None) -> float:
+        return self.initial_z if value is None else float(value)
+
+    @property
+    def last_waist_radius(self) -> float | None:
+        return self._last_waist_radius
+
+    def _prefactor(self, num: int, area: float | None, waist_radius: float) -> jnp.ndarray:
+        if self.normalization == "unit":
+            return jnp.ones(num, dtype=jnp.complex128)
+        if self.normalization == "none":
+            return jnp.ones(num, dtype=jnp.complex128)
+        return jnp.ones(num, dtype=jnp.complex128)
+
+    def _build(
+        self,
+        xs: jnp.ndarray,
+        ys: jnp.ndarray,
+        *,
+        area: float | None,
+        waist_xy: tuple[float, float],
+        initial_z: float,
+        radius_of_curvature_xy: tuple[float, float],
+        dx: float,
+        dy: float,
+        amplitude: float | Sequence[float] = 1.0,
+        phase: float | Sequence[float] = 0.0,
+    ) -> GaussianBeam2D:
+        xs = jnp.asarray(xs, dtype=self.dtype)
+        ys = jnp.asarray(ys, dtype=self.dtype)
+        num = int(xs.shape[0])
+        if num == 0:
+            coords = jnp.zeros((0, 2), dtype=self.dtype)
+            return GaussianBeam2D(
+                rays=tuple(),
+                coords=coords,
+                waist=waist_xy,
+                radius_of_curvature=radius_of_curvature_xy,
+                voltage=self.voltage,
+                wavelength=self.wavelength,
+                k=self.k,
+            )
+
+        prefactors = self._prefactor(num, area, waist_xy[0])
+        amp_array = (
+            jnp.full((num,), float(amplitude), dtype=self.dtype)
+            if np.isscalar(amplitude)
+            else jnp.asarray(amplitude, dtype=self.dtype)
+        )
+        if amp_array.shape != (num,):
+            raise ValueError("amplitude must broadcast to the number of rays.")
+        phase_array = (
+            jnp.full((num,), float(phase), dtype=self.dtype)
+            if np.isscalar(phase)
+            else jnp.asarray(phase, dtype=self.dtype)
+        )
+        if phase_array.shape != (num,):
+            raise ValueError("phase must broadcast to the number of rays.")
+
+        total_amp = amp_array * jnp.abs(prefactors)
+        total_phase = phase_array + jnp.angle(prefactors)
+
+        xs_np = np.asarray(xs, dtype=float)
+        ys_np = np.asarray(ys, dtype=float)
+        amp_np = np.asarray(total_amp, dtype=float)
+        phase_np = np.asarray(total_phase, dtype=float)
+
+        rcx, rcy = radius_of_curvature_xy
+        wx, wy = waist_xy
+        rays = tuple(
+            GaussianRay2D.make_gaussian(
+                x=float(x),
+                y=float(y),
+                dx=float(dx),
+                dy=float(dy),
+                InitAmp=float(amp),
+                InitPhase=float(ph),
+                waist_x=float(wx),
+                waist_y=float(wy),
+                RadiusOfCurvature_x=float(rcx),
+                RadiusOfCurvature_y=float(rcy),
+                k=self.k,
+                z=float(initial_z),
+            )
+            for x, y, amp, ph in zip(xs_np, ys_np, amp_np, phase_np)
+        )
+        coords = jnp.asarray(np.column_stack((xs_np, ys_np)), dtype=self.dtype)
+        return GaussianBeam2D(
+            rays=rays,
+            coords=coords,
+            waist=waist_xy,
+            radius_of_curvature=radius_of_curvature_xy,
+            voltage=self.voltage,
+            wavelength=self.wavelength,
+            k=self.k,
+        )
+
+    def round_aperture(
+        self,
+        *,
+        aperture_radius: float = 50e-9,
+        num_rays: int = 1000,
+        sampler: Optional[Callable[..., tuple[np.ndarray, np.ndarray]]] = None,
+        sampler_kwargs: Optional[dict[str, Any]] = None,
+        initial_z: float | None = None,
+        waist_xy: tuple[float, float] | float | None = None,
+        radius_of_curvature_xy: tuple[float, float] | float | None = None,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        amplitude: float | Sequence[float] = 1.0,
+        phase: float | Sequence[float] = 0.0,
+    ) -> GaussianBeam2D:
+        sampler = sampler or self.sampler
+        combined_kwargs = dict(self.sampler_kwargs)
+        if sampler_kwargs:
+            combined_kwargs.update(sampler_kwargs)
+        area = np.pi * aperture_radius**2 if aperture_radius > 0.0 else 0.0
+        base_waist = self._resolve_waist_radius(num_rays, area)
+        waist_pair = self._as_pair(waist_xy, default=(base_waist, base_waist))
+        rc_pair = self._as_pair(radius_of_curvature_xy, default=(np.inf, np.inf))
+        if sampler is uniform_disk:
+            combined_kwargs.setdefault("waist_radius", waist_pair[0])
+            if self.overlap_factor is not None:
+                combined_kwargs.setdefault("overlap_factor", self.overlap_factor)
+        xs, ys = sampler(num_rays, radius=aperture_radius, **combined_kwargs)
+        initial_z = self._resolve_initial_z(initial_z)
+        return self._build(
+            xs,
+            ys,
+            area=area,
+            waist_xy=waist_pair,
+            initial_z=initial_z,
+            radius_of_curvature_xy=rc_pair,
+            dx=dx,
+            dy=dy,
+            amplitude=amplitude,
+            phase=phase,
+        )
+
+    def elliptical_aperture(
+        self,
+        *,
+        semi_axis_x: float = 50e-9,
+        semi_axis_y: float = 30e-9,
+        rotation_radians: float = 0.0,
+        num_rays: int = 1000,
+        sampler: Optional[Callable[..., tuple[np.ndarray, np.ndarray]]] = None,
+        sampler_kwargs: Optional[dict[str, Any]] = None,
+        initial_z: float | None = None,
+        waist_xy: tuple[float, float] | float | None = None,
+        radius_of_curvature_xy: tuple[float, float] | float | None = None,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        amplitude: float | Sequence[float] = 1.0,
+        phase: float | Sequence[float] = 0.0,
+    ) -> GaussianBeam2D:
+        if semi_axis_x <= 0.0 or semi_axis_y <= 0.0:
+            raise ValueError("Ellipse semi-axes must be positive.")
+        sampler = sampler or self.sampler
+        combined_kwargs = dict(self.sampler_kwargs)
+        if sampler_kwargs:
+            combined_kwargs.update(sampler_kwargs)
+        area = np.pi * semi_axis_x * semi_axis_y
+        base_waist = self._resolve_waist_radius(num_rays, area)
+        waist_pair = self._as_pair(waist_xy, default=(base_waist, base_waist))
+        rc_pair = self._as_pair(radius_of_curvature_xy, default=(np.inf, np.inf))
+        use_uniform_sampler = sampler is uniform_disk
+        if use_uniform_sampler:
+            effective_radius = np.sqrt(semi_axis_x * semi_axis_y)
+            combined_kwargs.setdefault("waist_radius", np.sqrt(waist_pair[0] * waist_pair[1]))
+            if self.overlap_factor is not None:
+                combined_kwargs.setdefault("overlap_factor", self.overlap_factor)
+            ux, uy = sampler(num_rays, radius=effective_radius, **combined_kwargs)
+        else:
+            ux, uy = sampler(num_rays, radius=1.0, **combined_kwargs)
+        ux = jnp.asarray(ux, dtype=self.dtype)
+        uy = jnp.asarray(uy, dtype=self.dtype)
+        U = jnp.stack([ux, uy], axis=1)
+        c, s = jnp.cos(rotation_radians), jnp.sin(rotation_radians)
+        if use_uniform_sampler:
+            effective_radius = np.sqrt(semi_axis_x * semi_axis_y)
+            scale_x = semi_axis_x / effective_radius
+            scale_y = semi_axis_y / effective_radius
+        else:
+            scale_x = semi_axis_x
+            scale_y = semi_axis_y
+        M = jnp.array(
+            [
+                [c * scale_x, -s * scale_y],
+                [s * scale_x,  c * scale_y],
+            ],
+            dtype=self.dtype,
+        )
+        XY = U @ M.T
+        xs = XY[:, 0]
+        ys = XY[:, 1]
+        initial_z = self._resolve_initial_z(initial_z)
+        return self._build(
+            xs,
+            ys,
+            area=area,
+            waist_xy=waist_pair,
+            initial_z=initial_z,
+            radius_of_curvature_xy=rc_pair,
+            dx=dx,
+            dy=dy,
+            amplitude=amplitude,
+            phase=phase,
+        )
+
+    def square_aperture(
+        self,
+        *,
+        side_length: float = 100e-9,
+        side_length_y: float | None = None,
+        samples_per_side: int | None = None,
+        num_rays: int | None = None,
+        sampling: str | None = None,
+        initial_z: float | None = None,
+        waist_xy: tuple[float, float] | float | None = None,
+        radius_of_curvature_xy: tuple[float, float] | float | None = None,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        amplitude: float | Sequence[float] = 1.0,
+        phase: float | Sequence[float] = 0.0,
+    ) -> GaussianBeam2D:
+        width = side_length
+        height = side_length if side_length_y is None else side_length_y
+        if width <= 0.0 or height <= 0.0:
+            raise ValueError("side lengths must be positive.")
+        if samples_per_side is None and num_rays is None:
+            raise ValueError("Provide either samples_per_side or num_rays.")
+        area = width * height
+        if num_rays is not None and num_rays <= 0:
+            raise ValueError("num_rays must be positive when provided.")
+        if samples_per_side is not None and samples_per_side <= 0:
+            raise ValueError("samples_per_side must be positive when provided.")
+
+        mode = sampling or self.sampling_mode or "fibonacci"
+        if mode == "uniform":
+            if samples_per_side is not None and num_rays is None:
+                coords_x = np.linspace(-0.5 * width, 0.5 * width, samples_per_side, dtype=float)
+                coords_y = np.linspace(-0.5 * height, 0.5 * height, samples_per_side, dtype=float)
+                X, Y = np.meshgrid(coords_x, coords_y, indexing="xy")
+                coords = np.stack((X.reshape(-1), Y.reshape(-1)), axis=1)
+                xs = jnp.asarray(coords[:, 0], dtype=self.dtype)
+                ys = jnp.asarray(coords[:, 1], dtype=self.dtype)
+            else:
+                target = num_rays if num_rays is not None else samples_per_side**2
+                coords = self._uniform_rectangular_grid(target, width, height)
+                xs = jnp.asarray(coords[:, 0], dtype=self.dtype)
+                ys = jnp.asarray(coords[:, 1], dtype=self.dtype)
+        else:
+            samples = samples_per_side
+            if samples is None:
+                samples = int(np.ceil(np.sqrt(num_rays)))
+                samples = max(samples, 1)
+            coords_x = jnp.linspace(-0.5 * width, 0.5 * width, samples)
+            coords_y = jnp.linspace(-0.5 * height, 0.5 * height, samples)
+            X, Y = jnp.meshgrid(coords_x, coords_y, indexing="xy")
+            flat_x = X.reshape(-1)
+            flat_y = Y.reshape(-1)
+            total_points = int(flat_x.shape[0])
+            use_count = total_points if num_rays is None else min(num_rays, total_points)
+            xs = flat_x[:use_count]
+            ys = flat_y[:use_count]
+
+        use_count = int(xs.shape[0])
+        waist_value = self._resolve_waist_radius(use_count, area)
+        waist_pair = self._as_pair(waist_xy, default=(waist_value, waist_value))
+        rc_pair = self._as_pair(radius_of_curvature_xy, default=(np.inf, np.inf))
+        initial_z = self._resolve_initial_z(initial_z)
+        return self._build(
+            xs,
+            ys,
+            area=area,
+            waist_xy=waist_pair,
+            initial_z=initial_z,
+            radius_of_curvature_xy=rc_pair,
+            dx=dx,
+            dy=dy,
+            amplitude=amplitude,
+            phase=phase,
+        )
+
+    @staticmethod
+    def _uniform_rectangular_grid(num_points: int, width: float, height: float) -> np.ndarray:
+        if num_points <= 0:
+            raise ValueError("num_points must be positive for uniform rectangular sampling.")
+        if width <= 0.0 or height <= 0.0:
+            raise ValueError("Rectangle dimensions must be positive.")
+        if num_points == 1:
+            return np.array([[0.0, 0.0]], dtype=float)
+
+        aspect = width / height
+        aspect = aspect if aspect > 0.0 else 1.0
+        ny = max(1, int(np.round(np.sqrt(num_points / aspect))))
+        nx = max(1, int(np.ceil(num_points / ny)))
+        half_x = 0.5 * width
+        half_y = 0.5 * height
+        xs = np.linspace(-half_x, half_x, nx, dtype=float)
+        ys = np.linspace(-half_y, half_y, ny, dtype=float)
+        coords = []
+        count = 0
+        for y in ys:
+            if count >= num_points:
+                break
+            remaining = num_points - count
+            if remaining >= nx:
+                row_xs = xs
+            else:
+                drop = nx - remaining
+                drop_left = drop // 2
+                drop_right = drop - drop_left
+                row_xs = xs[drop_left:nx - drop_right]
+            for x in row_xs:
+                coords.append((x, y))
+                count += 1
+                if count == num_points:
+                    break
+        return np.asarray(coords, dtype=float)
+
+
+def beam_to_gaussian_ray_beta(beam: GaussianBeam2D):
+    """
+    Convert a :class:`GaussianBeam2D` into the legacy :class:`GaussianRayBeta`
+    batch for interoperability with the older propagation utilities.
+    """
+    from .gaussian import GaussianRayBeta, TaylorExpofAction  # lazy import to avoid cycles
+
+    num = len(beam)
+    if num == 0:
+        zeros = jnp.zeros((0,), dtype=jnp.float64)
+        ones = jnp.zeros((0,), dtype=jnp.float64)
+        empty_complex = jnp.zeros((0,), dtype=jnp.complex128)
+        S = TaylorExpofAction(
+            const=empty_complex,
+            lin=jnp.zeros((0, 2), dtype=jnp.complex128),
+            quad=jnp.zeros((0, 2, 2), dtype=jnp.complex128),
+        )
+        return GaussianRayBeta(
+            x=zeros,
+            y=zeros,
+            dx=zeros,
+            dy=zeros,
+            z=zeros,
+            pathlength=zeros,
+            _one=ones,
+            C=empty_complex,
+            S=S,
+            voltage=zeros,
+        )
+
+    dtype = jnp.float64
+    complex_dtype = jnp.complex128
+    r0 = jnp.stack([ray.r0 for ray in beam.rays], axis=0).astype(dtype)
+    x = r0[:, 0]
+    y = r0[:, 1]
+    slopes = jnp.stack([ray.ray_slope() for ray in beam.rays], axis=0)
+    dx = slopes[:, 0]
+    dy = slopes[:, 1]
+    z = jnp.stack([jnp.asarray(ray.z, dtype=dtype) for ray in beam.rays], axis=0)
+    zeros = jnp.zeros(num, dtype=dtype)
+    ones = jnp.ones(num, dtype=dtype)
+    C = jnp.stack([ray.C for ray in beam.rays], axis=0).astype(complex_dtype)
+    lin = jnp.stack([ray.S1 for ray in beam.rays], axis=0).astype(complex_dtype)
+    quad = jnp.stack([ray.S2 for ray in beam.rays], axis=0).astype(complex_dtype)
+    const = jnp.zeros(num, dtype=complex_dtype)
+    S = TaylorExpofAction(const=const, lin=lin, quad=quad)
+    voltage = jnp.full((num,), beam.voltage, dtype=dtype)
+
+    return GaussianRayBeta(
+        x=x,
+        y=y,
+        dx=dx,
+        dy=dy,
+        z=z,
+        pathlength=zeros,
+        _one=ones,
+        C=C,
+        S=S,
+        voltage=voltage,
+    )
