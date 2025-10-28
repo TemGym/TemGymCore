@@ -77,23 +77,44 @@ class Ray(HasParamsMixin):
 
     @property
     def r_xy(self):
-        # shape: (2,) for scalar rays, (N, 2) for vectorized rays
         x = jnp.asarray(self.x)
         y = jnp.asarray(self.y)
-        arr = jnp.stack((x, y), axis=-1)
-        if x.ndim == 0 and y.ndim == 0:
-            return arr.reshape(2)
-        return arr
+
+        # Broadcast (supports scalars, (1,), and (N,))
+        xb, yb = jnp.broadcast_arrays(x, y)
+
+        arr = jnp.stack((xb, yb), axis=-1)  # shape: (), (1,2), or (N,2)
+
+        # Treat length-1 as scalar → (2,)
+        if arr.ndim == 2 and arr.shape[0] == 1:
+            return arr[0]  # (2,)
+
+        # True scalars → (2,)
+        if arr.ndim == 1:
+            return arr  # (2,)
+
+        # Vectorized → (N,2)
+        return arr  # (N,2)
 
     @property
     def d_xy(self):
-        # shape: (2,) for scalar rays, (N, 2) for vectorized rays
         dx = jnp.asarray(self.dx)
         dy = jnp.asarray(self.dy)
-        arr = jnp.stack((dx, dy), axis=-1)
-        if dx.ndim == 0 and dy.ndim == 0:
-            return arr.reshape(2)
-        return arr
+
+        # Broadcast (handles scalars, (1,), and vectorized (N,)).
+        dxb, dyb = jnp.broadcast_arrays(dx, dy)
+        arr = jnp.stack((dxb, dyb), axis=-1)  # shape: (), (1,2), or (N,2)
+
+        # Treat length-1 as scalar → (2,)
+        if arr.ndim == 2 and arr.shape[0] == 1:
+            return arr[0]  # (2,)
+
+        # True scalars - (2,)
+        if arr.ndim == 1:
+            return arr  # (2,)
+
+        # Vectorized - (N,2)
+        return arr  # (N,2)
 
     def __getitem__(self, arg):
         """Index a vectorized ray to get a single-element Ray.
