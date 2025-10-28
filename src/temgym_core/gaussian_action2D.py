@@ -4,8 +4,10 @@ import jax.numpy as jnp
 import jax.nn as jnn
 from jax.nn import softplus
 import jax_dataclasses as jdc
+from jax import lax
 
 from temgym_core.components import Component, Detector
+from temgym_core.aberrations import KrivanekCoeffs, W_krivanek
 from .ray import Ray
 from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tuple
 
@@ -275,7 +277,7 @@ class Component2D:
 
     def complex_action(self, xy: jnp.ndarray, k: float) -> complex:
         logA = self.log_transmission(xy)
-        L = jnp.logaddexp(logA, -1000)
+        L = jnp.logaddexp(logA, -20)
         return self.phase_shift(xy) - 1j * (L / k)
 
     def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
@@ -349,6 +351,34 @@ class AberratedLens2D(Component2D):
         return phase
 
 
+@jdc.pytree_dataclass(kw_only=True)
+class KrivanekLens(Component2D):
+    """Thin lens with Krivanek aberration model applied to the phase."""
+    focal_length: float
+    coeffs: jdc.Static[KrivanekCoeffs]
+    x0: float = 0.0
+    y0: float = 0.0
+    axis_eps: float = 1e-24
+
+    def phase_shift(self, xy: jnp.ndarray):
+        x = xy[0] - self.x0
+        y = xy[1] - self.y0
+        f = self.focal_length
+
+        rho2 = x * x + y * y
+
+        def _with_aberrations(_):
+            rho = jnp.sqrt(rho2)
+            phi = jnp.arctan2(y, x)
+            alpha = rho / f
+            return -0.5 * rho2 / f - W_krivanek(alpha, phi, self.coeffs)
+
+        def _on_axis(_):
+            return -0.5 * rho2 / f
+
+        return lax.cond(rho2 > self.axis_eps, _with_aberrations, _on_axis, operand=None)
+
+
 @jdc.pytree_dataclass
 class SigmoidAperture2D(Component2D):
     radius: float = 1.0
@@ -366,7 +396,6 @@ class SigmoidAperture2D(Component2D):
     def log_transmission(self, xy):
         x, y = xy[0] - self.x0, xy[1] - self.y0
 
-        # Smooth radial norm (no NaNs at (0,0))
         rho = jnp.sqrt(x * x + y * y + self.eps * self.eps) - self.eps
 
         w = jnp.maximum(jnp.abs(self.edge_width), self.eps)

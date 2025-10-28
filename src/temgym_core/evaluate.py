@@ -253,15 +253,15 @@ def _prepare_gaussian_params(gaussian_ray):
             return x[None, ...]
         # Scalar case when sample_shape == ()
         if sample_shape == () and x.ndim == 0:
-            return x[None]
+            return x[None, ...]
         # Fallback: just add a leading axis
         return x[None, ...]
 
     r = with_leading_axis(to_arr(gaussian_ray.r_xy, jnp.float64), (2,))
     dr = with_leading_axis(to_arr(gaussian_ray.d_xy, jnp.float64), (2,))
-    C = with_leading_axis(to_arr(gaussian_ray.C, jnp.complex128), ())
+    C = with_leading_axis(to_arr(gaussian_ray.C, jnp.complex128), (1,))
     S_quad = with_leading_axis(to_arr(gaussian_ray.S2, jnp.complex128), (2, 2))
-    k = with_leading_axis(to_arr(gaussian_ray.k, jnp.float64), ())
+    k = with_leading_axis(to_arr(gaussian_ray.k, jnp.float64), (1,))
 
     return r, dr, C, S_quad, k
 
