@@ -2,7 +2,6 @@ import jax.numpy as jnp
 import numpy as np
 from numba import njit
 from ase import units
-import mpmath as mp
 
 
 def custom_jacobian_matrix(ray_jac):
