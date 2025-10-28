@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import numpy as np
 from numba import njit
 from ase import units
+import mpmath as mp
 
 
 def custom_jacobian_matrix(ray_jac):
@@ -545,35 +546,25 @@ def wavelength2energy(wavelength: float) -> float:
 
     return energy_joules / e
 
-def energy2wavelength(energy: float) -> float:
+
+def energy2wavelength(energy: float):
     """
-    Calculate relativistic de Broglie wavelength from energy.
+    Calculate relativistic de Broglie wavelength from energy with higher precision options.
 
     Parameters
     ----------
     energy : float
         Kinetic energy [eV].
-
-    Returns
-    -------
-    float
-        Relativistic de Broglie wavelength [Å].
     """
-    # Constants
     h = units._hplanck
     c = units._c
     m_e = units._me
     e = units._e
 
-    # Convert energy from eV to J
     E_j = energy * e
-
-    # total energy (rest + kinetic)
-    E_total = E_j + m_e * c**2
-
-    # momentum p = sqrt(E_total^2 - (m c^2)^2) / c
-    p = np.sqrt(E_total**2 - (m_e * c**2) ** 2) / c
-
-    # wavelength = h / p (in meters), convert to Å
+    mc2 = m_e * c * c
+    E_total = E_j + mc2
+    rad = E_total * E_total - mc2 * mc2
+    p = jnp.sqrt(rad) / c
     wavelength_m = h / p
-    return float(wavelength_m)
+    return wavelength_m
