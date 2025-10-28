@@ -11,7 +11,7 @@ from .utils import (
     uniform_disk,
 )
 from .ray import Ray
-from .gaussian_action2D import GaussianBeamFactory, GaussianBeamBundle, GaussianBeam
+from .gaussian_action2D import GaussianBeam
 import jax_dataclasses as jdc
 from jax._src.lax.control_flow.loops import _batch_and_remainder
 from jax import lax
@@ -312,114 +312,6 @@ class GaussianRayBeta(Ray):
         return 2 * jnp.pi / self.wavelength
 
 
-# Gaussian beam sampling utilities are now provided by temgym_core.gaussian_action2D.
-# The legacy GaussianRayBeta-based factory has been removed in favour of the
-# GaussianBeam formulation. ``GaussianBeamFactory`` is imported from
-# ``gaussian_action2D`` near the top of this module for backward-compatible
-# access via ``temgym_core.gaussian``.
-
-
-def make_gaussian_plane_wave_round_aperture(
-    *,
-    voltage: float = 200e3,
-    aperture_radius: float = 50e-9,
-    waist_radius: float | None = None,
-    overlap_factor: float | None = None,
-    num_rays: int = 1000,
-    sampler=None,
-    sampling: str | None = None,
-    sampler_kwargs: dict | None = None,
-    normalization: str = 'unit',
-    initial_z: float = 0.0,
-) -> GaussianRayBeta:
-    if waist_radius is None and overlap_factor is None:
-        waist_radius = 1e-9
-    factory = GaussianBeamFactory(
-        voltage=voltage,
-        waist_radius=waist_radius,
-        overlap_factor=overlap_factor,
-        normalization=normalization,
-        sampler=sampler,
-        sampling=sampling,
-        sampler_kwargs=sampler_kwargs,
-        initial_z=initial_z,
-    )
-    return factory.round_aperture(
-        aperture_radius=aperture_radius,
-        num_rays=num_rays,
-        initial_z=initial_z,
-    )
-
-
-def make_gaussian_plane_wave_elliptical_aperture(
-    *,
-    voltage: float = 200e3,
-    semi_axis_x: float = 50e-9,
-    semi_axis_y: float = 30e-9,
-    rotation_radians: float = 0.0,
-    waist_radius: float | None = None,
-    overlap_factor: float | None = None,
-    num_rays: int = 1000,
-    sampler=None,
-    sampling: str | None = None,
-    sampler_kwargs: dict | None = None,
-    normalization: str = 'unit',
-    initial_z: float = 0.0,
-) -> GaussianRayBeta:
-    if waist_radius is None and overlap_factor is None:
-        waist_radius = 1e-9
-    factory = GaussianBeamFactory(
-        voltage=voltage,
-        waist_radius=waist_radius,
-        overlap_factor=overlap_factor,
-        normalization=normalization,
-        sampler=sampler,
-        sampling=sampling,
-        sampler_kwargs=sampler_kwargs,
-        initial_z=initial_z,
-    )
-    return factory.elliptical_aperture(
-        semi_axis_x=semi_axis_x,
-        semi_axis_y=semi_axis_y,
-        rotation_radians=rotation_radians,
-        num_rays=num_rays,
-        initial_z=initial_z,
-    )
-
-
-def make_gaussian_plane_wave_square_aperture(
-    *,
-    voltage: float = 200e3,
-    side_length: float = 100e-9,
-    side_length_y: float | None = None,
-    waist_radius: float | None = None,
-    overlap_factor: float | None = None,
-    samples_per_side: int | None = None,
-    num_rays: int | None = None,
-    sampling: str | None = None,
-    normalization: str = 'unit',
-    initial_z: float = 0.0,
-) -> GaussianRayBeta:
-    if waist_radius is None and overlap_factor is None:
-        waist_radius = 1e-9
-    factory = GaussianBeamFactory(
-        voltage=voltage,
-        waist_radius=waist_radius,
-        overlap_factor=overlap_factor,
-        normalization=normalization,
-        sampling=sampling,
-        initial_z=initial_z,
-    )
-    return factory.square_aperture(
-        side_length=side_length,
-        side_length_y=side_length_y,
-        samples_per_side=samples_per_side,
-        num_rays=num_rays,
-        sampling=sampling,
-        initial_z=initial_z,
-    )
-
-
 def matrix_vector_mul(M, v):
     """
     Batched matrix-vector multiplication.
@@ -588,7 +480,7 @@ def map_reduce(f, reducer, init, xs, *, batch_size: int | None = None):
         scan_xs, remainder_xs = _batch_and_remainder(xs, batch_size)
 
         def reduce_chunk(acc, x):
-            # Reduce x into acc, assuming x have already been f'd
+            # Reduce x into acc, assuming x have already been f'dGauss
             return reducer(acc, x), None
 
         def map_reduce_chunk(acc, x):

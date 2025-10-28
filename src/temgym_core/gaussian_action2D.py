@@ -138,31 +138,6 @@ class GaussianBeam(Ray):
             pathlength=self.pathlength if pathlength is None else pathlength
         )
 
-    def _action(self, xy: jnp.ndarray):
-        """
-        Return (Re S, Im S) at points xy for ψ = C exp(i k S(ξ)),
-        with S(ξ) = u·ξ + 1/2 ξᵀ S2 ξ and ξ = x - r0.
-        """
-        xi = xy - self.r_xy
-        lin = jnp.einsum("...i,...i->...", xi, self.d_xy)
-        quad = 0.5 * jnp.einsum("...i,...ij,...j->...", xi, self.S2, xi)
-        S = lin + quad
-        return jnp.real(S), jnp.imag(S)
-
-    def field(self, xy: jnp.ndarray) -> jnp.ndarray:
-        ReS, ImS = self._action(xy)
-        amp = jnp.abs(self.C) * jnp.exp(-self.k * ImS)
-        phase = jnp.angle(self.C) + self.k * ReS
-        return amp * jnp.exp(1j * phase)
-
-    def amplitude(self, xy: jnp.ndarray) -> jnp.ndarray:
-        _, ImS = self._action(xy)
-        return jnp.abs(self.C) * jnp.exp(-self.k * ImS)
-
-    def intensity(self, xy: jnp.ndarray) -> jnp.ndarray:
-        _, ImS = self._action(xy)
-        return (jnp.abs(self.C) ** 2) * jnp.exp(-2.0 * self.k * ImS)
-
     def to_vector(self) -> jnp.ndarray:
         params = {
             k: jnp.atleast_1d(v)
@@ -470,21 +445,21 @@ class ABCDPropagator2D:
         S2 = jnp.linalg.solve(AB_Q.T, (C + D @ r.S2).T).T
         S2 = _sym(S2)
 
-        # Prefactor (amplitude + phase) from the quadratic ABCD step
-        det = jnp.linalg.det(AB_Q)
-        pref_det = det ** (-0.5)
+        # Prefactor from the quadratic step: det(A + B S2)^(-1/2), computed stably
+        sign, logabs = jnp.linalg.slogdet(AB_Q)
+        pref_det = jnp.exp(-0.5 * logabs) / jnp.sqrt(sign)
 
         # Linear action coefficient prior to re-centering
         S1_temp = jnp.linalg.solve(AB_Q, r.d_xy)
 
         # Constant action increment for the centred quadratic with a residual linear term
         dS0 = -0.5 * (r.d_xy @ (B @ S1_temp))
-        C_temp = r.C * pref_det * jnp.exp(1j * k * (dS0 + self.L))
+        C_temp = r.C * pref_det * jnp.exp(1j * k * (dS0))
 
         # Re-center so that the imaginary linear coefficient vanishes (intensity maximum)
         dr_i = center_shift_from_S(S1_temp, S2)
         phase_shift = S1_temp @ dr_i + 0.5 * (dr_i @ S2 @ dr_i)
-        C_new = C_temp * jnp.exp(1j * k * phase_shift) * pref_det
+        C_new = C_temp * jnp.exp(1j * k * phase_shift)
 
         rxy_new = r.r_xy + jnp.real(dr_i)
 
@@ -525,8 +500,8 @@ class ABCDPropagator2D:
     @staticmethod
     def fourier_transform(f: float):
         Iden = jnp.eye(2, dtype=jnp.float64)
-        Z = jnp.zeros((2, 2), dtype=jnp.float64)
-        return ABCDPropagator2D(A=Z, B=f*Iden, C=-(1.0/f)*Iden, D=Z, L=2*f)
+        Zero = jnp.zeros((2, 2), dtype=jnp.float64)
+        return ABCDPropagator2D(A=Zero, B=f*Iden, C=-(1.0/f)*Iden, D=Zero, L=2*f)
 
     @staticmethod
     def perfect_imaging(magnification: float, *, L: float = 0.0):
