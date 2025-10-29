@@ -170,10 +170,10 @@ def test_free_space_paraxial_updates_q_inv():
         voltage=voltage,
         waist_x=waist,
         waist_y=waist,
-        InitPhase=0.0,
-        InitAmp=1.0,
-        RadiusOfCurvature_x=r_curv,
-        RadiusOfCurvature_y=r_curv,
+        phase=0.0,
+        amp=1.0,
+        rcurv_x=r_curv,
+        rcurv_y=r_curv,
     )
 
     dist = 1e-3
@@ -226,10 +226,10 @@ def test_thin_lens_updates_q_inv():
         voltage=voltage,
         waist_x=waist,
         waist_y=waist,
-        InitPhase=0.0,
-        InitAmp=1.0,
-        RadiusOfCurvature_x=r_curv,
-        RadiusOfCurvature_y=r_curv,
+        phase=0.0,
+        amp=1.0,
+        rcurv_x=r_curv,
+        rcurv_y=r_curv,
     )
 
     f = 5e-3
@@ -287,10 +287,10 @@ def test_fourier_transform_ABCD_matrix_updates_q_inv():
         voltage=voltage,
         waist_x=waist,
         waist_y=waist,
-        InitPhase=0.0,
-        InitAmp=1.0,
-        RadiusOfCurvature_x=r_curv,
-        RadiusOfCurvature_y=r_curv,
+        phase=0.0,
+        amp=1.0,
+        rcurv_x=r_curv,
+        rcurv_y=r_curv,
     )
 
     f = 1e-2
@@ -342,10 +342,10 @@ def test_fourier_transform_ABCD_matrix_updates_against_stepwise():
         voltage=voltage,
         waist_x=waist,
         waist_y=waist,
-        InitPhase=0.0,
-        InitAmp=1.0,
-        RadiusOfCurvature_x=r_curv,
-        RadiusOfCurvature_y=r_curv,
+        phase=0.0,
+        amp=1.0,
+        rcurv_x=r_curv,
+        rcurv_y=r_curv,
     )
     f = 1e-2
     ray_out_abcd = ABCDPropagator2D.fourier_transform(f)(ray_in)
@@ -430,10 +430,10 @@ def test_gaussian_free_space_vs_fresnel():
         voltage=voltage,
         waist_x=wo,
         waist_y=wo,
-        InitAmp=1.0,
-        InitPhase=0.0,
-        RadiusOfCurvature_x=jnp.inf,
-        RadiusOfCurvature_y=jnp.inf,
+        amp=1.0,
+        phase=0.0,
+        rcurv_x=jnp.inf,
+        rcurv_y=jnp.inf,
     )
 
     propagated = run_to_end(gaussian, (detector,))
@@ -524,10 +524,10 @@ def test_gaussian_lens_vs_fresnel():
         voltage=voltage,
         waist_x=wo,
         waist_y=wo,
-        InitAmp=1.0,
-        InitPhase=0.0,
-        RadiusOfCurvature_x=jnp.inf,
-        RadiusOfCurvature_y=jnp.inf,
+        amp=1.0,
+        phase=0.0,
+        rcurv_x=jnp.inf,
+        rcurv_y=jnp.inf,
     )
 
     propagated = run_to_end(gaussian, (lens, detector))
@@ -628,10 +628,10 @@ def test_gaussian_two_beam_interference_vs_fresnel():
             voltage=voltage,
             waist_x=wo,
             waist_y=wo,
-            InitAmp=1.0,
-            InitPhase=0.0,
-            RadiusOfCurvature_x=jnp.inf,
-            RadiusOfCurvature_y=jnp.inf,
+            amp=1.0,
+            phase=0.0,
+            rcurv_x=jnp.inf,
+            rcurv_y=jnp.inf,
         )
 
     rays_in = [
