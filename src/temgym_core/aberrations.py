@@ -120,6 +120,7 @@ class SeidelCoeffs:
     f: float = 0.0  # Anisotropic Astigmatism
     c: float = 0.0  # Anisotropic Distortion
 
+
 # Aberration functions parametrized by different variables
 def Seidel_object_pos_aperture_pos(xo, yo, xa, ya, coeffs: SeidelCoeffs):
     A, B, C, D, E, F, e, f, c = coeffs.A, coeffs.B, coeffs.C, coeffs.D, coeffs.E, coeffs.F, coeffs.e, coeffs.f, coeffs.c
@@ -127,22 +128,22 @@ def Seidel_object_pos_aperture_pos(xo, yo, xa, ya, coeffs: SeidelCoeffs):
     rho = xa**2 + ya**2
     chi = xo*xa + yo*ya
     sigma = xo*ya - yo*xa
-    return (A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma)
+    return A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma
 
 
-def aber_object_pos_object_slope(xo, yo, xop, yop, z1, coeffs: SeidelCoeffs):
+def Seidel_object_pos_object_slope(xo, yo, xop, yop, z1, coeffs: SeidelCoeffs):
     A, B, C, D, E, F, e, f, c = coeffs.A, coeffs.B, coeffs.C, coeffs.D, coeffs.E, coeffs.F, coeffs.e, coeffs.f, coeffs.c
     R = xo**2 + yo**2
     rho = (xo + xop*z1)**2 + (yo + yop*z1)**2
     chi = xo*(xo + xop*z1) + yo*(yo + yop*z1)
     sigma = xo*(yo + yop*z1) - yo*(xo + xop*z1)
-    return (A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma)
+    return A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma
 
 
-def aber_aperture_pos_aperture_slope(xa, ya, xap, yap, z1, coeffs: SeidelCoeffs):
+def Seidel_aperture_pos_aperture_slope(xa, ya, xap, yap, z1, coeffs: SeidelCoeffs):
     A, B, C, D, E, F, e, f, c = coeffs.A, coeffs.B, coeffs.C, coeffs.D, coeffs.E, coeffs.F, coeffs.e, coeffs.f, coeffs.c
     R = (xa - xap*z1)**2 + (ya - yap*z1)**2
     rho = xa**2 + ya**2
     chi = (xa - xap*z1)*xa + (ya - yap*z1)*ya
     sigma = (xa - xap*z1)*ya - (ya - yap*z1)*xa
-    return (A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma)
+    return A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma
