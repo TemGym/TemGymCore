@@ -370,9 +370,9 @@ class SeidelLens(Component2D):
         return Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
 
     def complex_action(self, xy: jnp.ndarray, k: float) -> complex:
-        logA = self.log_transmission(xy)
+        logA = self.log_transmission(xy, dxy)
         L = jnp.logaddexp(logA, -20)
-        return self.phase_shift(xy) - 1j * (L / k)
+        return self.phase_shift(xy, dxy) - 1j * (L / k)
 
     def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
         xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
