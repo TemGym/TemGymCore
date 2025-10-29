@@ -106,3 +106,43 @@ def grad_W_krivanek(alpha_x, alpha_y, p):
     dWx = dW_dalpha * (ax * inv_a) + dW_dphi * (-ay * inv_a2)
     dWy = dW_dalpha * (ay * inv_a) + dW_dphi * (ax * inv_a2)
     return dWx, dWy
+
+
+@dataclass(frozen=True)
+class SeidelCoeffs:
+    A: float = 0.0  # Pure Phase Shift
+    B: float = 0.0  # Spherical Aberration
+    C: float = 0.0  # Isotropic Astigmatism
+    D: float = 0.0  # Field Curvature
+    E: float = 0.0  # Isotropic Distortion
+    F: float = 0.0  # Isotropic Coma
+    e: float = 0.0  # Anisotropic Coma
+    f: float = 0.0  # Anisotropic Astigmatism
+    c: float = 0.0  # Anisotropic Distortion
+
+# Aberration functions parametrized by different variables
+def Seidel_object_pos_aperture_pos(xo, yo, xa, ya, coeffs: SeidelCoeffs):
+    A, B, C, D, E, F, e, f, c = coeffs.A, coeffs.B, coeffs.C, coeffs.D, coeffs.E, coeffs.F, coeffs.e, coeffs.f, coeffs.c
+    R = xo**2 + yo**2
+    rho = xa**2 + ya**2
+    chi = xo*xa + yo*ya
+    sigma = xo*ya - yo*xa
+    return (A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma)
+
+
+def aber_object_pos_object_slope(xo, yo, xop, yop, z1, coeffs: SeidelCoeffs):
+    A, B, C, D, E, F, e, f, c = coeffs.A, coeffs.B, coeffs.C, coeffs.D, coeffs.E, coeffs.F, coeffs.e, coeffs.f, coeffs.c
+    R = xo**2 + yo**2
+    rho = (xo + xop*z1)**2 + (yo + yop*z1)**2
+    chi = xo*(xo + xop*z1) + yo*(yo + yop*z1)
+    sigma = xo*(yo + yop*z1) - yo*(xo + xop*z1)
+    return (A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma)
+
+
+def aber_aperture_pos_aperture_slope(xa, ya, xap, yap, z1, coeffs: SeidelCoeffs):
+    A, B, C, D, E, F, e, f, c = coeffs.A, coeffs.B, coeffs.C, coeffs.D, coeffs.E, coeffs.F, coeffs.e, coeffs.f, coeffs.c
+    R = (xa - xap*z1)**2 + (ya - yap*z1)**2
+    rho = xa**2 + ya**2
+    chi = (xa - xap*z1)*xa + (ya - yap*z1)*ya
+    sigma = (xa - xap*z1)*ya - (ya - yap*z1)*xa
+    return (A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma)
