@@ -549,7 +549,6 @@ def run_iter(
     transform: TransformT = passthrough_transform,
     propagator: BaseGaussianPropagator2D = FreeSpaceParaxial2D(),
 ) -> Generator[Tuple[Any, Any], Any, None]:
-    current_z = ray.z
     for component in components:
         if isinstance(component, (Component2D, Detector)):
             ray_z = ray.z
@@ -560,6 +559,7 @@ def run_iter(
 
         ray, out = transform(component)(ray)
         yield component, out
+
 
 def run_to_end(
     ray: GaussianBeam,
@@ -643,3 +643,31 @@ def make_gaussian_plane_wave_square_aperture(
         voltage=jnp.ones_like(x0) * voltage,
     )
     return beam
+
+
+def make_gaussian_grid_input(n_cells: int = 4, samples_per_line: int = 200, extent: float = 1.0):
+    """
+    Vectorised creation of a square grid figure.
+    Returns:
+      points   : (N, 2) array of xy points for all grid lines (float32)
+      line_ids : (N,) int32 array indicating which line each point belongs to
+                 (0..n_lines-1 are vertical lines, n_lines..2*n_lines-1 are horizontal lines)
+    """
+    n_lines = n_cells + 1  # includes the outer square
+    xs = jnp.linspace(-extent, extent, n_lines, dtype=jnp.float32)  # (n_lines,)
+    ys = xs
+    t = jnp.linspace(-extent, extent, samples_per_line, dtype=jnp.float32)  # (samples,)
+
+    # Vertical lines: x fixed (one per xs), y varies over t
+    vert_x = jnp.broadcast_to(xs[:, None], (n_lines, samples_per_line))   # (n_lines, samples)
+    vert_y = jnp.broadcast_to(t[None, :], (n_lines, samples_per_line))    # (n_lines, samples)
+    vert_pts = jnp.stack([vert_x, vert_y], axis=-1).reshape(-1, 2)        # (n_lines*samples, 2)
+
+    # Horizontal lines: y fixed (one per ys), x varies over t
+    hor_x = jnp.broadcast_to(t[None, :], (n_lines, samples_per_line))     # (n_lines, samples)
+    hor_y = jnp.broadcast_to(ys[:, None], (n_lines, samples_per_line))    # (n_lines, samples)
+    hor_pts = jnp.stack([hor_x, hor_y], axis=-1).reshape(-1, 2)          # (n_lines*samples, 2)
+
+    points = jnp.concatenate([vert_pts, hor_pts], axis=0).astype(jnp.float32)
+
+    return points
