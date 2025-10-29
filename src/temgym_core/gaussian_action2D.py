@@ -7,7 +7,7 @@ import jax_dataclasses as jdc
 from jax import lax
 
 from temgym_core.components import Component, Detector
-from temgym_core.aberrations import KrivanekCoeffs, W_krivanek
+from temgym_core.aberrations import KrivanekCoeffs, Seidel_aperture_pos_aperture_slope, SeidelCoeffs, W_krivanek
 from .ray import Ray
 from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tuple
 
@@ -44,12 +44,12 @@ def make_gaussian(
     dy=0.0,
     z=0.0,
     voltage: float | jnp.ndarray = 1e5,
-    InitAmp=1.0,
-    InitPhase=0.0,
+    amp=1.0,
+    phase=0.0,
     waist_x=1.0,
     waist_y=1.0,
-    RadiusOfCurvature_x=jnp.inf,
-    RadiusOfCurvature_y=jnp.inf,
+    rcurv_x=jnp.inf,
+    rcurv_y=jnp.inf,
 ) -> "GaussianBeam":
 
     wavelength = energy2wavelength(voltage)
@@ -67,8 +67,8 @@ def make_gaussian(
     dx = _bcast_to_n(dx)
     dy = _bcast_to_n(dy)
 
-    curv_x = _bcast_to_n(1.0 / RadiusOfCurvature_x)
-    curv_y = _bcast_to_n(1.0 / RadiusOfCurvature_y)
+    curv_x = _bcast_to_n(1.0 / rcurv_x)
+    curv_y = _bcast_to_n(1.0 / rcurv_y)
     waist_x = _bcast_to_n(waist_x)
     waist_y = _bcast_to_n(waist_y)
 
@@ -86,9 +86,9 @@ def make_gaussian(
 
     S2 = (S2_re + 1j * S2_im).astype(jnp.complex128)
 
-    InitAmp = _bcast_to_n(InitAmp)
-    InitPhase = _bcast_to_n(InitPhase)
-    C = jnp.asarray(InitAmp) * jnp.exp(1j * jnp.asarray(InitPhase))
+    amp = _bcast_to_n(amp)
+    phase = _bcast_to_n(phase)
+    C = jnp.asarray(amp) * jnp.exp(1j * jnp.asarray(phase))
 
     ray = GaussianBeam(
         x=x, y=y, dx=dx, dy=dy, z=z,
@@ -354,6 +354,79 @@ class KrivanekLens(Component2D):
         return lax.cond(rho2 > self.axis_eps, _with_aberrations, _on_axis, operand=None)
 
 
+@jdc.pytree_dataclass(kw_only=True)
+class SeidelLens(Component2D):
+    f: float
+    z1: float  # absolute distance from object to lens
+    coeffs: SeidelCoeffs | None = None  # optional full Seidel coefficients
+
+    def log_transmission(self, xy):
+        return 0.0
+
+    def phase_shift(self, xy, dxy):
+        x_a, y_a = xy[:, 0], xy[:, 1]
+        x_ap, y_ap = dxy[:, 0], dxy[:, 1]
+        coeffs = self.coeffs if self.coeffs is not None else SeidelCoeffs()
+        return Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
+
+    def complex_action(self, xy: jnp.ndarray, k: float) -> complex:
+        logA = self.log_transmission(xy)
+        L = jnp.logaddexp(logA, -20)
+        return self.phase_shift(xy) - 1j * (L / k)
+
+    def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
+        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
+        if xy_ref.ndim != 1:
+            raise ValueError("Component2D._apply_single expects a scalar GaussianBeam.")
+        k = jnp.squeeze(jnp.asarray(ray.k))
+
+        dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, k)
+        r_xy, r_dxy, Cn, S2 = apply_action_delta(ray, dS0=dS0, dS1=dS1, dS2=dS2)
+
+        return ray.derive(
+            x=r_xy[..., 0],
+            y=r_xy[..., 1],
+            dx=r_dxy[..., 0],
+            dy=r_dxy[..., 1],
+            z=ray.z,
+            C=Cn,
+            S2=S2
+        )
+
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
+        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
+        if xy_ref.ndim == 1:
+            return self._apply_single(ray)
+
+        batch = xy_ref.shape[0]
+
+        def infer_axes(arr):
+            if arr is None:
+                return None
+            arr = jnp.asarray(arr)
+            if arr.ndim == 0:
+                return None
+            return 0 if arr.shape[0] == batch else None
+
+        in_axes = jax.tree_map(infer_axes, ray)
+        vmapped = jax.vmap(lambda r: self._apply_single(r), in_axes=in_axes)
+        return vmapped(ray)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class DistortedLens(SeidelLens):
+    # Only distortion terms
+    E: float = 0.0  # distortion coefficient
+    e: float = 0.0  # anisotropic distortion coefficient
+
+    def phase_shift(self, xy, dxy):
+        x_a, y_a = xy[:, 0], xy[:, 1]
+        x_ap, y_ap = dxy[:, 0], dxy[:, 1]
+        coeffs = SeidelCoeffs(A=0.0, B=0.0, C=0.0, D=0.0, E=self.E, F=0.0,
+                              e=self.e, f=0.0, c=0.0)
+        return Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
+
+
 @jdc.pytree_dataclass
 class SigmoidAperture2D(Component2D):
     radius: float = 1.0
@@ -576,8 +649,8 @@ def make_gaussian_plane_wave_circular_aperture(
     waist: float,
     num_rays: int,
     voltage: float,
-    InitAmp: float = 1.0,
-    InitPhase: float = 0.0,
+    amp: float = 1.0,
+    phase: float = 0.0,
     z0: float = 0.0,
     sampling: str = "uniform, fibonacci",
     offset_xy: Tuple[float, float] = (0.0, 0.0)
@@ -593,12 +666,12 @@ def make_gaussian_plane_wave_circular_aperture(
         y=y0,
         dx=jnp.zeros_like(x0),
         dy=jnp.zeros_like(y0),
-        InitAmp=jnp.ones_like(x0) * InitAmp,
-        InitPhase=jnp.zeros_like(y0) + InitPhase,
+        amp=jnp.ones_like(x0) * amp,
+        phase=jnp.zeros_like(y0) + phase,
         waist_x=jnp.ones_like(x0) * waist,
         waist_y=jnp.ones_like(y0) * waist,
-        RadiusOfCurvature_x=jnp.ones_like(x0) * jnp.inf,
-        RadiusOfCurvature_y=jnp.ones_like(y0) * jnp.inf,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
         z=jnp.ones_like(x0) * z0,
         voltage=jnp.ones_like(x0) * voltage,
     )
@@ -610,8 +683,8 @@ def make_gaussian_plane_wave_square_aperture(
     waist: float,
     num_rays: int,
     voltage: float,
-    InitAmp: float = 1.0,
-    InitPhase: float = 0.0,
+    amp: float = 1.0,
+    phase: float = 0.0,
     z0: float = 0.0,
     sampling: str = "uniform, fibonacci",
 ) -> GaussianBeam:
@@ -633,19 +706,26 @@ def make_gaussian_plane_wave_square_aperture(
         y=y0,
         dx=jnp.zeros_like(x0),
         dy=jnp.zeros_like(y0),
-        InitAmp=jnp.ones_like(x0) * InitAmp,
-        InitPhase=jnp.zeros_like(y0) + InitPhase,
+        amp=jnp.ones_like(x0) * amp,
+        phase=jnp.zeros_like(y0) + phase,
         waist_x=jnp.ones_like(x0) * waist,
         waist_y=jnp.ones_like(y0) * waist,
-        RadiusOfCurvature_x=jnp.ones_like(x0) * jnp.inf,
-        RadiusOfCurvature_y=jnp.ones_like(y0) * jnp.inf,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
         z=jnp.ones_like(x0) * z0,
         voltage=jnp.ones_like(x0) * voltage,
     )
     return beam
 
 
-def make_gaussian_grid_input(n_cells: int = 4, samples_per_line: int = 200, extent: float = 1.0):
+def make_gaussian_grid_input(waist: float,
+                             voltage: float,
+                             z0: float,
+                             amp: float = 1.0,
+                             phase: float = 0.0,
+                             n_cells: int = 4,
+                             samples_per_line: int = 200,
+                             extent: float = 1.0):
     """
     Vectorised creation of a square grid figure.
     Returns:
@@ -670,4 +750,20 @@ def make_gaussian_grid_input(n_cells: int = 4, samples_per_line: int = 200, exte
 
     points = jnp.concatenate([vert_pts, hor_pts], axis=0).astype(jnp.float32)
 
-    return points
+    x0, y0 = points[:, 0], points[:, 1]
+
+    beam = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=jnp.zeros_like(x0),
+        dy=jnp.zeros_like(y0),
+        amp=jnp.ones_like(x0) * amp,
+        phase=jnp.zeros_like(y0) + phase,
+        waist_x=jnp.ones_like(x0) * waist,
+        waist_y=jnp.ones_like(y0) * waist,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
+        z=jnp.ones_like(x0) * z0,
+        voltage=jnp.ones_like(x0) * voltage,
+    )
+    return beam
