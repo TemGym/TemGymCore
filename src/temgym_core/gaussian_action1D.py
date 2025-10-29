@@ -85,20 +85,20 @@ class GaussianRay1D:
     @staticmethod
     def make_gaussian(x: float,
                       dx: float,
-                      InitAmp: float = 1.0,
-                      InitPhase: float = 0.0,
+                      amp: float = 1.0,
+                      phase: float = 0.0,
                       BeamWaist: float = 1.0,
-                      RadiusOfCurvature: float = jnp.inf,
+                      rcurv: float = jnp.inf,
                       k: float = 1.0,
                       z: float = 0.0) -> "GaussianRay1D":
 
         S1_real = k * dx
-        S2_real = 0.0 if jnp.isinf(RadiusOfCurvature) else 1.0 / RadiusOfCurvature
+        S2_real = 0.0 if jnp.isinf(rcurv) else 1.0 / rcurv
         S2_imag = 1.0 / (2.0 * k * (BeamWaist**2))
 
         S1 = jnp.asarray(S1_real, dtype=jnp.complex128)
         S2 = jnp.asarray(S2_real + 1j * S2_imag, dtype=jnp.complex128)
-        C = InitAmp * jnp.exp(1j * InitPhase)
+        C = amp * jnp.exp(1j * phase)
         xc = jnp.asarray(x, dtype=jnp.float64)
 
         return GaussianRay1D(C=C, S1=S1, S2=S2, x0=xc, k=k, z=float(z))
