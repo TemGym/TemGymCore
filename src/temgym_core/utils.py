@@ -239,7 +239,26 @@ def try_reshape(val, maybe_has_shape):
         return val
 
 
-def FresnelPropagator(u1, L, wavelength, z, xp=np):
+def FresnelPropagator(u1, L, wavelength, z, xp=np, prefactor=None):
+    """Paraxial Fresnel propagation via transfer function (frequency-domain).
+
+    Parameters
+    ----------
+    u1 : array_like, shape (M, N)
+        Complex field at the source plane.
+    L : float
+        Physical side length of the (square) simulation window (metres).
+    wavelength : float
+        Wavelength (metres).
+    z : float
+        Propagation distance (metres).
+    xp : module, optional
+        Array module providing FFT routines (defaults to numpy).
+    prefactor : complex or array_like, optional
+        Global multiplicative factor applied to the propagated field.  This can
+        be used to match a specific propagation gauge (e.g. the Gaussian beam
+        Gouy phase prefactor det(A + B S₂)^(-1/2)).
+    """
 
     M, N = u1.shape
     dx = L / M
@@ -257,10 +276,12 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np):
     U2 = H * U1
     u2 = xp.fft.ifft2(U2)
     u2 *= xp.exp(1j * 2 * xp.pi * z / wavelength)
+    if prefactor is not None:
+        u2 *= prefactor
     return u2
 
 
-def FresnelPropagator1D(u1, L, wavelength, z, xp=np):
+def FresnelPropagator1D(u1, L, wavelength, z, xp=np, prefactor=None):
     """1D Fresnel propagation via transfer function (frequency-domain).
 
     Parameters
@@ -299,6 +320,8 @@ def FresnelPropagator1D(u1, L, wavelength, z, xp=np):
     U2 = H * U1
     u2 = xp.fft.ifft(U2)
     u2 *= xp.exp(1j * 2 * xp.pi * z / wavelength)        # e^{ikz}
+    if prefactor is not None:
+        u2 *= prefactor
     return u2
 
 
