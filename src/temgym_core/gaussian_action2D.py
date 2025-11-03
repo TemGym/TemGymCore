@@ -215,25 +215,41 @@ def apply_action_delta(
 def scalar_grad_hess_complex(
     fn: Callable[..., complex],
     x: jnp.ndarray,
-    *args: Any
+    *args: Any,
+    diff_argnums: int | Sequence[int] = 0,
 ) -> Tuple[complex, jnp.ndarray, jnp.ndarray]:
     """
     Return (dS0, grad, hess) where dS0 = fn(x, *args) (complex scalar),
     grad = ∇_x fn (complex vector), hess = sym(∇^2_x fn) (complex matrix).
+
+    Parameters
+    ----------
+    fn : Callable
+        Function returning a complex scalar. The first argument is differentiated.
+    x : jnp.ndarray
+        Expansion point for the differentiated argument.
+    *args :
+        Additional positional arguments passed to `fn` but treated as constants
+        during differentiation.
+    diff_argnums : int or tuple of ints, default 0
+        Indices of the arguments of `fn` with respect to which gradients and
+        Hessians are taken. By default only the first argument is differentiated.
     """
+    full_args = (x, *args)
+
+    def re_fn(*fn_args):  # scalar real
+        return jnp.real(fn(*fn_args))
+
+    def im_fn(*fn_args):  # scalar real
+        return jnp.imag(fn(*fn_args))
+
     # evaluate function at x for dS0
-    dS0 = fn(x, *args)
+    dS0 = fn(*full_args)
 
-    def re_fn(y, *a):  # scalar real
-        return jnp.real(fn(y, *a))
-
-    def im_fn(y, *a):  # scalar real
-        return jnp.imag(fn(y, *a))
-
-    grad_re = jax.grad(re_fn, argnums=0)(x, *args)  # (2,)
-    grad_im = jax.grad(im_fn, argnums=0)(x, *args)  # (2,)
-    hess_re = jax.hessian(re_fn, argnums=0)(x, *args)  # (2,2)
-    hess_im = jax.hessian(im_fn, argnums=0)(x, *args)  # (2,2)
+    grad_re = jax.grad(re_fn, argnums=diff_argnums)(*full_args)  # (2,)
+    grad_im = jax.grad(im_fn, argnums=diff_argnums)(*full_args)  # (2,)
+    hess_re = jax.hessian(re_fn, argnums=diff_argnums)(*full_args)  # (2,2)
+    hess_im = jax.hessian(im_fn, argnums=diff_argnums)(*full_args)  # (2,2)
 
     grad = grad_re + 1j * grad_im
     hess = _sym(hess_re + 1j * hess_im)
@@ -356,21 +372,25 @@ class KrivanekLens(Component2D):
 
 @jdc.pytree_dataclass(kw_only=True)
 class SeidelLens(Component2D):
-    f: float
+    focal_length: float
     z1: float  # absolute distance from object to lens
-    coeffs: SeidelCoeffs | None = None  # optional full Seidel coefficients
+    coeffs: SeidelCoeffs = SeidelCoeffs()
 
     def log_transmission(self, xy):
         return 0.0
 
     def phase_shift(self, xy, dxy):
-        x_a, y_a = xy[:, 0], xy[:, 1]
-        x_ap, y_ap = dxy[:, 0], dxy[:, 1]
-        coeffs = self.coeffs if self.coeffs is not None else SeidelCoeffs()
-        return Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
+        xy = jnp.asarray(xy)
+        dxy = jnp.asarray(dxy)
+        x_a, y_a = xy[..., 0], xy[..., 1]
+        x_ap, y_ap = dxy[..., 0], dxy[..., 1]
+        coeffs = self.coeffs
+        f = self.focal_length
+        rho2 = x_a * x_a + y_a * y_a
+        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
 
-    def complex_action(self, xy: jnp.ndarray, k: float) -> complex:
-        logA = self.log_transmission(xy, dxy)
+    def complex_action(self, xy: jnp.ndarray, dxy: jnp.ndarray, k: float) -> complex:
+        logA = self.log_transmission(xy)
         L = jnp.logaddexp(logA, -20)
         return self.phase_shift(xy, dxy) - 1j * (L / k)
 
@@ -378,9 +398,10 @@ class SeidelLens(Component2D):
         xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
         if xy_ref.ndim != 1:
             raise ValueError("Component2D._apply_single expects a scalar GaussianBeam.")
+        d_xy = jnp.asarray(ray.d_xy, dtype=jnp.float64)
         k = jnp.squeeze(jnp.asarray(ray.k))
 
-        dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, k)
+        dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, d_xy, k)
         r_xy, r_dxy, Cn, S2 = apply_action_delta(ray, dS0=dS0, dS1=dS1, dS2=dS2)
 
         return ray.derive(
@@ -393,25 +414,6 @@ class SeidelLens(Component2D):
             S2=S2
         )
 
-    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
-        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
-        if xy_ref.ndim == 1:
-            return self._apply_single(ray)
-
-        batch = xy_ref.shape[0]
-
-        def infer_axes(arr):
-            if arr is None:
-                return None
-            arr = jnp.asarray(arr)
-            if arr.ndim == 0:
-                return None
-            return 0 if arr.shape[0] == batch else None
-
-        in_axes = jax.tree_map(infer_axes, ray)
-        vmapped = jax.vmap(lambda r: self._apply_single(r), in_axes=in_axes)
-        return vmapped(ray)
-
 
 @jdc.pytree_dataclass(kw_only=True)
 class DistortedLens(SeidelLens):
@@ -420,11 +422,24 @@ class DistortedLens(SeidelLens):
     e: float = 0.0  # anisotropic distortion coefficient
 
     def phase_shift(self, xy, dxy):
-        x_a, y_a = xy[:, 0], xy[:, 1]
-        x_ap, y_ap = dxy[:, 0], dxy[:, 1]
+        xy = jnp.asarray(xy)
+        dxy = jnp.asarray(dxy)
+        x_a, y_a = xy[..., 0], xy[..., 1]
+
+        f = self.focal_length
+        rho2 = x_a * x_a + y_a * y_a
+
+        x_ap, y_ap = dxy[..., 0], dxy[..., 1]
+        x_a, y_a = xy[..., 0], xy[..., 1]
+
+        f = self.focal_length
+        rho2 = x_a * x_a + y_a * y_a
+
+        x_ap, y_ap = dxy[..., 0], dxy[..., 1]
         coeffs = SeidelCoeffs(A=0.0, B=0.0, C=0.0, D=0.0, E=self.E, F=0.0,
                               e=self.e, f=0.0, c=0.0)
-        return Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
+
+        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
 
 
 @jdc.pytree_dataclass
@@ -462,7 +477,7 @@ class Biprism(Component2D):
     x0: float = 0.0
     y0: float = 0.0
     sharpness: float = 50.0
-    eps: float = 1e-12
+    eps: float = 1e-15
 
     def _uv(self, xy: jnp.ndarray):
         x, y = xy[0], xy[1]
@@ -532,7 +547,7 @@ class ABCDPropagator2D:
         # Re-center so that the imaginary linear coefficient vanishes (intensity maximum)
         dr_i = center_shift_from_S(S1_temp, S2)
         phase_shift = S1_temp @ dr_i + 0.5 * (dr_i @ S2 @ dr_i)
-        C_new = C_temp * jnp.exp(1j * k * phase_shift)
+        C_new = C_temp * jnp.exp(1j * k * phase_shift) * jnp.exp(1j * k * (self.L))
 
         rxy_new = r.r_xy + jnp.real(dr_i)
 
@@ -550,6 +565,7 @@ class ABCDPropagator2D:
     def free_space(z: float):
         Iden = jnp.eye(2, dtype=jnp.float64)
         Z = jnp.zeros((2, 2), dtype=jnp.float64)
+        z = jnp.asarray(z, dtype=jnp.float64)
         return ABCDPropagator2D(A=Iden, B=z*Iden, C=Z, D=Iden, L=z)
 
     @staticmethod
@@ -577,12 +593,13 @@ class ABCDPropagator2D:
         return ABCDPropagator2D(A=Zero, B=f*Iden, C=-(1.0/f)*Iden, D=Zero, L=2*f)
 
     @staticmethod
-    def perfect_imaging(magnification: float, *, L: float = 0.0):
+    def perfect_imaging(magnification: float, focal_length: float = 1.0, L: float = 0.0):
         M = complex(magnification)
         A = jnp.eye(2, dtype=jnp.float64) * M
+        C = jnp.eye(2, dtype=jnp.float64) * (-1.0/(focal_length))
         D = jnp.eye(2, dtype=jnp.float64) * (1.0/M)
         Z = jnp.zeros((2, 2), dtype=jnp.float64)
-        return ABCDPropagator2D(A=A, B=Z, C=Z, D=D, L=L)
+        return ABCDPropagator2D(A=A, B=Z, C=C, D=D, L=L)
 
 
 TransformT = Callable[[Any], Callable[[Any], Tuple[Any, Any]]]

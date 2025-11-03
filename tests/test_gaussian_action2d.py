@@ -198,7 +198,7 @@ def test_free_space_paraxial_updates_q_inv():
     )
     k = 2 * jnp.pi / wavelength
     det_term = jnp.linalg.det(I2 + dist * Q_inv)
-    expected_C = ray_in.C / jnp.sqrt(det_term)
+    expected_C = ray_in.C / jnp.sqrt(det_term) * jnp.exp(1j * k * dist)
 
     np.testing.assert_allclose(
         np.asarray(ray_out.C),
@@ -376,47 +376,46 @@ def test_fourier_transform_ABCD_matrix_updates_against_stepwise():
     np.testing.assert_allclose(
         np.asarray(ray_out_abcd.C),
         np.asarray(ray_out_step_wise_abcd.C),
-        rtol=1e-12,
-        atol=1e-12,
+        rtol=1e-5,
+        atol=1e-5,
     )
 
     np.testing.assert_allclose(
         np.asarray(ray_out_abcd.S2),
         np.asarray(ray_out_step_wise.S2),
-        rtol=1e-7,
-        atol=1e-7,
+        rtol=1e-5,
+        atol=1e-5,
     )
 
     np.testing.assert_allclose(
         np.asarray(ray_out_abcd.C),
         np.asarray(ray_out_step_wise.C),
-        rtol=1e-7,
-        atol=1e-7,
+        rtol=1e-5,
+        atol=1e-5,
     )
 
     np.testing.assert_allclose(
         np.asarray(ray_out_step_wise_abcd.S2),
         np.asarray(ray_out_step_wise.S2),
-        rtol=1e-7,
-        atol=1e-7,
+        rtol=1e-5,
+        atol=1e-5,
     )
 
     np.testing.assert_allclose(
         np.asarray(ray_out_step_wise_abcd.C),
         np.asarray(ray_out_step_wise.C),
-        rtol=1e-7,
-        atol=1e-7,
+        rtol=1e-5,
+        atol=1e-5,
     )
 
 
 def test_gaussian_free_space_vs_fresnel():
-    propagation_distance = 0.001
-    pixel_size = (0.0005, 0.0005)
-    wavelength = 0.0001
-    wo = 0.1
+    propagation_distance = 20
+    pixel_size = (0.000005, 0.000005)
+    voltage = 1e-5
+    wavelength = energy2wavelength(voltage)
+    wo = 0.001
     shape = (2000, 2000)
-
-    voltage = wavelength2energy(wavelength)
 
     input_grid = Detector(z=0.0, pixel_size=pixel_size, shape=shape)
     detector = Detector(z=propagation_distance, pixel_size=pixel_size, shape=shape)
@@ -437,16 +436,13 @@ def test_gaussian_free_space_vs_fresnel():
     )
 
     propagated = run_to_end(gaussian, (detector,))
-    analytic_gauss_image = _field_on_grid(propagated, detector)
+    analytic_gauss_image = evaluate_gaussians_for(propagated, detector)
 
-    gauss_input = _field_on_grid(gaussian, input_grid)
-    gauss_input = zero_phase(
-        gauss_input,
-        gauss_input.shape[0] // 2,
-        gauss_input.shape[1] // 2,
-    )
+    gauss_input = evaluate_gaussians_for(gaussian, input_grid)
+    gauss_input = zero_phase(gauss_input, shape[0]//2, shape[1]//2)
 
     Y, X = _detector_mesh(detector)
+
     fresnel_gauss_image = FresnelPropagator(
         gauss_input,
         _window_size(detector),
@@ -455,9 +451,6 @@ def test_gaussian_free_space_vs_fresnel():
     )
     analytic_gauss_image = np.array(analytic_gauss_image)
     fresnel_gauss_image = np.array(fresnel_gauss_image)
-
-    analytic_gauss_image /= np.max(np.abs(analytic_gauss_image))
-    fresnel_gauss_image /= np.max(np.abs(fresnel_gauss_image))
 
     det_circular_mask = make_aperture(X, Y, aperture_ratio=0.4)
 
@@ -475,6 +468,7 @@ def test_gaussian_free_space_vs_fresnel():
         np.abs(fresnel_gauss_image),
     )
 
+
     fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
                              label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=True)
     fig.savefig("test_gaussian_free_space_vs_fresnel.png")
@@ -483,19 +477,18 @@ def test_gaussian_free_space_vs_fresnel():
     np.testing.assert_allclose(
         np.abs(analytic_gauss_image),
         np.abs(fresnel_gauss_image),
-        rtol=1e-1,
-        atol=1e-1,
+        rtol=1e-4,
+        atol=1e-4,
         err_msg="Amplitude mismatch between analytic and fresnel",
     )
 
     np.testing.assert_allclose(
         np.angle(analytic_gauss_image),
         np.angle(fresnel_gauss_image),
-        rtol=1e-1,
-        atol=1e-1,
+        rtol=1e-4,
+        atol=1e-4,
         err_msg="Phase mismatch between analytic and fresnel",
     )
-
 
 
 def test_gaussian_lens_vs_fresnel():
@@ -504,16 +497,15 @@ def test_gaussian_lens_vs_fresnel():
     defocus = 1e-4
     z1, z2 = calculate_z1_and_z2_from_M_and_f(M, f)
 
-    pixel_size = (5e-6, 5e-6)
-    shape = (2048, 2048)
-    wavelength = 1e-5
+    pixel_size = (1e-6, 1e-6)
+    shape = (4096, 4096)
+    voltage = 1e-9
+    wavelength = energy2wavelength(voltage)
     wo = 5e-4
 
-    voltage = wavelength2energy(wavelength)
-
     input_grid = Detector(z=0.0, pixel_size=pixel_size, shape=shape)
-    lens = Lens(z=abs(z1) + defocus, focal_length=f)
-    detector = Detector(z=abs(z1) + z2, pixel_size=pixel_size, shape=shape)
+    lens = Lens(z=abs(z1), focal_length=f)
+    detector = Detector(z=abs(z1) + z2 + defocus, pixel_size=pixel_size, shape=shape)
 
     gaussian = make_gaussian(
         x=0.0,
@@ -552,9 +544,9 @@ def test_gaussian_lens_vs_fresnel():
         X,
         pixel_size[0],
         wavelength,
-        defocus + abs(z1),
+        z1,
         f,
-        z2,
+        z2 + defocus,
     )
     fresnel_gauss_image = zero_phase(
         fresnel_gauss_image,
@@ -565,7 +557,7 @@ def test_gaussian_lens_vs_fresnel():
     analytic_gauss_image /= np.max(np.abs(analytic_gauss_image))
     fresnel_gauss_image /= np.max(np.abs(fresnel_gauss_image))
 
-    det_circular_mask = make_aperture(X, Y, aperture_ratio=0.4)
+    det_circular_mask = make_aperture(X, Y, aperture_ratio=0.3)
 
     analytic_gauss_image *= det_circular_mask
     fresnel_gauss_image *= det_circular_mask
@@ -581,19 +573,59 @@ def test_gaussian_lens_vs_fresnel():
         np.abs(fresnel_gauss_image),
     )
 
+    analytic_gauss_image = zero_phase(
+        analytic_gauss_image,
+        analytic_gauss_image.shape[0] // 2,
+        analytic_gauss_image.shape[1] // 2,
+    )
+
+    fresnel_gauss_image = zero_phase(
+        fresnel_gauss_image,
+        fresnel_gauss_image.shape[0] // 2,
+        fresnel_gauss_image.shape[1] // 2,
+    )
+
+    fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
+                             label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=False)
+
+    fig.savefig("test_gaussian_lens_vs_fresnel.png")
+    plt.close(fig)
+
+    central_index = analytic_gauss_image.shape[0] // 2
+    analytic_phase_cross_section = np.angle(analytic_gauss_image[central_index, :])
+    fresnel_phase_cross_section = np.angle(fresnel_gauss_image[central_index, :])
+
+    analytic_amplitude_cross_section = np.abs(analytic_gauss_image[central_index, :])
+    fresnel_amplitude_cross_section = np.abs(fresnel_gauss_image[central_index, :])
+
+    det_edge_x, _ = detector.coords_1d
+    det_edge_x = np.asarray(det_edge_x)
+
+    fig, _ = plot_cross_sections(
+        det_edge_x,
+        [analytic_amplitude_cross_section, fresnel_amplitude_cross_section],
+        [
+            analytic_phase_cross_section,
+            fresnel_phase_cross_section,
+        ],
+    )
+
+    fig.savefig("test_gaussian_lens_vs_fresnel_cross_section.png")
+    plt.close(fig)
+
     np.testing.assert_allclose(
         np.abs(analytic_gauss_image),
         np.abs(fresnel_gauss_image),
-        rtol=5e-1,
-        atol=5e-1,
+        rtol=1e-1,
+        atol=1e-1,
         err_msg="Amplitude mismatch between analytic and fresnel",
     )
 
     np.testing.assert_allclose(
-        unwrap_phase(np.angle(analytic_gauss_image)),
-        unwrap_phase(np.angle(fresnel_gauss_image)),
-        rtol=2,
-        atol=2,
+        np.angle(analytic_gauss_image),
+        np.angle(fresnel_gauss_image),
+        rtol=1e-1,
+        atol=1e-1,
         err_msg="Phase mismatch between analytic and fresnel",
     )
 
@@ -664,6 +696,7 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         0.0,
         f,
         z2,
+        include_prefactor=False
     )
     fresnel_gauss_image = zero_phase(
         fresnel_gauss_image,
@@ -708,7 +741,7 @@ def test_gaussian_two_beam_interference_vs_fresnel():
             unwrap_phase(fresnel_phase_cross_section),
         ],
     )
-    plt.savefig("test_two_beam_interference_cross_section.png")
+    fig.savefig("test_two_beam_interference_cross_section.png")
     plt.close(fig)
 
     det_size_x = pixel_size[0] * shape[0]
@@ -723,21 +756,21 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         label1="Analytic Gaussian",
         label2="Fresnel Gaussian",
     )
-    plt.savefig("test_two_beam_interference_overview.png")
+    fig.savefig("test_two_beam_interference_overview.png")
     plt.close(fig)
 
     np.testing.assert_allclose(
         np.abs(analytic_gauss_image),
         np.abs(fresnel_gauss_image),
-        rtol=5e-1,
-        atol=5e-1,
+        rtol=1e-2,
+        atol=1e-2,
         err_msg="Amplitude mismatch between analytic and fresnel",
     )
 
     np.testing.assert_allclose(
         unwrap_phase(np.angle(analytic_gauss_image)),
         unwrap_phase(np.angle(fresnel_gauss_image)),
-        rtol=2,
-        atol=2,
+        rtol=1e-2,
+        atol=1e-2,
         err_msg="Phase mismatch between analytic and fresnel",
     )

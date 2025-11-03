@@ -275,9 +275,7 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np, prefactor=None):
     U1 = xp.fft.fft2(u1)
     U2 = H * U1
     u2 = xp.fft.ifft2(U2)
-    u2 *= xp.exp(1j * 2 * xp.pi * z / wavelength)
-    if prefactor is not None:
-        u2 *= prefactor
+    u2 *= xp.exp(1j * 2 * xp.pi * z / wavelength)        # e^{ikz}
     return u2
 
 
@@ -366,10 +364,16 @@ def AngularSpectrumPropagator(u1, L, wavelength, z, xp=np):
 
 
 def fresnel_lens_imaging_solution(E0, Y, X, ps, lambda0, z1, f, z2):
-    k = 2 * np.pi / lambda0
-    L = E0.shape[0] * ps
-    E_lens = FresnelPropagator(E0, L, lambda0, z1).copy()
-    E_lens *= np.exp((-1j * k) / (2 * f) * (X ** 2 + Y ** 2)).copy()
+    k = 2*np.pi/lambda0
+    L = E0.shape[0]*ps
+
+    # 1) propagate to lens
+    E_lens = FresnelPropagator(E0, L, lambda0, z1)  # should include e^{ik z1}/(i λ z1) & chirps
+
+    # 2) thin-lens phase (no amplitude)
+    E_lens *= np.exp((-1j*k)/(2*f) * (X**2 + Y**2))
+
+    # 3) propagate lens -> image plane
     E_final = FresnelPropagator(E_lens, L, lambda0, z2)
 
     return E_final

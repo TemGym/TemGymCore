@@ -1,8 +1,9 @@
 import jax.numpy as jnp
 from dataclasses import dataclass
+import jax_dataclasses as jdc
 
 
-@dataclass(frozen=True)
+@jdc.pytree_dataclass(frozen=True)
 class KrivanekCoeffs:
     C10: float = 0.0
     C12: float = 0.0
@@ -108,7 +109,7 @@ def grad_W_krivanek(alpha_x, alpha_y, p):
     return dWx, dWy
 
 
-@dataclass(frozen=True)
+@jdc.pytree_dataclass(frozen=True)
 class SeidelCoeffs:
     A: float = 0.0  # Pure Phase Shift
     B: float = 0.0  # Spherical Aberration
