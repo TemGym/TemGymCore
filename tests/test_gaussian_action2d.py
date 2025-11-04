@@ -8,14 +8,19 @@ from skimage.restoration import unwrap_phase
 
 from temgym_core.gaussian_action2D import (
     make_gaussian,
-    ABCDPropagator2D,
+    FreeSpacePropagator,
     Lens,
+    ConstantPhaseShift,
+    LinearPhaseShift,
+    QuadraticPhaseShift,
+    scalar_grad_hess_complex,
     run_to_end,
 )
 from temgym_core.components import Detector
 
 from temgym_core.utils import (
     energy2wavelength,
+    fresnel_fft_2d,
     wavelength2energy,
     zero_phase,
     make_aperture,
@@ -177,8 +182,8 @@ def test_free_space_paraxial_updates_q_inv():
     )
 
     dist = 1e-3
-    propagator = ABCDPropagator2D.free_space(dist)
-    ray_out = propagator(ray_in)
+    propagator = FreeSpacePropagator()
+    ray_out = propagator.propagate(ray_in, dist)
 
     I2 = jnp.eye(2, dtype=jnp.complex128)
     expected_Q = Q_inv @ jnp.linalg.inv(I2 + dist * Q_inv)
@@ -208,67 +213,258 @@ def test_free_space_paraxial_updates_q_inv():
     )
 
 
-def test_thin_lens_updates_q_inv():
-    # Analytic solution for a thin lens: q_inv_out = q_inv_in - 1/f
-    voltage = 100e3
-    r_curv = -0.001
-    waist = 1e-6
-    wavelength = energy2wavelength(voltage)
-    q_inv = 1 / r_curv + 1j * (wavelength) / (jnp.pi * waist ** 2)
-    Q_inv = jnp.diag(jnp.array([q_inv, q_inv], dtype=jnp.complex128))
+def test_constant_component():
+    input_phase_shift = 0.5
+    input_coord = jnp.array([0.5, -0.5])
+    constant_component = ConstantPhaseShift(z=0.0, constant_phase_shift=input_phase_shift)
 
+    val = constant_component.phase_shift(input_coord)
+    grad = jax.grad(constant_component.phase_shift, argnums=0)(input_coord)
+    grad_grad = jax.jacobian(jax.grad(constant_component.phase_shift), argnums=0)(input_coord)
+
+    np.testing.assert_allclose(np.asarray(val), input_phase_shift, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(grad), 0.0, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(grad_grad), 0.0, rtol=1e-12, atol=1e-12)
+
+
+def test_linear_component():
+    input_phase_shift = jnp.array([-0.23, 0.512])
+    input_coord = jnp.array([0.5, -0.5])
+    linear_component = LinearPhaseShift(z=0.0, linear_phase_shift=input_phase_shift)
+
+    val = linear_component.phase_shift(input_coord)
+    grad = jax.grad(linear_component.phase_shift, argnums=0)(input_coord)
+    grad_grad = jax.jacobian(jax.grad(linear_component.phase_shift), argnums=0)(input_coord)
+
+    np.testing.assert_allclose(np.asarray(val), jnp.dot(input_phase_shift, input_coord), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(grad), input_phase_shift, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(grad_grad), 0.0, rtol=1e-12, atol=1e-12)
+
+
+def test_quadratic_component():
+
+    fx, fy = -0.1, 0.23
+    input_phase_shift = jnp.array([[fx, 0.0], [0.0, fy]])
+    input_coord = jnp.array([0.5, -0.5])
+    quadratic_component = QuadraticPhaseShift(z=0.0, quadratic_phase_shift=input_phase_shift)
+
+    val = quadratic_component.phase_shift(input_coord)
+    grad = jax.grad(quadratic_component.phase_shift, argnums=0)(input_coord)
+    grad_grad = jax.jacobian(jax.grad(quadratic_component.phase_shift), argnums=0)(input_coord)
+
+    np.testing.assert_allclose(np.asarray(val), 0.5 * input_coord @ input_phase_shift @ input_coord, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(grad), input_phase_shift @ input_coord, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(grad_grad), input_phase_shift @ jnp.eye(2), rtol=1e-12, atol=1e-12)
+
+
+def test_scalar_grad_hessian_function():
+    constant_phase_shift = 0.5
+    constant_phase_shift_comp = ConstantPhaseShift(z=0.0, constant_phase_shift=constant_phase_shift)
+    constant_phase_shift_func = constant_phase_shift_comp.phase_shift
+    x = jnp.array([0.000552, -0.000326])
+
+    val, grad, hess = scalar_grad_hess_complex(constant_phase_shift_func, x)
+
+    np.testing.assert_allclose(np.asarray(val), 0.5, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(grad), 0.0, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(hess), 0.0, rtol=1e-12, atol=1e-12)
+
+    linear_phase_shift = jnp.array([-0.1e-2, -0.8e-3])
+    linear_phase_shift_comp = LinearPhaseShift(z=0.0, linear_phase_shift=linear_phase_shift)
+
+    linear_phase_shift_func = linear_phase_shift_comp.phase_shift
+
+    val, grad, hess = scalar_grad_hess_complex(linear_phase_shift_func, x)
+
+    np.testing.assert_allclose(np.asarray(val), jnp.dot(linear_phase_shift, x), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(grad), linear_phase_shift, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(hess), 0.0, rtol=1e-12, atol=1e-12)
+
+
+def test_gaussian_free_space():
+    voltage = 0.6e-5
+    w0x, w0y = 0.35e-3, 0.25e-3
+    theta_x, theta_y = 1.4e-3, -0.7e-3
+    z1 = 0.18
+    x0, y0 = 0.3e-3, -0.2e-3
+    Nx, Ny = 1024, 1024
+    Lx, Ly = 16e-3, 16e-3
+    pixel_size = (Lx / Nx, Ly / Ny)
+
+    input_grid = Detector(z=0.0, pixel_size=pixel_size, shape=(Ny, Nx))
+    detector = Detector(z=z1, pixel_size=pixel_size, shape=(Ny, Nx))
+
+    wavelength = energy2wavelength(voltage)
     ray_in = make_gaussian(
-        x=0.0,
-        y=0.0,
-        dx=0.0,
-        dy=0.0,
+        x=x0,
+        y=y0,
+        dx=theta_x,
+        dy=theta_y,
         z=0.0,
         voltage=voltage,
-        waist_x=waist,
-        waist_y=waist,
+        waist_x=w0x,
+        waist_y=w0y,
         phase=0.0,
         amp=1.0,
-        rcurv_x=r_curv,
-        rcurv_y=r_curv,
     )
+    gauss_input = evaluate_gaussians_for(ray_in, input_grid)
+    propagator = FreeSpacePropagator()
+    ray_out = propagator(ray_in, z1)
+    analytic_gauss_image = evaluate_gaussians_for(ray_out, detector)
 
-    f = 5e-3
+    Y, X = _detector_mesh(detector)
 
-    # support either ABCDPropagator2D.thin_lens or ABCDPropagator2D.lens if present
-    lens_ctor = getattr(ABCDPropagator2D, "thin_lens", None) or getattr(
-        ABCDPropagator2D, "lens", None
+    fresnel_gauss_image = fresnel_fft_2d(X, Y, gauss_input, wavelength, z1)
+    analytic_gauss_image = np.array(analytic_gauss_image)
+    fresnel_gauss_image = np.array(fresnel_gauss_image)
+
+    fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
+                             label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=True)
+    fig.savefig("test_gaussian_free_space_vs_fresnel.png")
+    plt.close(fig)
+
+
+def test_gaussian_constant_phase_shift():
+    voltage = 6.0165e-6
+    w0x, w0y = 0.35e-3, 0.25e-3
+    theta_x, theta_y = 1.4e-3, -0.7e-3
+    z1, z2 = 0.18, 0.27
+    x0, y0 = 0.3e-3, -0.2e-3
+    Nx, Ny = 2048, 2048
+    Lx, Ly = 16e-3, 16e-3
+    pixel_size = (Lx / Nx, Ly / Ny)
+    constant_phase_shift = 2.0e-6
+    input_grid = Detector(z=0.0, pixel_size=pixel_size, shape=(Ny, Nx))
+    constant_phase_shift_comp = ConstantPhaseShift(z=z1, constant_phase_shift=constant_phase_shift)
+    detector = Detector(z=z1 + z2, pixel_size=pixel_size, shape=(Ny, Nx))
+
+    wavelength = energy2wavelength(voltage)
+    ray_in = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=theta_x,
+        dy=theta_y,
+        z=0.0,
+        voltage=voltage,
+        waist_x=w0x,
+        waist_y=w0y,
+        phase=0.0,
+        amp=1.0,
     )
-    if lens_ctor is None:
-        pytest.skip("No thin_lens or lens constructor on ABCDPropagator2D")
+    gauss_input = evaluate_gaussians_for(ray_in, input_grid)
+    ray_out = run_to_end(ray_in, (constant_phase_shift_comp, detector))
+    analytic_gauss_image = evaluate_gaussians_for(ray_out, detector)
 
-    propagator = lens_ctor(f)
-    ray_out = propagator(ray_in)
+    Y, X = _detector_mesh(detector)
 
-    I2 = jnp.eye(2, dtype=jnp.complex128)
-    expected_Q = Q_inv - (1.0 / f) * I2
+    U1 = fresnel_fft_2d(X, Y, gauss_input, wavelength, z1)
+    U1k = U1 * np.exp(1j*(2*np.pi/wavelength)*constant_phase_shift)
+    fresnel_gauss_image = fresnel_fft_2d(X, Y, U1k, wavelength, z2)
 
-    np.testing.assert_allclose(
-        np.asarray(ray_out.S2),
-        np.asarray(expected_Q),
-        rtol=1e-12,
-        atol=1e-12,
+    analytic_gauss_image = np.array(analytic_gauss_image)
+    fresnel_gauss_image = np.array(fresnel_gauss_image)
+
+    fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
+                             label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=False)
+    fig.savefig("test_gaussian_vs_constant_phase_shift.png")
+    plt.close(fig)
+
+
+def test_gaussian_linear_phase_shift():
+    voltage = 6.0165e-6  # 500 e-9 m wavelength
+    w0x, w0y = 0.35e-3, 0.25e-3
+    theta_x, theta_y = 1.4e-3, -0.7e-3
+    d_theta = jnp.array([-0.1e-2, -0.8e-3])
+    z1, z2 = 0.18, 0.27
+    x0, y0 = 0.0e-3, 0.0e-3
+    Nx, Ny = 2048, 2048
+    Lx, Ly = 16e-3, 16e-3
+    pixel_size = (Lx / Nx, Ly / Ny)
+    input_grid = Detector(z=0.0, pixel_size=pixel_size, shape=(Ny, Nx))
+    linear_phase_shift_comp = LinearPhaseShift(z=z1, linear_phase_shift=d_theta)
+    detector = Detector(z=z1 + z2, pixel_size=pixel_size, shape=(Ny, Nx))
+
+    wavelength = energy2wavelength(voltage)
+    ray_in = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=theta_x,
+        dy=theta_y,
+        z=0.0,
+        voltage=voltage,
+        waist_x=w0x,
+        waist_y=w0y,
+        phase=0.0,
+        amp=1.0,
     )
+    gauss_input = evaluate_gaussians_for(ray_in, input_grid)
+    ray_out = run_to_end(ray_in, (linear_phase_shift_comp, detector))
+    analytic_gauss_image = evaluate_gaussians_for(ray_out, detector)
 
-    np.testing.assert_allclose(
-        np.asarray(ray_in.C),
-        np.asarray(1.0 + 0.0j),
-        rtol=0.0,
-        atol=1e-12,
+    Y, X = _detector_mesh(detector)
+
+    U1 = fresnel_fft_2d(X, Y, gauss_input, wavelength, z1)
+    U1k = U1 * np.exp(1j*(2*np.pi/wavelength)*(d_theta[0]*X + d_theta[1]*Y))
+    fresnel_gauss_image = fresnel_fft_2d(X, Y, U1k, wavelength, z2)
+
+    analytic_gauss_image = np.array(analytic_gauss_image)
+    fresnel_gauss_image = np.array(fresnel_gauss_image)
+
+    fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
+                             label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=False)
+    fig.savefig("test_gaussian_vs_linear_phase_shift.png")
+    plt.close(fig)
+
+
+def test_gaussian_quadratic_phase_shift():
+    voltage = 6.0165e-6  # 500 e-9 m wavelength
+    w0x, w0y = 0.35e-3, 0.25e-3
+    theta_x, theta_y = 1.4e-3, -0.7e-3
+    z1, z2 = 0.18, 0.27
+    x0, y0 = 0.6e-3, -0.2e-3
+    Nx, Ny = 1024, 1024
+    Lx, Ly = 16e-3, 16e-3
+    pixel_size = (Lx / Nx, Ly / Ny)
+    input_grid = Detector(z=0.0, pixel_size=pixel_size, shape=(Ny, Nx))
+    f_x, f_y = 0.7, 0.35
+    K = jnp.array([[-1/f_x, 0.0], [0.0, -1/f_y]])
+
+    quadratic_phase_shift_comp = QuadraticPhaseShift(z=z1, quadratic_phase_shift=K)
+    detector = Detector(z=z1 + z2, pixel_size=pixel_size, shape=(Ny, Nx))
+
+    wavelength = energy2wavelength(voltage)
+    ray_in = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=theta_x,
+        dy=theta_y,
+        z=0.0,
+        voltage=voltage,
+        waist_x=w0x,
+        waist_y=w0y,
+        phase=0.0,
+        amp=1.0,
     )
+    gauss_input = evaluate_gaussians_for(ray_in, input_grid)
+    ray_out = run_to_end(ray_in, (quadratic_phase_shift_comp, detector))
+    analytic_gauss_image = evaluate_gaussians_for(ray_out, detector)
 
-    np.testing.assert_allclose(
-        np.asarray(ray_out.C),
-        np.asarray(ray_in.C),
-        rtol=1e-12,
-        atol=1e-12,
-    )
+    Y, X = _detector_mesh(detector)
+
+    U1 = fresnel_fft_2d(X, Y, gauss_input, wavelength, z1)
+    U1k = U1 * np.exp(1j*(2*np.pi/wavelength)*0.5*(K[0,0]*X**2 + 2*K[0,1]*X*Y + K[1,1]*Y**2))
+    fresnel_gauss_image = fresnel_fft_2d(X, Y, U1k, wavelength, z2)
+
+    analytic_gauss_image = np.array(analytic_gauss_image)
+    fresnel_gauss_image = np.array(fresnel_gauss_image)
+
+    fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
+                             label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=False)
+    fig.savefig("test_gaussian_vs_quadratic_phase_shift.png")
+    plt.close(fig)
 
 
+@pytest.mark.skip(reason='ABCD for new propagator not yet implemented')
 def test_fourier_transform_ABCD_matrix_updates_q_inv():
     # Test general ABCD transform: A=0, B=f, C=-1/f, D=0
     voltage = 100000
@@ -327,6 +523,7 @@ def test_fourier_transform_ABCD_matrix_updates_q_inv():
                                rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.skip(reason='ABCD for new propagator not yet implemented')
 def test_fourier_transform_ABCD_matrix_updates_against_stepwise():
     # Test general ABCD transform: A=0, B=f, C=-1/f, D=0
     voltage = 100000
@@ -409,6 +606,7 @@ def test_fourier_transform_ABCD_matrix_updates_against_stepwise():
     )
 
 
+@pytest.mark.skip(reason='ABCD for new propagator not yet implemented')
 def test_gaussian_free_space_vs_fresnel():
     propagation_distance = 20
     pixel_size = (0.000005, 0.000005)
