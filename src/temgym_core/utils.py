@@ -279,6 +279,20 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np, prefactor=None):
     return u2
 
 
+# ---------- Fresnel FFT 2D ----------
+def fresnel_fft_2d(X, Y, U, wavelength, z):
+    k = 2*np.pi/wavelength
+    dx = X[0, 1] - X[0, 0]
+    dy = Y[1, 0] - Y[0, 0]
+    Ny, Nx = X.shape
+    fx = np.fft.fftfreq(Nx, d=dx)
+    fy = np.fft.fftfreq(Ny, d=dy)
+    FX, FY = np.meshgrid(fx, fy, indexing="xy")
+    H = np.exp(1j*k*z) * np.exp(-1j*np.pi*wavelength*z*(FX**2 + FY**2))
+    return np.fft.ifft2(np.fft.fft2(U) * H)
+
+
+
 def FresnelPropagator1D(u1, L, wavelength, z, xp=np, prefactor=None):
     """1D Fresnel propagation via transfer function (frequency-domain).
 

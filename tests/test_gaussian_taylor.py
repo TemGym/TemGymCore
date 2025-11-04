@@ -10,8 +10,6 @@ from temgym_core.gaussian import (
     GaussianRayBeta,
     TaylorExpofAction,
     gaussian_beam,
-    make_gaussian_plane_wave_round_aperture,
-    make_gaussian_plane_wave_square_aperture,
     q_inv,
 )
 from temgym_core.gaussian_taylor import Lens, SigmoidAperture, FreeSpaceParaxial, run_to_end

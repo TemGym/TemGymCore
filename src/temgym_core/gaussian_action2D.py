@@ -81,8 +81,8 @@ def make_gaussian(
     S2_re = S2_re.at[:, 1, 1].set(curv_y)
 
     S2_im = jnp.zeros((n_rays, 2, 2), dtype=jnp.float64)
-    S2_im = S2_im.at[:, 0, 0].set(2.0 / (k * waist_x**2))
-    S2_im = S2_im.at[:, 1, 1].set(2.0 / (k * waist_y**2))
+    S2_im = S2_im.at[:, 0, 0].set(wavelength / (jnp.pi * waist_x**2))
+    S2_im = S2_im.at[:, 1, 1].set(wavelength / (jnp.pi * waist_y**2))
 
     S2 = (S2_re + 1j * S2_im).astype(jnp.complex128)
 
@@ -173,41 +173,36 @@ class GaussianBeam(Ray):
 
 
 def apply_action_delta(
-    ray: "GaussianBeam",
+    ray,
     dS0: complex,
     dS1: jnp.ndarray,  # shape (2,)
     dS2: jnp.ndarray,  # shape (2,2)
 ):
     """
-    Apply ΔS(ξ) = dS0 + dS1·ξ + 1/2 ξᵀ dS2 ξ at the current local coords ξ=x - r0,
-    then re-center so that Im(S1'+S2' ξ_c) = 0 (intensity maximum at the ray).
-    Returns updated (r_xy_new, d_xy_new, C_new, S2_new).
+    Apply a local quadratic action increment ΔS(ξ) = dS0 + dS1·ξ + 1/2 ξᵀ dS2 ξ
+    evaluated at the CURRENT ray center (ξ = r - r0, with r0 = ray.r_xy).
+
+    No re-centering; absolute phase lives in ray.C.
+
+    Updates:
+      C   <- C * exp{i k dS0}
+      d   <- d + Re(dS1)                (store only physical tilt; set keep_imag_linear=True if you track complex)
+      S2  <- S2 + sym(dS2)
+      r0  <- r0                         (unchanged)
+
+    Returns
+    -------
+    r_xy_new, d_xy_new, C_new, S2_new
+      (r_xy_new == ray.r_xy)
+      If keep_imag_linear=True, also returns dS1 (complex) for optional external bookkeeping.
     """
     k = ray.k
+    r0 = ray.r_xy
 
-    # Total linear/quadratic coefficients *after* the increment
-    S1_total = ray.d_xy + dS1
-    S2_total = ray.S2 + dS2
-
-    # Choose the re-centering shift to kill the imaginary linear term
-    dr_i = center_shift_from_S(S1_total, S2_total)
-
-    # New center (take the real part; imaginary part is a gauge-like tilt in amplitude)
-    r_xy_new = ray.r_xy + jnp.real(dr_i)
-
-    # Updated linear coefficient at the new center; store real part as the ray slope
-    S1_new = S1_total + S2_total @ dr_i
-    d_xy_new = jnp.real(S1_new)
-
-    # Constant term increment to apply to C (only from ΔS, evaluated at ξ=dr_i)
-    action_update = (
-        dS0
-        + jnp.dot(S1_total, dr_i)              # (S1 + dS1)·ξ
-        + 0.5 * (dr_i @ S2_total @ dr_i)       # 1/2 ξᵀ (S2 + dS2) ξ
-    )
-
-    C_new = ray.C * jnp.exp(1j * k * action_update)
-    S2_new = S2_total
+    C_new = ray.C * jnp.exp(1j * k * dS0)
+    d_xy_new = ray.d_xy + jnp.real(dS1)
+    S2_new = ray.S2 + dS2
+    r_xy_new = r0
 
     return r_xy_new, d_xy_new, C_new, S2_new
 
@@ -515,6 +510,31 @@ class Biprism(Component2D):
         return logA_u + logA_v
 
 
+@jdc.pytree_dataclass(kw_only=True)
+class ConstantPhaseShift(Component2D):
+    constant_phase_shift: float
+
+    def phase_shift(self, xy: jnp.ndarray):
+        return self.constant_phase_shift
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class LinearPhaseShift(Component2D):
+    linear_phase_shift: jnp.ndarray  # shape (2,)
+
+    def phase_shift(self, xy: jnp.ndarray):
+        return jnp.dot(self.linear_phase_shift, xy)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class QuadraticPhaseShift(Component2D):
+    quadratic_phase_shift: jnp.ndarray  # shape (2, 2)
+
+    def phase_shift(self, xy: jnp.ndarray):
+        x, y = xy[0], xy[1]
+        return 0.5 * xy @ self.quadratic_phase_shift @ xy
+
+
 @jdc.pytree_dataclass
 class ABCDPropagator2D:
     A: jnp.ndarray  # (2,2) real
@@ -612,32 +632,59 @@ def passthrough_transform(component):
     return inner
 
 
+class Propagator2D(NamedTuple):
+    distance: float
+    propagator: "BaseGaussianPropagator2D"
+
+    def __call__(self, ray: "GaussianBeam") -> "GaussianBeam":
+        return self.propagator(ray, self.distance)
+
+
 class BaseGaussianPropagator2D:
-    def propagate(self, ray: GaussianBeam, distance: float):
+    """Abstract base for gaussian-beam propagators.
+
+    Implement `__call__(ray, distance)` in subclasses to return a new GaussianBeam.
+    """
+    def __call__(self, ray: "GaussianBeam", distance: float) -> "GaussianBeam":
         raise NotImplementedError
 
-    def with_distance(self, distance: float):
-        return GaussianPropagator2D(distance, self)
+    def with_distance(self, distance: float) -> Propagator2D:
+        return Propagator2D(distance, self)
 
 
-class GaussianPropagator2D(NamedTuple):
-    distance: float
-    propagator: BaseGaussianPropagator2D
+class FreeSpacePropagator(BaseGaussianPropagator2D):
+    """Full gaussian-beam free-space propagation (2D)."""
 
-    def __call__(self, ray: GaussianBeam):
-        return self.propagator.propagate(ray, self.distance)
+    def __call__(self, ray: "GaussianBeam", distance: float) -> "GaussianBeam":
+        I = jnp.eye(2, dtype=jnp.float64)
+        theta = ray.d_xy
+        A = I + distance * ray.S2
+        invA = jnp.linalg.solve(A.T, I).T
+        detA = jnp.linalg.det(A)
+        Cnew = (
+            jnp.exp(1j * ray.k * distance)
+            * detA ** (-0.5)
+            * jnp.exp(1j * ray.k * distance * 0.5 * jnp.dot(theta, theta))
+        )
+        S2new = ray.S2 @ invA
+        xy_new = ray.r_xy + distance * theta
 
-
-class FreeSpaceParaxial2D(BaseGaussianPropagator2D):
-    def propagate(self, ray: GaussianBeam, distance: float):
-        return ABCDPropagator2D.free_space(distance)(ray)
+        return ray.derive(
+            x=xy_new[..., 0],
+            y=xy_new[..., 1],
+            dx=theta[..., 0],
+            dy=theta[..., 1],
+            z=ray.z + distance,
+            C=Cnew,
+            S2=S2new
+        )
 
 
 def run_iter(
     ray: GaussianBeam,
     components: Sequence[Any],
     transform: TransformT = passthrough_transform,
-    propagator: BaseGaussianPropagator2D = FreeSpaceParaxial2D(),
+    propagator: BaseGaussianPropagator2D = FreeSpacePropagator(),
 ) -> Generator[Tuple[Any, Any], Any, None]:
     for component in components:
         if isinstance(component, (Component2D, Detector)):
@@ -654,7 +701,7 @@ def run_iter(
 def run_to_end(
     ray: GaussianBeam,
     components: Sequence[Any],
-    propagator: BaseGaussianPropagator2D = FreeSpaceParaxial2D(),
+    propagator: BaseGaussianPropagator2D = FreeSpacePropagator(),
 ) -> GaussianBeam:
     for _, ray in run_iter(ray, components, propagator=propagator):
         pass
