@@ -262,8 +262,8 @@ class Component2D:
         return 0.0
 
     def complex_action(self, xy: jnp.ndarray, k: float) -> complex:
-        logA = self.log_transmission(xy)
-        L = jnp.logaddexp(logA, -20)
+        L = self.log_transmission(xy)
+        # L = jnp.logaddexp(logA, -50)
         return self.phase_shift(xy) - 1j * (L / k)
 
     def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
@@ -487,27 +487,27 @@ class Biprism(Component2D):
         hu = 0.5 * self.width
         eps_u = self.eps * hu
         au = jnp.sqrt(u * u + eps_u * eps_u)
-        return -self.strength * au  # smooth |u|
+        return -self.strength * au
 
-    def log_transmission(self, xy: jnp.ndarray):
-        u, v = self._uv(xy)
+    # def log_transmission(self, xy: jnp.ndarray):
+    #     u, v = self._uv(xy)
 
-        hu = 0.5 * self.width
-        eps_u = self.eps * hu
-        au = jnp.sqrt(u * u + eps_u * eps_u)
-        tx = self.sharpness * (au - hu)
-        logA_u = -softplus(-tx)  # smooth rectangular stop in u
+    #     hu = 0.5 * self.width
+    #     eps_u = self.eps * hu
+    #     au = jnp.sqrt(u * u + eps_u * eps_u)
+    #     tx = self.sharpness * (au - hu)
+    #     logA_u = -softplus(-tx)  # smooth rectangular stop in u
 
-        if self.length is None:
-            logA_v = 0.0
-        else:
-            hv = 0.5 * self.length
-            eps_v = self.eps * hu
-            av = jnp.sqrt(v * v + eps_v * eps_v)
-            ty = self.sharpness * (av - hv)
-            logA_v = -softplus(-ty)
+    #     if self.length is None:
+    #         logA_v = 0.0
+    #     else:
+    #         hv = 0.5 * self.length
+    #         eps_v = self.eps * hu
+    #         av = jnp.sqrt(v * v + eps_v * eps_v)
+    #         ty = self.sharpness * (av - hv)
+    #         logA_v = -softplus(-ty)
 
-        return logA_u + logA_v
+    #     return logA_u + logA_v
 
 
 @jdc.pytree_dataclass(kw_only=True)
@@ -661,7 +661,7 @@ class FreeSpacePropagator(BaseGaussianPropagator2D):
         A = I + distance * ray.S2
         invA = jnp.linalg.solve(A.T, I).T
         detA = jnp.linalg.det(A)
-        Cnew = (
+        Cnew = ray.C * (
             jnp.exp(1j * ray.k * distance)
             * detA ** (-0.5)
             * jnp.exp(1j * ray.k * distance * 0.5 * jnp.dot(theta, theta))
