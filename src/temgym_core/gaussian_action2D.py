@@ -13,7 +13,7 @@ from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tup
 
 from ase import units
 
-from .utils import energy2wavelength, fibonacci_spiral, uniform_disk
+from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, uniform_amp_from_area, uniform_amp_from_overlaps, uniform_disk, exact_gaussian_amps
 
 
 def relativistic_mass_correction(energy: float) -> float:
@@ -431,8 +431,7 @@ class DistortedLens(SeidelLens):
         rho2 = x_a * x_a + y_a * y_a
 
         x_ap, y_ap = dxy[..., 0], dxy[..., 1]
-        coeffs = SeidelCoeffs(A=0.0, B=0.0, C=0.0, D=0.0, E=self.E, F=0.0,
-                              e=self.e, f=0.0, c=0.0)
+        coeffs = SeidelCoeffs(E=self.E, e=self.e)
 
         return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
 
@@ -789,7 +788,8 @@ def make_gaussian_grid_input(waist: float,
                              phase: float = 0.0,
                              n_cells: int = 4,
                              samples_per_line: int = 200,
-                             extent: float = 1.0):
+                             extent: float = 1.0,
+                             offset_xy: Tuple[float, float] = (0.0, 0.0)) -> GaussianBeam:
     """
     Vectorised creation of a square grid figure.
     Returns:
@@ -816,12 +816,18 @@ def make_gaussian_grid_input(waist: float,
 
     x0, y0 = points[:, 0], points[:, 1]
 
+    N = 2 * n_lines * samples_per_line  # total number of gaussians
+    n_lines = n_cells + 1
+    A_obj = grid_line_area(extent, n_cells, waist * 2)  # you choose line_width
+    amps = A_obj / (N * jnp.pi * waist**2)
+
+    x0, y0 = x0 + offset_xy[0], y0 + offset_xy[1]
     beam = make_gaussian(
         x=x0,
         y=y0,
         dx=jnp.zeros_like(x0),
         dy=jnp.zeros_like(y0),
-        amp=jnp.ones_like(x0) * amp,
+        amp=amps,
         phase=jnp.zeros_like(y0) + phase,
         waist_x=jnp.ones_like(x0) * waist,
         waist_y=jnp.ones_like(y0) * waist,

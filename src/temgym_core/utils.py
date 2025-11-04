@@ -2,6 +2,8 @@ import jax.numpy as jnp
 import numpy as np
 from numba import njit
 from ase import units
+from jax.scipy.linalg import solve
+import jax
 
 
 def custom_jacobian_matrix(ray_jac):
@@ -608,3 +610,45 @@ def energy2wavelength(energy: float):
     p = jnp.sqrt(rad) / c
     wavelength_m = h / p
     return wavelength_m
+
+
+def uniform_amp_from_overlaps(points: jnp.ndarray, waist: float) -> float:
+    # points: (N,2) centers (your x0,y0)
+    diffs = points[:, None, :] - points[None, :, :]
+    d2 = jnp.sum(diffs**2, axis=-1)
+    K = jnp.exp(-d2 / (2.0 * waist**2))
+    return points.shape[0] / jnp.sum(K)
+
+
+def uniform_amp_from_area(num_gaussians: int, waist: float, area: float) -> float:
+    # area = (2*extent)^2 if you tile a square [-extent, extent]^2
+    return area / (num_gaussians * jnp.pi * waist**2)
+
+
+def grid_line_area(extent: float, n_cells: int, line_width: float) -> float:
+    """
+    Exact area of the union of n_lines vertical + n_lines horizontal strips
+    of full width `line_width` inside the square [-extent, extent]^2.
+    """
+    n_lines = n_cells + 1
+    L = 2.0 * extent
+    if n_lines <= 1 or line_width <= 0.0:
+        return 0.0
+    s = L / (n_lines - 1)  # grid spacing
+    w = line_width
+
+    # Total covered measure along one axis by the union of equally spaced strips
+    cover_1D = jnp.minimum(L, w + (n_lines - 1) * jnp.minimum(w, s))
+
+    # Inclusion–exclusion for the 2D union (vertical ∪ horizontal)
+    A = L * cover_1D + L * cover_1D - cover_1D * cover_1D
+    return float(A)
+
+
+def total_grid_length(extent: float, n_cells: int) -> float:
+    """
+    Total curve length of all grid lines (useful if you think in 'length × width').
+    """
+    n_lines = n_cells + 1
+    L = 2.0 * extent
+    return 2.0 * n_lines * L  # vertical + horizontal lengths
