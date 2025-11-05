@@ -13,7 +13,7 @@ from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tup
 
 from ase import units
 
-from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, uniform_amp_from_area, uniform_amp_from_overlaps, uniform_disk, exact_gaussian_amps
+from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, uniform_disk
 
 
 def relativistic_mass_correction(energy: float) -> float:

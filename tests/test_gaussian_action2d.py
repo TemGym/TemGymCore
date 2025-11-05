@@ -29,7 +29,7 @@ from temgym_core.utils import (
 )
 
 from temgym_core.evaluate import evaluate_gaussians_for
-from transfer_matrices import calculate_z1_and_z2_from_M_and_f
+from temgym_core.transfer_matrices import calculate_z1_and_z2_from_M_and_f
 
 jax.config.update("jax_enable_x64", True)
 
