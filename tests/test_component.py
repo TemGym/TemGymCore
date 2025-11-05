@@ -10,7 +10,7 @@ from temgym_core.components import ScanGrid, Detector, Descanner, DescanError, C
 from temgym_core.ray import Ray
 from temgym_core.utils import custom_jacobian_matrix
 from temgym_core.run import run_to_end
-from transfer_matrices import propagation_matrix_5x5, lens_matrix_5x5, biprism_matrix_5x5
+from temgym_core.transfer_matrices import propagation_matrix_5x5, lens_matrix_5x5, biprism_matrix_5x5
 jax.config.update("jax_enable_x64", True)
 
 

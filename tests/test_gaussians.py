@@ -15,7 +15,7 @@ from temgym_core.gaussian import (
 from temgym_core.source import ParallelBeam
 from temgym_core.components import Detector, Lens
 
-from transfer_matrices import (
+from temgym_core.transfer_matrices import (
     calculate_z1_and_z2_from_M_and_f,
 )
 from skimage.restoration import unwrap_phase

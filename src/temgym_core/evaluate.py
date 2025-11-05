@@ -39,8 +39,8 @@ def evaluate_gaussians_gpu_kernel(
     # Keep complex parts for S_quad
     S_quadc = jnp.asarray(S_quad, c_dtype).reshape((N, 2, 2))
 
-    # Optional (defensive) symmetrization if you want:
-    # S_quadc = 0.5 * (S_quadc + jnp.swapaxes(S_quadc, -1, -2))
+    # Optional symmetrization:
+    S_quadc = 0.5 * (S_quadc + jnp.swapaxes(S_quadc, -1, -2))
 
     kf = jnp.asarray(k, r_dtype).reshape((N,))
     Cc = jnp.asarray(C, c_dtype).reshape((N,))
@@ -203,12 +203,6 @@ def evaluate_gaussians_gpu_kernel(
     )
 
     return (out_re + 1j * out_im).astype(c_dtype)
-
-
-# (unchanged) keep JIT + static args
-evaluate_gaussians_gpu_kernel = jax.jit(
-    evaluate_gaussians_gpu_kernel, static_argnames=["tile_pixels", "tile_beams"]
-)
 
 
 def evaluate_gaussians_gpu_kernel_wrapper(
