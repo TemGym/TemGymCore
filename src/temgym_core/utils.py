@@ -900,3 +900,28 @@ def reconstruct_with_background_removal(
         "sample": samp,
         "background_removed": bg,
     }
+
+
+def lattice_points_square_cover(num_rays: int, aperture_length: float):
+    n_x = int(jnp.ceil(jnp.sqrt(num_rays)))
+    n_y = int(jnp.ceil(num_rays / n_x))
+
+    xs = jnp.linspace(-aperture_length/2, aperture_length/2, n_x, dtype=jnp.float64)
+    ys = jnp.linspace(-aperture_length/2, aperture_length/2, n_y, dtype=jnp.float64)
+    X, Y = jnp.meshgrid(xs, ys, indexing='xy')
+    coords = jnp.stack([X.ravel(), Y.ravel()], axis=1)
+
+    full_rows = num_rays // n_x
+    rem = num_rays % n_x
+
+    idxs = []
+    if full_rows:
+        idxs.append(jnp.arange(full_rows * n_x))
+    if rem:
+        start = (n_x - rem) // 2
+        y_idx = full_rows
+        last_row = y_idx * n_x + jnp.arange(start, start + rem)
+        idxs.append(last_row)
+
+    sel = jnp.concatenate(idxs) if idxs else jnp.array([], dtype=int)
+    return coords[sel]
