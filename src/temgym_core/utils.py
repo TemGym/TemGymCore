@@ -2,8 +2,7 @@ import jax.numpy as jnp
 import numpy as np
 from numba import njit
 from ase import units
-from jax.scipy.linalg import solve
-import jax
+from skimage.restoration import unwrap_phase
 
 
 def custom_jacobian_matrix(ray_jac):
@@ -652,3 +651,252 @@ def total_grid_length(extent: float, n_cells: int) -> float:
     n_lines = n_cells + 1
     L = 2.0 * extent
     return 2.0 * n_lines * L  # vertical + horizontal lengths
+
+
+def find_sideband_center(mag, exclude_radius=15):
+    h, w = mag.shape
+    cy, cx = h // 2, w // 2
+    Y, X = np.ogrid[:h, :w]
+    dist2 = (Y - cy)**2 + (X - cx)**2
+    search = mag.copy()
+    search[dist2 <= exclude_radius**2] = 0.0
+    iy, ix = np.unravel_index(np.argmax(search), mag.shape)
+    return (iy, ix)
+
+def gaussian_sideband_filter(fft_shifted, center, sigma):
+    h, w = fft_shifted.shape
+    Y, X = np.ogrid[:h, :w]
+    mask = np.exp(-(((X - center[1])**2 + (Y - center[0])**2) / (2 * sigma**2)))
+    filtered_fft = fft_shifted * mask
+    recon = np.fft.ifft2(np.fft.ifftshift(filtered_fft))
+    return recon, mask, filtered_fft
+
+
+def _fit_plane(phase, mask=None):
+    """
+    Fit z = ax + by + c (least-squares) to 'phase' over 'mask' (True=use).
+    Returns (a, b, c).
+    """
+    H, W = phase.shape
+    y, x = np.mgrid[0:H, 0:W]
+    if mask is None:
+        mask = np.isfinite(phase)
+    m = mask & np.isfinite(phase)
+    X = np.column_stack([x[m], y[m], np.ones(np.count_nonzero(m))])
+    coeff, *_ = np.linalg.lstsq(X, phase[m].ravel(), rcond=None)
+    a, b, c = coeff
+    return a, b, c
+
+def remove_ramp(phase, mask=None):
+    """
+    Subtract best-fit plane from 'phase'. Returns phase_detrended and (a,b,c).
+    """
+    a, b, c = _fit_plane(phase, mask)
+    H, W = phase.shape
+    y, x = np.mgrid[0:H, 0:W]
+    plane = a*x + b*y + c
+    return phase - plane, (a, b, c)
+
+
+def reconstruct_complex(
+    hologram_intensity: np.ndarray,
+    *,
+    exclude_radius: int = 5,
+    sigma_pixels: float = 5.0,
+    sideband_center: tuple | None = None,
+    recenter_to_dc: bool = True,
+    normalize_amplitude: bool = True,
+):
+    """
+    Reconstruct the complex sideband field from an off-axis hologram.
+
+    Parameters
+    ----------
+    hologram_intensity : 2D float array
+        Raw intensity image of the hologram.
+    exclude_radius : int
+        Radius around DC to exclude when auto-picking a sideband.
+    sigma_pixels : float
+        Gaussian mask sigma (in pixels) for sideband filtering.
+    sideband_center : (row, col) or None
+        If None, auto-detect via 'find_sideband_center'.
+    recenter_to_dc : bool
+        If True, shift the filtered sideband back to the origin (carrier removal).
+    normalize_amplitude : bool
+        If True, divide by mean amplitude to make amplitudes ~ O(1).
+
+    Returns
+    -------
+    dict with keys:
+      complex: complex field
+      amp: amplitude map
+      phase_wrapped: wrapped phase (radians)
+      phase_unwrapped: unwrapped phase (radians)
+      sideband_center: chosen sideband center (r,c)
+      gaussian_mask: mask used in Fourier domain
+      fft: original centered FFT (complex)
+    """
+    # FFT of intensity pattern
+    fft_img = np.fft.fftshift(np.fft.fft2(hologram_intensity.astype(np.float64)))
+    fft_mag = np.abs(fft_img)
+
+    # Auto-detect sideband if needed
+    if sideband_center is None:
+        sideband_center = find_sideband_center(fft_mag, exclude_radius=exclude_radius)
+
+    # Bandpass the sideband with your helper
+    recon_sideband, gaussian_mask, sideband_fft = gaussian_sideband_filter(
+        fft_img, sideband_center, sigma_pixels
+    )
+
+    # Optionally recenter the carrier (depends on how your filter returns it)
+    if recenter_to_dc:
+        # Shift by the detected carrier vector (negative shift to move to DC)
+        H, W = hologram_intensity.shape
+        r0, c0 = sideband_center
+        ky = (r0 - H//2) / H  # fractional cycles per pixel
+        kx = (c0 - W//2) / W
+        y, x = np.mgrid[0:H, 0:W]
+        carrier = np.exp(-2j * np.pi * (kx * x + ky * y))
+        recon_sideband = recon_sideband * carrier
+
+    # Complex field, amplitude, and phase
+    amp = np.abs(recon_sideband)
+    if normalize_amplitude:
+        m = np.isfinite(amp)
+        scale = np.mean(amp[m]) if np.any(m) else 1.0
+        if scale > 0:
+            amp = amp / scale
+            recon_sideband = recon_sideband / scale
+
+    phase_wrapped = np.angle(recon_sideband)
+    phase_unwrapped = unwrap_phase(phase_wrapped)
+
+    return {
+        "complex": recon_sideband,
+        "amp": amp,
+        "phase_wrapped": phase_wrapped,
+        "phase_unwrapped": phase_unwrapped,
+        "sideband_center": tuple(sideband_center),
+        "gaussian_mask": gaussian_mask,
+        "fft": fft_img,
+    }
+
+
+def remove_background_with_reference(
+    sample_complex: np.ndarray,
+    reference_complex: np.ndarray,
+    *,
+    amp_threshold: float = 0.05,
+    unwrap: bool = True,
+    detrend_plane: bool = True,
+):
+    """
+    Remove instrument/background phase using a separate reference by complex division.
+
+    C = S * conj(R) / (|R| + eps)
+    phase_wrapped = angle(C)
+    phase_unwrapped = unwrap_phase(phase_wrapped)
+    (then optional plane/ramp removal)
+
+    Parameters
+    ----------
+    sample_complex : 2D complex array
+    reference_complex : 2D complex array
+    amp_threshold : float
+        Mask out pixels where |R| < amp_threshold * median(|R|).
+    unwrap : bool
+        If True, unwrap the differenced phase.
+    detrend_plane : bool
+        If True, subtract a best-fit plane from the (un)wrapped phase.
+
+    Returns
+    -------
+    dict with keys:
+      complex_corrected: complex background-corrected field
+      amp: amplitude of corrected field
+      phase_wrapped: wrapped phase difference
+      phase_unwrapped: unwrapped phase difference (if unwrap=True)
+      phase_final: after optional plane removal
+      mask: valid pixels used
+    """
+    # Build mask from reference amplitude
+    ref_amp = np.abs(reference_complex)
+    med = np.median(ref_amp[np.isfinite(ref_amp)])
+    eps = 1e-12
+    mask = ref_amp >= (amp_threshold * max(med, eps))
+
+    # Complex division (stabilized)
+    C = np.zeros_like(sample_complex, dtype=np.complex128)
+    denom = ref_amp + eps
+    C[mask] = sample_complex[mask] * np.conj(reference_complex[mask]) / denom[mask]
+
+    amp = np.abs(C)
+    phase_wrapped = np.angle(C)
+
+    if unwrap:
+        phase_u = unwrap_phase(phase_wrapped)
+    else:
+        phase_u = phase_wrapped.copy()
+
+    # Optional plane/ramp removal
+    if detrend_plane:
+        phase_final, _ = remove_ramp(phase_u, mask=mask)
+    else:
+        phase_final = phase_u
+
+    return {
+        "complex_corrected": C,
+        "amp": amp,
+        "phase_wrapped": phase_wrapped,
+        "phase_unwrapped": phase_u,
+        "phase_final": phase_final,
+        "mask": mask,
+    }
+
+
+def reconstruct_with_background_removal(
+    reference_hologram_intensity: np.ndarray,
+    sample_hologram_intensity: np.ndarray,
+    *,
+    exclude_radius: int = 5,
+    sigma_pixels: float = 5.0,
+    ref_sideband_center: tuple | None = None,
+    samp_sideband_center: tuple | None = None,
+    amp_threshold: float = 0.05,
+    detrend_plane: bool = True,
+):
+    """
+    Full pipeline:
+      1) reconstruct complex waves for reference & sample
+      2) complex-divide (sample ÷ reference)
+      3) unwrap once
+      4) optional plane removal
+    Returns dict with all intermediate & final results.
+    """
+    ref = reconstruct_complex(
+        reference_hologram_intensity,
+        exclude_radius=exclude_radius,
+        sigma_pixels=sigma_pixels,
+        sideband_center=ref_sideband_center,
+    )
+
+    samp = reconstruct_complex(
+        sample_hologram_intensity,
+        exclude_radius=exclude_radius,
+        sigma_pixels=sigma_pixels,
+        sideband_center=samp_sideband_center,
+    )
+
+    bg = remove_background_with_reference(
+        samp["complex"], ref["complex"],
+        amp_threshold=amp_threshold,
+        unwrap=True,
+        detrend_plane=detrend_plane,
+    )
+
+    return {
+        "reference": ref,
+        "sample": samp,
+        "background_removed": bg,
+    }
