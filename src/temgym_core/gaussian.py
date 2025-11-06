@@ -1,300 +1,161 @@
 import dataclasses
-import numpy as np
-import jax.numpy as jnp
 import jax
-from .grid import Grid
-from .run import run_to_end
-from .utils import (
-    custom_jacobian_matrix,
-    energy2wavelength,
-    fibonacci_spiral,
-    uniform_disk,
-)
-from .ray import Ray
-from .gaussian_action2D import GaussianBeam
+import jax.numpy as jnp
+import jax.nn as jnn
+from jax.nn import softplus
 import jax_dataclasses as jdc
-from jax._src.lax.control_flow.loops import _batch_and_remainder
 from jax import lax
+
+from temgym_core.components import Component, Detector
+from temgym_core.aberrations import KrivanekCoeffs, Seidel_aperture_pos_aperture_slope, SeidelCoeffs, W_krivanek
+from .ray import Ray
+from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tuple
+
 from ase import units
+
+from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, lattice_points_square_cover, uniform_disk, uniform_amp_from_area
 
 
 def relativistic_mass_correction(energy: float) -> float:
     return 1 + units._e * energy / (units._me * units._c**2)
 
 
-def w_z(w0, z, z_r):
-    return w0 * jnp.sqrt(1 + (z / z_r) ** 2)
+def _sym(M): return 0.5 * (M + jnp.swapaxes(M, -1, -2))
 
 
-def zR(w0, wavelength):
-    return (jnp.pi * w0**2) / wavelength
+def center_shift_from_S(S1, S2):
+    # We need to find the location of the intensity centre of our gaussian.
+    # This might not neccessarily be where the ray is located if for instance we have
+    # just passed through a sigmoid aperture - which has the effect of modifying the imaginary part
+    # of the action S. This can introduce a linear imaginary action, which means that the intensity
+    # centre of the action S. This can introduce a linear imaginary action, which means that the intensity centre of the
+    # gaussian no longer aligns with the ray position.
+    # This function uses the gradient of the imaginary part of the action to find the intensity centre.
+    ImS2 = 0.5 * (jnp.imag(S2) + jnp.imag(S2).T)  # symmetric real
+    ImS1 = jnp.imag(S1)
+    xi = - jnp.linalg.solve(ImS2, ImS1)
+    return xi
 
 
-def R(z, z_r):
-    cond = jnp.abs(z) < 1e-10
-    z_r_over_z = jax.lax.cond(cond, lambda op: 0.0, lambda op: op[1] / op[0], (z, z_r))
-    # z_r_over_z = jnp.where(cond, 0.0, z_r / z) - this gave me an error
-    # and I don't know why it tried to evaluate z_r / z
-    return jax.lax.cond(
-        cond, lambda _: jnp.inf, lambda _: z * (1 + z_r_over_z**2), operand=None
-    )
+def make_gaussian(
+    x=0.0,
+    y=0.0,
+    dx=0.0,
+    dy=0.0,
+    z=0.0,
+    voltage: float | jnp.ndarray = 1e5,
+    amp=1.0,
+    phase=0.0,
+    waist_x=1.0,
+    waist_y=1.0,
+    rcurv_x=jnp.inf,
+    rcurv_y=jnp.inf,
+) -> "GaussianBeam":
 
+    wavelength = energy2wavelength(voltage)
+    k = 2.0 * jnp.pi / wavelength
 
-def gaussian_beam(x, y, q_inv, k, offset_x=0, offset_y=0):
-    return jnp.exp(-1j * k * ((x + offset_x) ** 2 + (y + offset_y) ** 2) / 2 * q_inv)
+    # --- get batch size from x, then broadcast all 1D params to (n_rays,) ---
+    x = jnp.atleast_1d(x)
+    n_rays = x.shape[0]
 
+    def _bcast_to_n(a):
+        a = jnp.atleast_1d(a)
+        return a if a.shape[0] == n_rays else jnp.broadcast_to(a, (n_rays,))
 
-def decompose_Q_inv(Q_inv, wavelength, eps=1e-12):
-    """
-    Decompose a 2x2 complex Q_inv matrix into beam parameters:
-    returns (waist_x, waist_y, r_x, r_y, theta).
+    y = _bcast_to_n(y)
+    dx = _bcast_to_n(dx)
+    dy = _bcast_to_n(dy)
 
-    Supports broadcasting over leading batch dimensions.
-    """
-    Q = jnp.asarray(Q_inv)
+    curv_x = _bcast_to_n(1.0 / rcurv_x)
+    curv_y = _bcast_to_n(1.0 / rcurv_y)
+    waist_x = _bcast_to_n(waist_x)
+    waist_y = _bcast_to_n(waist_y)
 
-    # Use the imaginary part (real symmetric, negative-definite) to get rotation
-    S = jnp.imag(Q)
-    S = 0.5 * (S + jnp.swapaxes(S, -1, -2))  # enforce symmetry
-    _, evecs = jnp.linalg.eigh(S)  # ascending order
+    voltage = _bcast_to_n(voltage)
+    k = _bcast_to_n(2.0 * jnp.pi / energy2wavelength(voltage))
 
-    # Ensure a proper rotation (det = +1)
-    det = jnp.linalg.det(evecs)
-    sign = jnp.where(det < 0, -1.0, 1.0)
-    evecs = evecs.at[..., :, 1].multiply(sign[..., None])
+    # --- build S2 with leading batch axis ---
+    S2_re = jnp.zeros((n_rays, 2, 2), dtype=jnp.float64)
+    S2_re = S2_re.at[:, 0, 0].set(curv_x)
+    S2_re = S2_re.at[:, 1, 1].set(curv_y)
 
-    # Rotate Q into principal axes and read diagonal
-    Vt = jnp.swapaxes(evecs, -1, -2)
-    Qd = Vt @ Q @ evecs
-    qdiag = jnp.stack([Qd[..., 0, 0], Qd[..., 1, 1]], axis=-1)
+    S2_im = jnp.zeros((n_rays, 2, 2), dtype=jnp.float64)
+    S2_im = S2_im.at[:, 0, 0].set(wavelength / (jnp.pi * waist_x**2))
+    S2_im = S2_im.at[:, 1, 1].set(wavelength / (jnp.pi * waist_y**2))
 
-    # Determine a consistent ordering: put larger waist first (major axis)
-    imd_pre = jnp.imag(qdiag)  # = wavelength/(pi * w^2)
-    waists_pre = jnp.sqrt(
-        jnp.where(jnp.abs(imd_pre) > eps, jnp.abs(wavelength / (jnp.pi * imd_pre)), jnp.inf)
-    )
-    swap_mask = waists_pre[..., 0] < waists_pre[..., 1]
+    S2 = (S2_re + 1j * S2_im).astype(jnp.complex128)
 
-    # If needed, swap principal axes (qdiag and eigenvectors)
-    qdiag = jnp.where(swap_mask[..., None], qdiag[..., ::-1], qdiag)
-    evecs_swapped = evecs[..., :, ::-1]
-    evecs = jnp.where(swap_mask[..., None, None], evecs_swapped, evecs)
+    amp = _bcast_to_n(amp)
+    phase = _bcast_to_n(phase)
+    C = jnp.asarray(amp) * jnp.exp(1j * jnp.asarray(phase))
 
-    # Re-enforce right-handed rotation after possible swap
-    det = jnp.linalg.det(evecs)
-    sign = jnp.where(det < 0, -1.0, 1.0)
-    evecs = evecs.at[..., :, 1].multiply(sign[..., None])
+    ray = GaussianBeam(
+        x=x, y=y, dx=dx, dy=dy, z=z,
+        C=C, S2=S2, voltage=voltage,
+        pathlength=jnp.zeros_like(x),
+        _one=jnp.ones_like(x),
+    ).to_vector()
 
-    imd = jnp.imag(qdiag)  # = wavelength/(pi * w^2)
-    red = jnp.real(qdiag)  # = 1 / R
+    if n_rays == 1:
+        def squeeze0(a):
+            if a is None:
+                return None
+            a = jnp.asarray(a)
+            return jnp.squeeze(a, axis=0) if (a.ndim > 0 and a.shape[0] == 1) else a
+        ray = jax.tree.map(squeeze0, ray)
 
-    # Waists
-    waists = jnp.sqrt(jnp.where(jnp.abs(imd) > eps, jnp.abs(wavelength / (jnp.pi * imd)), jnp.inf))
-
-    # Radii of curvature
-    radii = jnp.where(jnp.abs(red) > eps, 1.0 / red, jnp.inf)
-
-    # Rotation angle from first principal axis
-    e1 = evecs[..., :, 0]
-    theta = jnp.arctan2(e1[..., 1], e1[..., 0])
-
-    return waists[..., 0], waists[..., 1], radii[..., 0], radii[..., 1], theta
-
-
-def Qinv_ABCD(Qinv, A, B, C, D):
-    # compute (C + D @ Qinv) @ inv(A + B @ Qinv) without explicit inv
-    lhs = A + B @ Qinv
-    rhs = C + D @ Qinv
-    return jnp.linalg.solve(lhs, rhs)
-
-
-def Qinv_ABCD_float(Qinv, A, B, C, D):
-    return C + D * Qinv / (A + B * Qinv)
-
-
-def q_inv(z, w0, wl):
-    z_r = zR(w0, wl)
-    cond = jnp.abs(z) < 1e-10
-    wz_val = w_z(w0, z, z_r)
-    R_val = R(z, z_r)
-
-    q_inv = jnp.where(
-        cond,
-        -1j * wl / (jnp.pi * w0**2),
-        1.0 / R_val - 1j * wl / (jnp.pi * wz_val**2),
-    )
-    return q_inv
+    return ray
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class GaussianRay(Ray):
-    amplitude: float
-    waist_xy: jnp.ndarray
-    radii_of_curv: jnp.ndarray
-    wavelength: float
-    theta: float
+class GaussianBeam(Ray):
+    C: jnp.ndarray | complex
+    S2: jnp.ndarray
+    voltage: jnp.ndarray | float | None = None
 
-    def derive(self, **updates):
-        # Like Ray.derive: allow passing values or callables that take self
-        def resolve(v):
-            return v(self) if callable(v) else v
-        return jdc.replace(self, **{k: resolve(v) for k, v in updates.items()})
+    def derive(self,
+               x: float | jnp.ndarray | None = None,
+               y: float | jnp.ndarray | None = None,
+               dx: float | jnp.ndarray | None = None,
+               dy: float | jnp.ndarray | None = None,
+               z: float | jnp.ndarray | None = None,
+               C: jnp.ndarray | complex | None = None,
+               S2: jnp.ndarray | None = None,
+               voltage: float | jnp.ndarray | None = None,
+               pathlength: float | jnp.ndarray | None = None
+               ) -> "GaussianBeam":
 
-    def to_ray(self):
-        return Ray(
-            x=self.x,
-            y=self.y,
-            dx=self.dx,
-            dy=self.dy,
-            z=self.z,
-            pathlength=self.pathlength,
-            _one=self._one,
+        return GaussianBeam(
+            x=self.x if x is None else x,
+            y=self.y if y is None else y,
+            dx=self.dx if dx is None else dx,
+            dy=self.dy if dy is None else dy,
+            z=self.z if z is None else z,
+            C=self.C if C is None else C,
+            S2=self.S2 if S2 is None else S2,
+            voltage=self.voltage if voltage is None else voltage,
+            pathlength=self.pathlength if pathlength is None else pathlength
         )
 
-    @property
-    def q_inv(self):
-        w_x, w_y = self.waist_xy.T
-        R_x, R_y = self.radii_of_curv.T
-        wavelength = self.wavelength
-        # 1/q on each principal axis
-        inv_qx = jnp.where(
-            jnp.isinf(R_x),
-            -1j * wavelength / ((jnp.pi * w_x**2)),
-            1.0 / R_x - 1j * wavelength / (jnp.pi * w_x**2),
-        )
-
-        inv_qy = jnp.where(
-            jnp.isinf(R_y),
-            -1j * wavelength / ((jnp.pi * w_y**2)),
-            1.0 / R_y - 1j * wavelength / (jnp.pi * w_y**2),
-        )
-        return inv_qx, inv_qy
-
-    @property
-    def Q_inv(self):
-        from .gaussian import matrix_matrix_matrix_mul
-
-        inv_qx, inv_qy = self.q_inv
-        Q_inv_diag = jnp.stack(
-            [
-                jnp.stack([inv_qx, jnp.zeros_like(inv_qx)], axis=-1),
-                jnp.stack([jnp.zeros_like(inv_qx), inv_qy], axis=-1),
-            ],
-            axis=-2,
-        )
-        c, s = jnp.cos(self.theta), jnp.sin(self.theta)
-        R = jnp.stack(
-            [
-                jnp.stack([c, -s], axis=-1),
-                jnp.stack([s, c], axis=-1),
-            ],
-            axis=-2,
-        )
-
-        Q_inv_diag = Q_inv_diag[None, ...] if Q_inv_diag.ndim == 2 else Q_inv_diag
-        R = R[None, ...] if R.ndim == 2 else R
-        return matrix_matrix_matrix_mul(R, Q_inv_diag, R)
-
-
-@jdc.pytree_dataclass
-class TaylorExpofAction:
-    const: complex
-    lin: jnp.ndarray
-    quad: jnp.ndarray
-
-    @classmethod
-    def from_q_inv(
-        cls,
-        Q_inv,
-        *,
-        const=0.0 + 0.0j,
-        lin=None,
-    ) -> "TaylorExpofAction":
-        """Build an action expansion with quadratic term ``Q_inv``.
-
-        Parameters
-        ----------
-        Q_inv : array-like
-            Quadratic coefficient(s) shaped (..., 2, 2).
-        const : complex or array-like, optional
-            Constant term to broadcast over the leading batch dimensions.
-        lin : array-like, optional
-            Linear term(s) shaped (..., 2). Defaults to zeros.
-        """
-        Q_inv_arr = jnp.asarray(Q_inv, dtype=jnp.complex128)
-        batch_shape = Q_inv_arr.shape[:-2]
-        const_arr = jnp.asarray(const, dtype=jnp.complex128)
-        const_arr = jnp.broadcast_to(const_arr, batch_shape)
-        if lin is None:
-            lin_arr = jnp.zeros(batch_shape + (2,), dtype=jnp.complex128)
-        else:
-            lin_arr = jnp.asarray(lin, dtype=jnp.complex128)
-            lin_arr = jnp.broadcast_to(lin_arr, batch_shape + (2,))
-        return cls(const=const_arr, lin=lin_arr, quad=Q_inv_arr)
-
-
-@jdc.pytree_dataclass(kw_only=True)
-class GaussianRayBeta(Ray):
-    """Gaussian ray carrying a quadratic expansion of the complex action.
-
-    Notes
-    -----
-    The constant term ``S.const`` stores the accumulated complex action, while
-    ``C`` holds only the geometric ABCD prefactor.
-    """
-    S: TaylorExpofAction  # Action
-    C: complex = 1.0 + 0.0j  # geometric prefactor
-    voltage: float
-
-    def derive(self, **updates):
-        def resolve(v): return v(self) if callable(v) else v
-        return jdc.replace(self, **{k: resolve(v) for k, v in updates.items()})
-
-    def to_ray(self):
-        return Ray(x=self.x, y=self.y, dx=self.dx, dy=self.dy,
-        z=self.z, pathlength=self.S.const, _one=self._one)
-
-    def to_vector(self):
-        params = {}
-        for k, v in dataclasses.asdict(self).items():
-            if k == "S" and isinstance(v, dict):
-                # ensure each item in S is atleast_1d, then rebuild TaylorExpofAction
-                s_params = {sk: jnp.atleast_1d(sv) for sk, sv in v.items()}
-                params["S"] = TaylorExpofAction(**s_params)
-            else:
-                params[k] = jnp.atleast_1d(v)
+    def to_vector(self) -> jnp.ndarray:
+        params = {
+            k: jnp.atleast_1d(v)
+            for k, v
+            in dataclasses.asdict(self).items()
+        }
         return type(self)(**params)
 
     @property
-    def prefactor(self) -> complex:
-        """Complex amplitude prefactor stored in ``C``."""
-        return self.C
+    def wavelength(self) -> float:
+        return energy2wavelength(self.voltage)
 
     @property
     def mass(self) -> float:
-        """
-        Relativistic electron mass [kg] for this ray's voltage (eV).
-        """
         return relativistic_mass_correction(self.voltage) * units._me
 
     @property
-    def wavelength(self) -> float:
-        """
-        Relativistic de Broglie wavelength [Å] for this ray's voltage (eV).
-        """
-        E = self.voltage
-        return (
-            units._hplanck
-            * units._c
-            / jnp.sqrt(E * (2 * units._me * units._c**2 / units._e + E))
-            / units._e
-        )
-
-    @property
     def sigma(self) -> float:
-        """
-        Interaction parameter [1 / (Å * eV)] for this ray's voltage (eV).
-        """
         return (
             2
             * jnp.pi
@@ -308,274 +169,745 @@ class GaussianRayBeta(Ray):
 
     @property
     def k(self) -> float:
-        """Wave number k = 2*pi / wavelength (1/Å)."""
         return 2 * jnp.pi / self.wavelength
 
 
-def matrix_vector_mul(M, v):
-    """
-    Batched matrix-vector multiplication.
-    M: (nb,2,2)
-    v: (nb,2)
-    Returns (nb,2) result of M @ v for each batch.
-    """
-    return jnp.einsum("ij,j->i", M, v)
-
-
-def matrix_matrix_mul(M1, M2):
-    """
-    Batched matrix-matrix multiplication.
-    M1: (nb,2,2)
-    M2: (nb,2,2)
-    Returns (nb,2,2) result of M1 @ M2 for each batch.
-    """
-    return jnp.einsum("ij,jk->ik", M1, M2)
-
-
-def matrix_quadratic_mul(v, M):
-    """
-    Batched quadratic multiplication -  v^T M v.
-    v: (nb,2)
-    M: (nb,2,2)
-    Returns (nb,)
-    """
-    return jnp.einsum("i,ij,j->", v, M, v)
-
-
-def matrix_linear_mul(v, M, w):
-    """
-    Batched linear multiplication - v^T M w
-    v: (nb,2)
-    M: (nb,2,2)
-    w: (np,2)  -- observation coordinates (no batch)
-    Returns (nb,np)
-    """
-    return jnp.einsum("i,ij,nj->n", v, M, w)
-
-
-def matrix_matrix_matrix_mul(M1, M2, M3):
-    return jnp.einsum("nij,njk,npk->nip", M1, M2, M3)
-
-
-def make_gaussian_image(gaussian_rays, model, batch_size=128):
-
-    rays = gaussian_rays
-    assert isinstance(rays, GaussianRay)
-    rays = rays.to_vector()
-
-    grid = model[-1]
-    assert isinstance(grid, Grid)
-
-    vmap_fn = jax.vmap(jax.jacobian(run_to_end), in_axes=(0, None))
-    central_rays = rays.to_ray()
-    output_tm = vmap_fn(central_rays, model)
-    output_rays = run_to_end(central_rays, model)
-
-    model_ray_jacobians = custom_jacobian_matrix(output_tm)
-    ABCDs = jnp.array(model_ray_jacobians)
-
-    amplitudes = rays.amplitude
-
-    Q1_invs = rays.Q_inv  # Should be of shape n x 2 x 2
-    As = ABCDs[:, 0:2, 0:2]  # (nb,2,2)
-    Bs = ABCDs[:, 0:2, 2:4]  # (nb,2,2)
-    Cs = ABCDs[:, 2:4, 0:2]  # (nb,2,2)
-    Ds = ABCDs[:, 2:4, 2:4]  # (nb,2,2)
-    es = ABCDs[:, 0:2, 4]  # (nb,2)
-    fs = ABCDs[:, 2:4, 4]  # (nb,2)
-    r2 = grid.coords
-    r1ms = jnp.stack([central_rays.x, central_rays.y], axis=-1)
-    theta1ms = jnp.stack([central_rays.dx, central_rays.dy], axis=-1)
-    wavelengths = rays.wavelength
-    k = 2 * jnp.pi / wavelengths
-
-    output_field = propagate_misaligned_gaussian_jax_scan(
-        amplitudes,
-        Q1_invs,
-        As,
-        Bs,
-        Cs,
-        Ds,
-        es,
-        fs,
-        r1ms,
-        theta1ms,
-        k,
-        r2=r2,
-        batch_size=batch_size,
-    ).reshape(grid.shape)
-    return output_field
-
-
-def _beam_field(amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k, r2):
-    """Single-beam field at all observation points r2 -> (np,)
-    r2 is at the end since it represents the grid, and is not batched.
-    All other inputs are batched over the number of beams (nb, ...)"""
-    I = jnp.eye(2, dtype=B.dtype)  # noqa
-
-    # Safe inverses
-    B_inv = jnp.linalg.solve(B, I)
-    B_inv = jnp.nan_to_num(B_inv, nan=0.0, posinf=0.0, neginf=0.0)
-
-    Q1 = jnp.linalg.solve(Q1_inv, I)
-    Q1 = jnp.nan_to_num(Q1, nan=0.0, posinf=0.0, neginf=0.0)
-
-    r2 = r2 - e
-    # Central ray at output: r2m = A r1m + B theta1m
-    r2m = matrix_vector_mul(A, r1m) + matrix_vector_mul(B, theta1m)  # (2,)
-
-    # AB-q amplitude prefactor
-    denom = A + matrix_matrix_mul(B, Q1_inv)  # (2,2)
-    pref = amp / jnp.sqrt(jnp.linalg.det(denom))  # ()
-
-    # Misalignment phase (input plane)
-    ABinv = matrix_matrix_mul(A, B_inv)
-    phi1 = matrix_quadratic_mul(r1m, ABinv) - 2 * matrix_linear_mul(
-        r1m, B_inv, r2
-    )  # (np,)
-
-    # Misalignment phase (output plane)
-    AQ1 = matrix_matrix_mul(A, Q1)
-    B_over_AQ1B = jnp.linalg.solve(matrix_matrix_mul(B, AQ1 + B), I)  # (2,2)
-    Q1B_over_AQ = matrix_matrix_mul(Q1, B_over_AQ1B)  # (2,2)
-    phi2 = matrix_quadratic_mul(r2m, Q1B_over_AQ) - 2 * matrix_linear_mul(
-        r2m, Q1B_over_AQ, r2
-    )  # (np,)
-
-    Q2t = jnp.einsum("ni,ij,nj->n", r2, Q2_inv, r2)  # (np,)
-
-    # f is of shape 2, and r is (np,2), and we need f_offset * r2 to be (np,)
-    f_offset = 2 * r2 @ f  # (np,)
-    phase = (k / 2) * (Q2t + phi1 - phi2 + f_offset)  # (np,)
-    return pref * jnp.exp(-1j * (phase))  # (np,)
-
-
-def propagate_misaligned_gaussian_jax_scan(
-    amp, Q1_inv, A, B, C, D, e, f, r1m, theta1m, k, r2, batch_size=128
+def apply_action_delta(
+    ray,
+    dS0: complex,
+    dS1: jnp.ndarray,  # shape (2,)
+    dS2: jnp.ndarray,  # shape (2,2)
 ):
-    npix = r2.shape[0]
-    Q2_inv = Qinv_ABCD(Q1_inv, A, B, C, D)  # (nb,2,2)
+    """
+    Apply a local quadratic action increment ΔS(ξ) = dS0 + dS1·ξ + 1/2 ξᵀ dS2 ξ
+    evaluated at the CURRENT ray center (ξ = r - r0, with r0 = ray.r_xy).
 
-    def _beam_field_outer(xs):
-        a_i, q1_i, q2_i, r1m_i, t1m_i, A_i, B_i, e_i, f_i, k_i = xs
-        return _beam_field(a_i, q1_i, q2_i, r1m_i, t1m_i, A_i, B_i, e_i, f_i, k_i, r2)
+    No re-centering; absolute phase lives in ray.C.
 
-    init = jnp.zeros((npix,), dtype=jnp.complex128)
-    xs = (amp, Q1_inv, Q2_inv, r1m, theta1m, A, B, e, f, k)
-    out = map_reduce(_beam_field_outer, jnp.add, init, xs, batch_size=batch_size)
-    return out  # (npix,)
+    Updates:
+      C   <- C * exp{i k dS0}
+      d   <- d + Re(dS1)                (store only physical tilt; set keep_imag_linear=True if you track complex)
+      S2  <- S2 + sym(dS2)
+      r0  <- r0                         (unchanged)
+
+    Returns
+    -------
+    r_xy_new, d_xy_new, C_new, S2_new
+      (r_xy_new == ray.r_xy)
+      If keep_imag_linear=True, also returns dS1 (complex) for optional external bookkeeping.
+    """
+    k = ray.k
+    r0 = ray.r_xy
+
+    C_new = ray.C * jnp.exp(1j * k * dS0)
+    d_xy_new = ray.d_xy + jnp.real(dS1)
+    S2_new = ray.S2 + dS2
+    r_xy_new = r0
+
+    return r_xy_new, d_xy_new, C_new, S2_new
 
 
-propagate_misaligned_gaussian_jax_scan = jax.jit(
-    propagate_misaligned_gaussian_jax_scan, static_argnames=["batch_size"]
-)
+def scalar_grad_hess_complex(
+    fn: Callable[..., complex],
+    x: jnp.ndarray,
+    *args: Any,
+    diff_argnums: int | Sequence[int] = 0,
+) -> Tuple[complex, jnp.ndarray, jnp.ndarray]:
+    """
+    Return (dS0, grad, hess) where dS0 = fn(x, *args) (complex scalar),
+    grad = ∇_x fn (complex vector), hess = sym(∇^2_x fn) (complex matrix).
+
+    Parameters
+    ----------
+    fn : Callable
+        Function returning a complex scalar. The first argument is differentiated.
+    x : jnp.ndarray
+        Expansion point for the differentiated argument.
+    *args :
+        Additional positional arguments passed to `fn` but treated as constants
+        during differentiation.
+    diff_argnums : int or tuple of ints, default 0
+        Indices of the arguments of `fn` with respect to which gradients and
+        Hessians are taken. By default only the first argument is differentiated.
+    """
+    full_args = (x, *args)
+
+    def re_fn(*fn_args):  # scalar real
+        return jnp.real(fn(*fn_args))
+
+    def im_fn(*fn_args):  # scalar real
+        return jnp.imag(fn(*fn_args))
+
+    # evaluate function at x for dS0
+    dS0 = fn(*full_args)
+
+    grad_re = jax.grad(re_fn, argnums=diff_argnums)(*full_args)  # (2,)
+    grad_im = jax.grad(im_fn, argnums=diff_argnums)(*full_args)  # (2,)
+    hess_re = jax.hessian(re_fn, argnums=diff_argnums)(*full_args)  # (2,2)
+    hess_im = jax.hessian(im_fn, argnums=diff_argnums)(*full_args)  # (2,2)
+
+    grad = grad_re + 1j * grad_im
+    hess = _sym(hess_re + 1j * hess_im)
+    return dS0, grad, hess
 
 
-def map_reduce(f, reducer, init, xs, *, batch_size: int | None = None):
-    def scan_fn(acc_inner, x):
-        # combine f and reducer into function appropriate for normal lax.scan in reduce-only mode
-        return reducer(acc_inner, f(x)), None
+@jdc.pytree_dataclass
+class Component2D:
+    z: float = 0.0
 
-    if batch_size is not None:
-        scan_xs, remainder_xs = _batch_and_remainder(xs, batch_size)
+    def phase_shift(self, xy: jnp.ndarray):
+        return 0.0
 
-        def reduce_chunk(acc, x):
-            # Reduce x into acc, assuming x have already been f'dGauss
-            return reducer(acc, x), None
+    def log_transmission(self, xy: jnp.ndarray):
+        return 0.0
 
-        def map_reduce_chunk(acc, x):
-            #  Vmap apply f to a chunk of x's, then reduce them sequentially into acc
-            elements = jax.vmap(f)(x)
-            return lax.scan(reduce_chunk, acc, elements)
+    def complex_action(self, xy: jnp.ndarray, k: float) -> complex:
+        L = self.log_transmission(xy)
+        # L = jnp.logaddexp(logA, -50)
+        return self.phase_shift(xy) - 1j * (L / k)
 
-        if scan_xs is not None:
-            # Map f over each chunk of xs, and reduce each sequentially into init
-            acc, _ = lax.scan(map_reduce_chunk, init, scan_xs)
-        else:
-            acc, _ = init, None
+    def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
+        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
+        if xy_ref.ndim != 1:
+            raise ValueError("Component2D._apply_single expects a scalar GaussianBeam.")
+        k = jnp.squeeze(jnp.asarray(ray.k))
 
-        if remainder_xs is not None:
-            # normal scan-reduce the remainder chunk into acc (could also be vmapped?)
-            acc, _ = lax.scan(scan_fn, acc, remainder_xs)
+        dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, k)
+        r_xy, r_dxy, Cn, S2 = apply_action_delta(ray, dS0=dS0, dS1=dS1, dS2=dS2)
+
+        return ray.derive(
+            x=r_xy[..., 0],
+            y=r_xy[..., 1],
+            dx=r_dxy[..., 0],
+            dy=r_dxy[..., 1],
+            z=ray.z,
+            C=Cn,
+            S2=S2
+        )
+
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
+        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
+        if xy_ref.ndim == 1:
+            return self._apply_single(ray)
+
+        batch = xy_ref.shape[0]
+
+        def infer_axes(arr):
+            if arr is None:
+                return None
+            arr = jnp.asarray(arr)
+            if arr.ndim == 0:
+                return None
+            return 0 if arr.shape[0] == batch else None
+
+        in_axes = jax.tree_map(infer_axes, ray)
+        vmapped = jax.vmap(lambda r: self._apply_single(r), in_axes=in_axes)
+        return vmapped(ray)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class Lens(Component2D):
+    focal_length: float
+    x0: float = 0.0
+    y0: float = 0.0
+
+    def phase_shift(self, xy: jnp.ndarray):
+        x, y = xy[0] - self.x0, xy[1] - self.y0
+        rho2 = x * x + y * y
+        return -0.5 * rho2 / self.focal_length
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class AberratedLens2D(Component2D):
+    focal_length: float
+    cubic_coeff: float = 0.0
+    quartic_coeff: float = 0.0
+    x0: float = 0.0
+    y0: float = 0.0
+    eps = 1e-14
+
+    def phase_shift(self, xy: jnp.ndarray):
+        x, y = xy[0] - self.x0, xy[1] - self.y0
+        rho2 = x * x + y * y
+        rho3 = rho2 * jnp.sqrt(rho2 + self.eps)
+        rho4 = rho2 * rho2
+        phase = -0.5 * rho2 / self.focal_length
+        phase = phase + self.cubic_coeff * rho3
+        phase = phase + self.quartic_coeff * rho4
+        return phase
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class KrivanekLens(Component2D):
+    """Thin lens with Krivanek aberration model applied to the phase."""
+    focal_length: float
+    coeffs: jdc.Static[KrivanekCoeffs]
+    x0: float = 0.0
+    y0: float = 0.0
+    axis_eps: float = 1e-24
+
+    def phase_shift(self, xy: jnp.ndarray):
+        x = xy[0] - self.x0
+        y = xy[1] - self.y0
+        f = self.focal_length
+
+        rho2 = x * x + y * y
+
+        def _with_aberrations(_):
+            rho = jnp.sqrt(rho2)
+            phi = jnp.arctan2(y, x)
+            alpha = rho / f
+            return -0.5 * rho2 / f - W_krivanek(alpha, phi, self.coeffs)
+
+        def _on_axis(_):
+            return -0.5 * rho2 / f
+
+        return lax.cond(rho2 > self.axis_eps, _with_aberrations, _on_axis, operand=None)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class SeidelLens(Component2D):
+    focal_length: float
+    z1: float  # absolute distance from object to lens
+    coeffs: SeidelCoeffs = SeidelCoeffs()
+
+    def log_transmission(self, xy):
+        return 0.0
+
+    def phase_shift(self, xy, dxy):
+        xy = jnp.asarray(xy)
+        dxy = jnp.asarray(dxy)
+        x_a, y_a = xy[..., 0], xy[..., 1]
+        x_ap, y_ap = dxy[..., 0], dxy[..., 1]
+        coeffs = self.coeffs
+        f = self.focal_length
+        rho2 = x_a * x_a + y_a * y_a
+        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
+
+    def complex_action(self, xy: jnp.ndarray, dxy: jnp.ndarray, k: float) -> complex:
+        logA = self.log_transmission(xy)
+        L = jnp.logaddexp(logA, -20)
+        return self.phase_shift(xy, dxy) - 1j * (L / k)
+
+    def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
+        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
+        if xy_ref.ndim != 1:
+            raise ValueError("Component2D._apply_single expects a scalar GaussianBeam.")
+        d_xy = jnp.asarray(ray.d_xy, dtype=jnp.float64)
+        k = jnp.squeeze(jnp.asarray(ray.k))
+
+        dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, d_xy, k)
+        r_xy, r_dxy, Cn, S2 = apply_action_delta(ray, dS0=dS0, dS1=dS1, dS2=dS2)
+
+        return ray.derive(
+            x=r_xy[..., 0],
+            y=r_xy[..., 1],
+            dx=r_dxy[..., 0],
+            dy=r_dxy[..., 1],
+            z=ray.z,
+            C=Cn,
+            S2=S2
+        )
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class DistortedLens(SeidelLens):
+    IsoDist: float = 0.0  # distortion coefficient
+    AnisoDist: float = 0.0  # anisotropic distortion coefficient
+
+    def phase_shift(self, xy, dxy):
+        xy = jnp.asarray(xy)
+        dxy = jnp.asarray(dxy)
+        x_a, y_a = xy[..., 0], xy[..., 1]
+
+        f = self.focal_length
+        rho2 = x_a * x_a + y_a * y_a
+
+        x_ap, y_ap = dxy[..., 0], dxy[..., 1]
+        x_a, y_a = xy[..., 0], xy[..., 1]
+
+        f = self.focal_length
+        rho2 = x_a * x_a + y_a * y_a
+
+        x_ap, y_ap = dxy[..., 0], dxy[..., 1]
+        coeffs = SeidelCoeffs(E=self.IsoDist, e=self.AnisoDist)
+
+        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
+
+
+@jdc.pytree_dataclass
+class SigmoidAperture2D(Component2D):
+    radius: float = 1.0
+    edge_width: float = 0.5
+    sharpness: float = 1.0
+    t_low: float = 0.0
+    t_high: float = 1.0
+    x0: float = 0.0
+    y0: float = 0.0
+    eps: float = 1e-15
+
+    def phase_shift(self, xy):
+        return 0.0
+
+    def log_transmission(self, xy):
+        x, y = xy[0] - self.x0, xy[1] - self.y0
+
+        rho = jnp.sqrt(x * x + y * y + self.eps * self.eps) - self.eps
+
+        w = jnp.maximum(jnp.abs(self.edge_width), self.eps)
+        s = jnn.sigmoid(self.sharpness * (rho - self.radius) / w)
+        t = self.t_high - (self.t_high - self.t_low) * s
+        t_clamped = jnp.clip(t, self.eps, None)
+        return jnp.log(t_clamped)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class Biprism(Component2D):
+    strength: float
+    width: float
+    length: float | None = None
+    theta: float = 0.0
+    x0: float = 0.0
+    y0: float = 0.0
+    sharpness: float = 50.0
+    eps: float = 1e-12
+
+    def _uv(self, xy: jnp.ndarray):
+        x, y = xy[0], xy[1]
+        xr, yr = x - self.x0, y - self.y0
+        c, s = jnp.cos(self.theta), jnp.sin(self.theta)
+        u = c * xr + s * yr
+        v = -s * xr + c * yr
+        return u, v
+
+    def phase_shift(self, xy: jnp.ndarray):
+        u, _ = self._uv(xy)
+        hu = 0.5 * self.width
+        eps_u = self.eps * hu
+        au = jnp.sqrt(u * u + eps_u * eps_u)
+        return -self.strength * au
+
+    # def log_transmission(self, xy: jnp.ndarray):
+    #     u, v = self._uv(xy)
+
+    #     hu = 0.5 * self.width
+    #     eps_u = self.eps * hu
+    #     au = jnp.sqrt(u * u + eps_u * eps_u)
+    #     tx = self.sharpness * (au - hu)
+    #     logA_u = -softplus(-tx)  # smooth rectangular stop in u
+
+    #     if self.length is None:
+    #         logA_v = 0.0
+    #     else:
+    #         hv = 0.5 * self.length
+    #         eps_v = self.eps * hu
+    #         av = jnp.sqrt(v * v + eps_v * eps_v)
+    #         ty = self.sharpness * (av - hv)
+    #         logA_v = -softplus(-ty)
+
+    #     return logA_u + logA_v
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class ConstantPhaseShift(Component2D):
+    constant_phase_shift: float
+
+    def phase_shift(self, xy: jnp.ndarray):
+        return self.constant_phase_shift
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class LinearPhaseShift(Component2D):
+    linear_phase_shift: jnp.ndarray  # shape (2,)
+
+    def phase_shift(self, xy: jnp.ndarray):
+        return jnp.dot(self.linear_phase_shift, xy)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class QuadraticPhaseShift(Component2D):
+    quadratic_phase_shift: jnp.ndarray  # shape (2, 2)
+
+    def phase_shift(self, xy: jnp.ndarray):
+        x, y = xy[0], xy[1]
+        return 0.5 * xy @ self.quadratic_phase_shift @ xy
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class MagneticPhaseSample(Component2D):
+    """
+    Smooth magnetic phase mask with an internal textured profile.
+
+    Parameters
+    ----------
+    strength : float
+        Peak optical path-length change in metres applied near the centre.
+    width, height : float
+        Extents of the rectangle (metres) before optional rotation.
+    x0, y0 : float
+        Centre of the phase object in laboratory coordinates (metres).
+    theta : float
+        Rotation angle (radians) applied counter-clockwise.
+    edge_sharpness : float
+        Steepness of the soft-rectangle edges (1/metre). Higher → sharper.
+    modulation_strength, skew_strength, radial_strength : float
+        Coefficients for internal phase structure to mimic magnetic texture.
+    eps : float
+        Small constant to keep divisions numerically stable.
+    """
+    strength: float
+    width: float
+    height: float
+    x0: float = 0.0
+    y0: float = 0.0
+    theta: float = 0.0
+    edge_sharpness: float = 5e6
+    modulation_strength: float = 0.3
+    skew_strength: float = 0.2
+    radial_strength: float = 0.15
+    eps: float = 1e-9
+
+    def _local_coords(self, xy):
+        x = xy[0] - self.x0
+        y = xy[1] - self.y0
+        c = jnp.cos(self.theta)
+        s = jnp.sin(self.theta)
+        u = c * x + s * y
+        v = -s * x + c * y
+        return u, v
+
+    def _soft_indicator(self, coord, half_extent):
+        sharp = self.edge_sharpness
+        pos = jax.nn.sigmoid(sharp * (coord + half_extent))
+        neg = jax.nn.sigmoid(sharp * (coord - half_extent))
+        plateau = jax.nn.sigmoid(sharp * half_extent) - jax.nn.sigmoid(-sharp * half_extent)
+        plateau = jnp.maximum(plateau, 1e-9)
+        return (pos - neg) / plateau
+
+    def phase_shift(self, xy):
+        u, v = self._local_coords(xy)
+
+        hx = 0.5 * self.width
+        hy = 0.5 * self.height
+
+        mask = self._soft_indicator(u, hx) * self._soft_indicator(v, hy)
+
+        u_norm = u / (hx + self.eps)
+        v_norm = v / (hy + self.eps)
+        radial = jnp.sqrt(u_norm * u_norm + v_norm * v_norm + self.eps)
+
+        texture = jnp.sin(jnp.pi * u_norm) * jnp.cos(jnp.pi * v_norm)
+        skew = u_norm * v_norm
+        radial_term = radial - 0.5
+
+        profile = (
+            1.0
+            + self.modulation_strength * texture
+            + self.skew_strength * skew
+            + self.radial_strength * radial_term
+        )
+
+        return self.strength * mask * profile
+
+
+@jdc.pytree_dataclass
+class ABCDPropagator2D:
+    A: jnp.ndarray  # (2,2) real
+    B: jnp.ndarray  # (2,2) real
+    C: jnp.ndarray  # (2,2) real
+    D: jnp.ndarray  # (2,2) real
+    L: float = 0.0
+    eps: float = 1e-15
+
+    def __call__(self, r: "GaussianBeam") -> "GaussianBeam":
+        A, B, C, D = self.A, self.B, self.C, self.D
+        k = r.k
+
+        # Quadratic update for the action (keep symmetric to control round-off)
+        AB_Q = A + B @ r.S2
+        S2 = jnp.linalg.solve(AB_Q.T, (C + D @ r.S2).T).T
+        S2 = _sym(S2)
+
+        # Prefactor from the quadratic step: det(A + B S2)^(-1/2), computed stably
+        sign, logabs = jnp.linalg.slogdet(AB_Q)
+        pref_det = jnp.exp(-0.5 * logabs) / jnp.sqrt(sign)
+
+        # Linear action coefficient prior to re-centering
+        S1_temp = jnp.linalg.solve(AB_Q, r.d_xy)
+
+        # Constant action increment for the centred quadratic with a residual linear term
+        dS0 = -0.5 * (r.d_xy @ (B @ S1_temp))
+        C_temp = r.C * pref_det * jnp.exp(1j * k * (dS0))
+
+        # Re-center so that the imaginary linear coefficient vanishes (intensity maximum)
+        dr_i = center_shift_from_S(S1_temp, S2)
+        phase_shift = S1_temp @ dr_i + 0.5 * (dr_i @ S2 @ dr_i)
+        C_new = C_temp * jnp.exp(1j * k * phase_shift) * jnp.exp(1j * k * (self.L))
+
+        rxy_new = r.r_xy + jnp.real(dr_i)
+
+        S1_new = S1_temp + S2 @ dr_i
+        dxy_new = jnp.real(S1_new)
+
+        return r.derive(
+            x=rxy_new[..., 0], y=rxy_new[..., 1],
+            dx=dxy_new[..., 0], dy=dxy_new[..., 1],
+            z=r.z + self.L,
+            C=C_new, S2=S2
+        )
+
+    @staticmethod
+    def free_space(z: float):
+        Iden = jnp.eye(2, dtype=jnp.float64)
+        Z = jnp.zeros((2, 2), dtype=jnp.float64)
+        z = jnp.asarray(z, dtype=jnp.float64)
+        return ABCDPropagator2D(A=Iden, B=z*Iden, C=Z, D=Iden, L=z)
+
+    @staticmethod
+    def thin_lens(fx: float, fy: Optional[float] = None, *, L: float = 0.0):
+        if fy is None:
+            fy = fx
+        Iden = jnp.eye(2, dtype=jnp.float64)
+        Z = jnp.zeros((2, 2), dtype=jnp.float64)
+        C = jnp.diag(jnp.array([-1.0/fx, -1.0/fy], dtype=jnp.float64))
+        return ABCDPropagator2D(A=Iden, B=Z, C=C, D=Iden, L=L)
+
+    @staticmethod
+    def rotated_lens(fx: float, fy: float, angle_rad: float, *, L: float = 0.0):
+        c, s = jnp.cos(angle_rad), jnp.sin(angle_rad)
+        R = jnp.array([[c, -s], [s, c]], dtype=jnp.float64)
+        Iden = jnp.eye(2, dtype=jnp.float64)
+        Z = jnp.zeros((2, 2), dtype=jnp.float64)
+        C = R.T @ jnp.diag(jnp.array([-1.0/fx, -1.0/fy], dtype=jnp.float64)) @ R
+        return ABCDPropagator2D(A=Iden, B=Z, C=C, D=Iden, L=L)
+
+    @staticmethod
+    def fourier_transform(f: float):
+        Iden = jnp.eye(2, dtype=jnp.float64)
+        Zero = jnp.zeros((2, 2), dtype=jnp.float64)
+        return ABCDPropagator2D(A=Zero, B=f*Iden, C=-(1.0/f)*Iden, D=Zero, L=2*f)
+
+    @staticmethod
+    def perfect_imaging(magnification: float, focal_length: float = 1.0, L: float = 0.0):
+        M = complex(magnification)
+        A = jnp.eye(2, dtype=jnp.float64) * M
+        C = jnp.eye(2, dtype=jnp.float64) * (-1.0/(focal_length))
+        D = jnp.eye(2, dtype=jnp.float64) * (1.0/M)
+        Z = jnp.zeros((2, 2), dtype=jnp.float64)
+        return ABCDPropagator2D(A=A, B=Z, C=C, D=D, L=L)
+
+
+TransformT = Callable[[Any], Callable[[Any], Tuple[Any, Any]]]
+
+
+def passthrough_transform(component):
+    def inner(ray):
+        out = component(ray)
+        return out, out
+    return inner
+
+
+class Propagator2D(NamedTuple):
+    distance: float
+    propagator: "BaseGaussianPropagator2D"
+
+    def __call__(self, ray: "GaussianBeam") -> "GaussianBeam":
+        return self.propagator(ray, self.distance)
+
+
+class BaseGaussianPropagator2D:
+    """Abstract base for gaussian-beam propagators.
+
+    Implement `__call__(ray, distance)` in subclasses to return a new GaussianBeam.
+    """
+    def __call__(self, ray: "GaussianBeam", distance: float) -> "GaussianBeam":
+        raise NotImplementedError
+
+    def with_distance(self, distance: float) -> Propagator2D:
+        return Propagator2D(distance, self)
+
+
+class FreeSpacePropagator(BaseGaussianPropagator2D):
+    """Full gaussian-beam free-space propagation (2D)."""
+
+    def __call__(self, ray: "GaussianBeam", distance: float) -> "GaussianBeam":
+        I = jnp.eye(2, dtype=jnp.float64)
+        theta = ray.d_xy
+        A = I + distance * ray.S2
+        invA = jnp.linalg.solve(A.T, I).T
+        detA = jnp.linalg.det(A)
+        Cnew = ray.C * (
+            jnp.exp(1j * ray.k * distance)
+            * detA ** (-0.5)
+            * jnp.exp(1j * ray.k * distance * 0.5 * jnp.dot(theta, theta))
+        )
+        S2new = ray.S2 @ invA
+        xy_new = ray.r_xy + distance * theta
+
+        return ray.derive(
+            x=xy_new[..., 0],
+            y=xy_new[..., 1],
+            dx=theta[..., 0],
+            dy=theta[..., 1],
+            z=ray.z + distance,
+            C=Cnew,
+            S2=S2new
+        )
+
+
+def run_iter(
+    ray: GaussianBeam,
+    components: Sequence[Any],
+    transform: TransformT = passthrough_transform,
+    propagator: BaseGaussianPropagator2D = FreeSpacePropagator(),
+) -> Generator[Tuple[Any, Any], Any, None]:
+    for component in components:
+        if isinstance(component, (Component2D, Detector)):
+            ray_z = ray.z
+            distance = component.z - ray_z
+            propagator_d = propagator.with_distance(distance)
+            ray, out = transform(propagator_d)(ray)
+            yield propagator_d, out
+
+        ray, out = transform(component)(ray)
+        yield component, out
+
+
+def run_to_end(
+    ray: GaussianBeam,
+    components: Sequence[Any],
+    propagator: BaseGaussianPropagator2D = FreeSpacePropagator(),
+) -> GaussianBeam:
+    for _, ray in run_iter(ray, components, propagator=propagator):
+        pass
+    return ray
+
+
+def make_gaussian_plane_wave_circular_aperture(
+    aperture_radius: float,
+    waist: float,
+    num_rays: int,
+    voltage: float,
+    amp: float = 1.0,
+    phase: float = 0.0,
+    z0: float = 0.0,
+    sampling: str = "uniform, fibonacci",
+    offset_xy: Tuple[float, float] = (0.0, 0.0)
+) -> GaussianBeam:
+    if sampling == "fibonacci":
+        x0, y0 = fibonacci_spiral(num_rays, aperture_radius)
     else:
-        # normal scan-reduce the remainder chunk into acc (could also be vmapped?)
-        acc, _ = lax.scan(scan_fn, init, xs)
-    return acc
+        x0, y0 = uniform_disk(num_rays, aperture_radius)
+    x0 = x0 + offset_xy[0]
+    y0 = y0 + offset_xy[1]
+
+    area = jnp.pi * aperture_radius * aperture_radius
+    amp = uniform_amp_from_area(num_rays, waist, area)
+
+    beam = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=jnp.zeros_like(x0),
+        dy=jnp.zeros_like(y0),
+        amp=jnp.ones_like(x0) * amp,
+        phase=jnp.zeros_like(y0) + phase,
+        waist_x=jnp.ones_like(x0) * waist,
+        waist_y=jnp.ones_like(y0) * waist,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
+        z=jnp.ones_like(x0) * z0,
+        voltage=jnp.ones_like(x0) * voltage,
+    )
+    return beam
 
 
-def evaluate_gaussian_input_image(gaussian_rays, grid, batch_size=128):
+def make_gaussian_plane_wave_square_aperture(
+    aperture_length: float,
+    waist: float,
+    num_rays: int,
+    voltage: float,
+    amp: float = 1.0,
+    phase: float = 0.0,
+    z0: float = 0.0,
+    sampling: str = "uniform, fibonacci",
+) -> GaussianBeam:
 
-    rays = gaussian_rays
-    assert isinstance(rays, GaussianRay)
-    rays = rays.to_vector()
-    central_rays = rays.to_ray()
-    amplitudes = rays.amplitude
+    pts = lattice_points_square_cover(num_rays, aperture_length)
+    x0, y0 = pts[:, 0], pts[:, 1]
 
-    n_rays = amplitudes.shape[0]
-    Q1_invs = rays.Q_inv  # Should be of shape n x 2 x 2
-    r1 = grid.coords
-    r1ms = jnp.stack([central_rays.x, central_rays.y], axis=-1)
-    theta1ms = jnp.stack([central_rays.dx, central_rays.dy], axis=-1)
-    wavelengths = jnp.full((n_rays,), rays.wavelength)
-    k = 2 * jnp.pi / wavelengths
-    phase_offset = k * rays.pathlength
+    area = aperture_length * aperture_length
+    amp = uniform_amp_from_area(num_rays, waist, area)
 
-    output_field = evaluate_misaligned_input_gaussian_jax_scan(
-        amplitudes,
-        phase_offset,
-        Q1_invs,
-        r1ms,
-        theta1ms,
-        k,
-        r1,
-        batch_size=batch_size,
-    ).reshape(grid.shape)
-    return output_field
-
-
-def _input_beam_field(a, p, q1, r1m, t1m, k, r1):
-    # r1: (np,2), r1m: (2,), q1: (2,2)
-    r1_minus_r1m = r1 - r1m  # (np,2)
-    # faster quadratic form: v = r1_minus_r1m @ q1.T -> (np,2)
-    v = r1_minus_r1m @ q1.T
-    r1_Q1_inv_r1 = jnp.sum(v * r1_minus_r1m, axis=1)  # (np,)
-    misaligned_tilt_phase = 2 * (r1_minus_r1m @ t1m)  # (np,)
-    phase = (k / 2) * (r1_Q1_inv_r1 + misaligned_tilt_phase)  # (np,)
-    # combine exps into one to reduce work
-    return a * jnp.exp(1j * (phase + p))  # (np,)
+    beam = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=jnp.zeros_like(x0),
+        dy=jnp.zeros_like(y0),
+        amp=jnp.ones_like(x0) * amp,
+        phase=jnp.zeros_like(y0) + phase,
+        waist_x=jnp.ones_like(x0) * waist,
+        waist_y=jnp.ones_like(y0) * waist,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
+        z=jnp.ones_like(x0) * z0,
+        voltage=jnp.ones_like(x0) * voltage,
+    )
+    return beam
 
 
-def evaluate_misaligned_input_gaussian_jax_scan(
-    amp, phase_offset, Q1_inv, r1m, theta1m, k, r1, batch_size=128
-):
-    npix = r1.shape[0]
+def make_gaussian_grid_input(waist: float,
+                             voltage: float,
+                             z0: float,
+                             amp: float = 1.0,
+                             phase: float = 0.0,
+                             n_cells: int = 4,
+                             samples_per_line: int = 200,
+                             extent: float = 1.0,
+                             offset_xy: Tuple[float, float] = (0.0, 0.0)) -> GaussianBeam:
+    """
+    Vectorised creation of a square grid figure.
+    Returns:
+      points   : (N, 2) array of xy points for all grid lines (float32)
+      line_ids : (N,) int32 array indicating which line each point belongs to
+                 (0..n_lines-1 are vertical lines, n_lines..2*n_lines-1 are horizontal lines)
+    """
+    n_lines = n_cells + 1  # includes the outer square
+    xs = jnp.linspace(-extent, extent, n_lines, dtype=jnp.float32)  # (n_lines,)
+    ys = xs
+    t = jnp.linspace(-extent, extent, samples_per_line, dtype=jnp.float32)  # (samples,)
 
-    def _input_beam_field_outer(xs):
-        a_i, p_i, q1_i, r1m_i, t1m_i, k_i = xs
-        return _input_beam_field(a_i, p_i, q1_i, r1m_i, t1m_i, k_i, r1)
+    # Vertical lines: x fixed (one per xs), y varies over t
+    vert_x = jnp.broadcast_to(xs[:, None], (n_lines, samples_per_line))   # (n_lines, samples)
+    vert_y = jnp.broadcast_to(t[None, :], (n_lines, samples_per_line))    # (n_lines, samples)
+    vert_pts = jnp.stack([vert_x, vert_y], axis=-1).reshape(-1, 2)        # (n_lines*samples, 2)
 
-    init = jnp.zeros((npix,), dtype=jnp.complex128)
-    xs = (amp, phase_offset, Q1_inv, r1m, theta1m, k)
-    out = map_reduce(_input_beam_field_outer, jnp.add, init, xs, batch_size=batch_size)
-    return out  # (npix,)
+    # Horizontal lines: y fixed (one per ys), x varies over t
+    hor_x = jnp.broadcast_to(t[None, :], (n_lines, samples_per_line))     # (n_lines, samples)
+    hor_y = jnp.broadcast_to(ys[:, None], (n_lines, samples_per_line))    # (n_lines, samples)
+    hor_pts = jnp.stack([hor_x, hor_y], axis=-1).reshape(-1, 2)          # (n_lines*samples, 2)
 
+    points = jnp.concatenate([vert_pts, hor_pts], axis=0).astype(jnp.float32)
 
-# def evaluate_misaligned_input_gaussian_jax_scan(
-#     amp, phase_offset, Q1_inv, r1m, theta1m, k, r1, batch_size=128
-# ):
-#     npix = r1.shape[0]
-#     # Pick accumulator dtype that matches inputs to avoid upcasts:
-#     complex_dtype = jnp.result_type(amp, 1j)
-#     init = jnp.zeros((npix,), dtype=complex_dtype)
+    x0, y0 = points[:, 0], points[:, 1]
 
-#     # Prefer a single vmap + sum when memory permits (faster than map_reduce):
-#     # vmapped over the beam axis; each call returns shape (npix,)
-#     vmapped = jax.vmap(lambda a, p, q, r0, t, kk: _input_beam_field(a, p, q, r0, t, kk, r1))
-#     fields = vmapped(amp, phase_offset, Q1_inv, r1m, theta1m, k)  # (nbeams, npix)
-#     out = jnp.sum(fields, axis=0)  # (npix,)
-#     return out
+    N = 2 * n_lines * samples_per_line  # total number of gaussians
+    n_lines = n_cells + 1
+    A_obj = grid_line_area(extent, n_cells, waist * 2)  # you choose line_width
+    amps = A_obj / (N * jnp.pi * waist**2)
 
-
-evaluate_misaligned_input_gaussian_jax_scan = jax.jit(
-    evaluate_misaligned_input_gaussian_jax_scan, static_argnames=["batch_size"]
-)
+    x0, y0 = x0 + offset_xy[0], y0 + offset_xy[1]
+    beam = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=jnp.zeros_like(x0),
+        dy=jnp.zeros_like(y0),
+        amp=amps,
+        phase=jnp.zeros_like(y0) + phase,
+        waist_x=jnp.ones_like(x0) * waist,
+        waist_y=jnp.ones_like(y0) * waist,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
+        z=jnp.ones_like(x0) * z0,
+        voltage=jnp.ones_like(x0) * voltage,
+    )
+    return beam
