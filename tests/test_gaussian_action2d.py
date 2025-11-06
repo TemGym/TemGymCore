@@ -6,7 +6,7 @@ import pytest
 
 from skimage.restoration import unwrap_phase
 
-from temgym_core.gaussian_action2D import (
+from temgym_coregaussian import (
     make_gaussian,
     FreeSpacePropagator,
     Lens,
