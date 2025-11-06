@@ -470,7 +470,7 @@ class Biprism(Component2D):
     x0: float = 0.0
     y0: float = 0.0
     sharpness: float = 50.0
-    eps: float = 1e-15
+    eps: float = 1e-12
 
     def _uv(self, xy: jnp.ndarray):
         x, y = xy[0], xy[1]
