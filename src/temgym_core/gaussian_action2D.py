@@ -412,9 +412,8 @@ class SeidelLens(Component2D):
 
 @jdc.pytree_dataclass(kw_only=True)
 class DistortedLens(SeidelLens):
-    # Only distortion terms
-    E: float = 0.0  # distortion coefficient
-    e: float = 0.0  # anisotropic distortion coefficient
+    IsoDist: float = 0.0  # distortion coefficient
+    AnisoDist: float = 0.0  # anisotropic distortion coefficient
 
     def phase_shift(self, xy, dxy):
         xy = jnp.asarray(xy)
@@ -431,7 +430,7 @@ class DistortedLens(SeidelLens):
         rho2 = x_a * x_a + y_a * y_a
 
         x_ap, y_ap = dxy[..., 0], dxy[..., 1]
-        coeffs = SeidelCoeffs(E=self.E, e=self.e)
+        coeffs = SeidelCoeffs(E=self.IsoDist, e=self.AnisoDist)
 
         return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
 
