@@ -6,10 +6,10 @@ from jax.nn import softplus
 import jax_dataclasses as jdc
 from jax import lax
 
-from temgym_core.components import Component, Detector
-from temgym_core.aberrations import KrivanekCoeffs, Seidel_aperture_pos_aperture_slope, SeidelCoeffs, W_krivanek
+from temgym_core.components import Detector
+from temgym_core.aberrations import KrivanekCoeffs, SeidelCoeffs, Seidel_aperture_pos_aperture_slope, W_krivanek
 from .ray import Ray
-from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Callable, Generator, NamedTuple, Sequence, Tuple
 
 from ase import units
 
@@ -53,9 +53,7 @@ def make_gaussian(
 ) -> "GaussianBeam":
 
     wavelength = energy2wavelength(voltage)
-    k = 2.0 * jnp.pi / wavelength
 
-    # --- get batch size from x, then broadcast all 1D params to (n_rays,) ---
     x = jnp.atleast_1d(x)
     n_rays = x.shape[0]
 
@@ -73,9 +71,7 @@ def make_gaussian(
     waist_y = _bcast_to_n(waist_y)
 
     voltage = _bcast_to_n(voltage)
-    k = _bcast_to_n(2.0 * jnp.pi / energy2wavelength(voltage))
 
-    # --- build S2 with leading batch axis ---
     S2_re = jnp.zeros((n_rays, 2, 2), dtype=jnp.float64)
     S2_re = S2_re.at[:, 0, 0].set(curv_x)
     S2_re = S2_re.at[:, 1, 1].set(curv_y)
@@ -252,7 +248,7 @@ def scalar_grad_hess_complex(
 
 
 @jdc.pytree_dataclass
-class Component2D:
+class Component:
     z: float = 0.0
 
     def phase_shift(self, xy: jnp.ndarray):
@@ -269,7 +265,7 @@ class Component2D:
     def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
         xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
         if xy_ref.ndim != 1:
-            raise ValueError("Component2D._apply_single expects a scalar GaussianBeam.")
+            raise ValueError("Component._apply_single expects a scalar GaussianBeam.")
         k = jnp.squeeze(jnp.asarray(ray.k))
 
         dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, k)
@@ -306,7 +302,7 @@ class Component2D:
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class Lens(Component2D):
+class Lens(Component):
     focal_length: float
     x0: float = 0.0
     y0: float = 0.0
@@ -318,7 +314,7 @@ class Lens(Component2D):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class AberratedLens2D(Component2D):
+class AberratedLens(Component):
     focal_length: float
     cubic_coeff: float = 0.0
     quartic_coeff: float = 0.0
@@ -338,7 +334,7 @@ class AberratedLens2D(Component2D):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class KrivanekLens(Component2D):
+class KrivanekLens(Component):
     """Thin lens with Krivanek aberration model applied to the phase."""
     focal_length: float
     coeffs: jdc.Static[KrivanekCoeffs]
@@ -366,7 +362,7 @@ class KrivanekLens(Component2D):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class SeidelLens(Component2D):
+class SeidelLens(Component):
     focal_length: float
     z1: float  # absolute distance from object to lens
     coeffs: SeidelCoeffs = SeidelCoeffs()
@@ -392,7 +388,7 @@ class SeidelLens(Component2D):
     def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
         xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
         if xy_ref.ndim != 1:
-            raise ValueError("Component2D._apply_single expects a scalar GaussianBeam.")
+            raise ValueError("Component._apply_single expects a scalar GaussianBeam.")
         d_xy = jnp.asarray(ray.d_xy, dtype=jnp.float64)
         k = jnp.squeeze(jnp.asarray(ray.k))
 
@@ -436,7 +432,7 @@ class DistortedLens(SeidelLens):
 
 
 @jdc.pytree_dataclass
-class SigmoidAperture2D(Component2D):
+class SigmoidAperture(Component):
     radius: float = 1.0
     edge_width: float = 0.5
     sharpness: float = 1.0
@@ -462,7 +458,7 @@ class SigmoidAperture2D(Component2D):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class Biprism(Component2D):
+class Biprism(Component):
     strength: float
     width: float
     length: float | None = None
@@ -509,7 +505,7 @@ class Biprism(Component2D):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class ConstantPhaseShift(Component2D):
+class ConstantPhaseShift(Component):
     constant_phase_shift: float
 
     def phase_shift(self, xy: jnp.ndarray):
@@ -517,7 +513,7 @@ class ConstantPhaseShift(Component2D):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class LinearPhaseShift(Component2D):
+class LinearPhaseShift(Component):
     linear_phase_shift: jnp.ndarray  # shape (2,)
 
     def phase_shift(self, xy: jnp.ndarray):
@@ -525,7 +521,7 @@ class LinearPhaseShift(Component2D):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class QuadraticPhaseShift(Component2D):
+class QuadraticPhaseShift(Component):
     quadratic_phase_shift: jnp.ndarray  # shape (2, 2)
 
     def phase_shift(self, xy: jnp.ndarray):
@@ -534,7 +530,7 @@ class QuadraticPhaseShift(Component2D):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class MagneticPhaseSample(Component2D):
+class MagneticPhaseSample(Component):
     """
     Smooth magnetic phase mask with an internal textured profile.
 
@@ -610,91 +606,34 @@ class MagneticPhaseSample(Component2D):
         return self.strength * mask * profile
 
 
-@jdc.pytree_dataclass
-class ABCDPropagator2D:
-    A: jnp.ndarray  # (2,2) real
-    B: jnp.ndarray  # (2,2) real
-    C: jnp.ndarray  # (2,2) real
-    D: jnp.ndarray  # (2,2) real
-    L: float = 0.0
-    eps: float = 1e-15
+@jdc.pytree_dataclass(kw_only=True)
+class FourierTransform:
+    """
+    Meta-component that performs: free-space(f) -> thin lens(f) -> free-space(f),
+    which approximates a Fourier transform for a Gaussian beam when the distances
+    before and after the lens equal the lens focal length `f`.
 
-    def __call__(self, r: "GaussianBeam") -> "GaussianBeam":
-        A, B, C, D = self.A, self.B, self.C, self.D
-        k = r.k
+    Parameters
+    ----------
+    f : float | jnp.ndarray
+        Focal length (can be scalar or per-ray array).
+    x0, y0 : float
+        Lens centre offset.
+    """
+    f: float | jnp.ndarray
+    x0: float = 0.0
+    y0: float = 0.0
 
-        # Quadratic update for the action (keep symmetric to control round-off)
-        AB_Q = A + B @ r.S2
-        S2 = jnp.linalg.solve(AB_Q.T, (C + D @ r.S2).T).T
-        S2 = _sym(S2)
-
-        # Prefactor from the quadratic step: det(A + B S2)^(-1/2), computed stably
-        sign, logabs = jnp.linalg.slogdet(AB_Q)
-        pref_det = jnp.exp(-0.5 * logabs) / jnp.sqrt(sign)
-
-        # Linear action coefficient prior to re-centering
-        S1_temp = jnp.linalg.solve(AB_Q, r.d_xy)
-
-        # Constant action increment for the centred quadratic with a residual linear term
-        dS0 = -0.5 * (r.d_xy @ (B @ S1_temp))
-        C_temp = r.C * pref_det * jnp.exp(1j * k * (dS0))
-
-        # Re-center so that the imaginary linear coefficient vanishes (intensity maximum)
-        dr_i = center_shift_from_S(S1_temp, S2)
-        phase_shift = S1_temp @ dr_i + 0.5 * (dr_i @ S2 @ dr_i)
-        C_new = C_temp * jnp.exp(1j * k * phase_shift) * jnp.exp(1j * k * (self.L))
-
-        rxy_new = r.r_xy + jnp.real(dr_i)
-
-        S1_new = S1_temp + S2 @ dr_i
-        dxy_new = jnp.real(S1_new)
-
-        return r.derive(
-            x=rxy_new[..., 0], y=rxy_new[..., 1],
-            dx=dxy_new[..., 0], dy=dxy_new[..., 1],
-            z=r.z + self.L,
-            C=C_new, S2=S2
-        )
-
-    @staticmethod
-    def free_space(z: float):
-        Iden = jnp.eye(2, dtype=jnp.float64)
-        Z = jnp.zeros((2, 2), dtype=jnp.float64)
-        z = jnp.asarray(z, dtype=jnp.float64)
-        return ABCDPropagator2D(A=Iden, B=z*Iden, C=Z, D=Iden, L=z)
-
-    @staticmethod
-    def thin_lens(fx: float, fy: Optional[float] = None, *, L: float = 0.0):
-        if fy is None:
-            fy = fx
-        Iden = jnp.eye(2, dtype=jnp.float64)
-        Z = jnp.zeros((2, 2), dtype=jnp.float64)
-        C = jnp.diag(jnp.array([-1.0/fx, -1.0/fy], dtype=jnp.float64))
-        return ABCDPropagator2D(A=Iden, B=Z, C=C, D=Iden, L=L)
-
-    @staticmethod
-    def rotated_lens(fx: float, fy: float, angle_rad: float, *, L: float = 0.0):
-        c, s = jnp.cos(angle_rad), jnp.sin(angle_rad)
-        R = jnp.array([[c, -s], [s, c]], dtype=jnp.float64)
-        Iden = jnp.eye(2, dtype=jnp.float64)
-        Z = jnp.zeros((2, 2), dtype=jnp.float64)
-        C = R.T @ jnp.diag(jnp.array([-1.0/fx, -1.0/fy], dtype=jnp.float64)) @ R
-        return ABCDPropagator2D(A=Iden, B=Z, C=C, D=Iden, L=L)
-
-    @staticmethod
-    def fourier_transform(f: float):
-        Iden = jnp.eye(2, dtype=jnp.float64)
-        Zero = jnp.zeros((2, 2), dtype=jnp.float64)
-        return ABCDPropagator2D(A=Zero, B=f*Iden, C=-(1.0/f)*Iden, D=Zero, L=2*f)
-
-    @staticmethod
-    def perfect_imaging(magnification: float, focal_length: float = 1.0, L: float = 0.0):
-        M = complex(magnification)
-        A = jnp.eye(2, dtype=jnp.float64) * M
-        C = jnp.eye(2, dtype=jnp.float64) * (-1.0/(focal_length))
-        D = jnp.eye(2, dtype=jnp.float64) * (1.0/M)
-        Z = jnp.zeros((2, 2), dtype=jnp.float64)
-        return ABCDPropagator2D(A=A, B=Z, C=C, D=D, L=L)
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
+        fs = FreeSpacePropagator()
+        # propagate to lens plane
+        ray = fs(ray, self.f)
+        # apply quadratic phase of a thin lens with focal length f
+        lens = Lens(focal_length=self.f, x0=self.x0, y0=self.y0)
+        ray = lens(ray)
+        # propagate to image plane
+        ray = fs(ray, self.f)
+        return ray
 
 
 TransformT = Callable[[Any], Callable[[Any], Tuple[Any, Any]]]
@@ -707,15 +646,15 @@ def passthrough_transform(component):
     return inner
 
 
-class Propagator2D(NamedTuple):
+class Propagator(NamedTuple):
     distance: float
-    propagator: "BaseGaussianPropagator2D"
+    propagator: "BaseGaussianPropagator"
 
     def __call__(self, ray: "GaussianBeam") -> "GaussianBeam":
         return self.propagator(ray, self.distance)
 
 
-class BaseGaussianPropagator2D:
+class BaseGaussianPropagator:
     """Abstract base for gaussian-beam propagators.
 
     Implement `__call__(ray, distance)` in subclasses to return a new GaussianBeam.
@@ -723,12 +662,12 @@ class BaseGaussianPropagator2D:
     def __call__(self, ray: "GaussianBeam", distance: float) -> "GaussianBeam":
         raise NotImplementedError
 
-    def with_distance(self, distance: float) -> Propagator2D:
-        return Propagator2D(distance, self)
+    def with_distance(self, distance: float) -> Propagator:
+        return Propagator(distance, self)
 
 
-class FreeSpacePropagator(BaseGaussianPropagator2D):
-    """Full gaussian-beam free-space propagation (2D)."""
+class FreeSpacePropagator(BaseGaussianPropagator):
+    """Full gaussian-beam free-space propagation ()."""
 
     def __call__(self, ray: "GaussianBeam", distance: float) -> "GaussianBeam":
         I = jnp.eye(2, dtype=jnp.float64)
@@ -759,10 +698,10 @@ def run_iter(
     ray: GaussianBeam,
     components: Sequence[Any],
     transform: TransformT = passthrough_transform,
-    propagator: BaseGaussianPropagator2D = FreeSpacePropagator(),
+    propagator: BaseGaussianPropagator = FreeSpacePropagator(),
 ) -> Generator[Tuple[Any, Any], Any, None]:
     for component in components:
-        if isinstance(component, (Component2D, Detector)):
+        if isinstance(component, (Component, Detector)):
             ray_z = ray.z
             distance = component.z - ray_z
             propagator_d = propagator.with_distance(distance)
@@ -776,14 +715,14 @@ def run_iter(
 def run_to_end(
     ray: GaussianBeam,
     components: Sequence[Any],
-    propagator: BaseGaussianPropagator2D = FreeSpacePropagator(),
+    propagator: BaseGaussianPropagator = FreeSpacePropagator(),
 ) -> GaussianBeam:
     for _, ray in run_iter(ray, components, propagator=propagator):
         pass
     return ray
 
 
-def make_gaussian_plane_wave_circular_aperture(
+def circular_input_wave(
     aperture_radius: float,
     waist: float,
     num_rays: int,
@@ -821,7 +760,7 @@ def make_gaussian_plane_wave_circular_aperture(
     return beam
 
 
-def make_gaussian_plane_wave_square_aperture(
+def square_input_wave(
     aperture_length: float,
     waist: float,
     num_rays: int,
@@ -855,15 +794,15 @@ def make_gaussian_plane_wave_square_aperture(
     return beam
 
 
-def make_gaussian_grid_input(waist: float,
-                             voltage: float,
-                             z0: float,
-                             amp: float = 1.0,
-                             phase: float = 0.0,
-                             n_cells: int = 4,
-                             samples_per_line: int = 200,
-                             extent: float = 1.0,
-                             offset_xy: Tuple[float, float] = (0.0, 0.0)) -> GaussianBeam:
+def grid_input_wave(waist: float,
+                    voltage: float,
+                    z0: float,
+                    amp: float = 1.0,
+                    phase: float = 0.0,
+                    n_cells: int = 4,
+                    samples_per_line: int = 200,
+                    extent: float = 1.0,
+                    offset_xy: Tuple[float, float] = (0.0, 0.0)) -> GaussianBeam:
     """
     Vectorised creation of a square grid figure.
     Returns:

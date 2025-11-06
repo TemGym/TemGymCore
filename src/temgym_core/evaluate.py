@@ -4,7 +4,7 @@ from jax.experimental import pallas as pl
 from jax import lax
 
 from temgym_core.grid import Grid
-from .gaussian import map_reduce
+from jax._src.lax.control_flow.loops import _batch_and_remainder
 
 
 def evaluate_gaussians_gpu_kernel(
@@ -313,3 +313,31 @@ def evaluate_gaussians_for(
 
 evaluate_gaussians_jax_scan = jax.jit(evaluate_gaussians_jax_scan,
                                       static_argnames=("batch_size", "grid"))
+
+
+def map_reduce(f, reducer, init, xs, *, batch_size: int | None = None):
+    def scan_fn(acc_inner, x):
+        # combine f and reducer into function appropriate for normal lax.scan in reduce-only mode
+        return reducer(acc_inner, f(x)), None
+
+    if batch_size is not None:
+        scan_xs, remainder_xs = _batch_and_remainder(xs, batch_size)
+
+        def reduce_chunk(acc, x):
+            # Reduce x into acc, assuming x have already been f'dGauss
+            return reducer(acc, x), None
+
+        def map_reduce_chunk(acc, x):
+            #  Vmap apply f to a chunk of x's, then reduce them sequentially into acc
+            elements = jax.vmap(f)(x)
+            return lax.scan(reduce_chunk, acc, elements)
+
+        if scan_xs is not None:
+            # Map f over each chunk of xs, and reduce each sequentially into init
+            acc, _ = lax.scan(map_reduce_chunk, init, scan_xs)
+        else:
+            acc, _ = init, None
+
+        if remainder_xs is not None:
+            # normal scan-reduce the remainder chunk into acc (could also be vmapped?)
+            acc, _ = lax.scan(scan_fn, acc, remainder_xs)
