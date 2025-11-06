@@ -13,7 +13,7 @@ from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tup
 
 from ase import units
 
-from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, uniform_disk
+from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, uniform_disk, uniform_amp_from_area
 
 
 def relativistic_mass_correction(energy: float) -> float:
@@ -801,6 +801,10 @@ def make_gaussian_plane_wave_circular_aperture(
         x0, y0 = uniform_disk(num_rays, aperture_radius)
     x0 = x0 + offset_xy[0]
     y0 = y0 + offset_xy[1]
+
+    area = jnp.pi * aperture_radius * aperture_radius
+    amp = uniform_amp_from_area(num_rays, waist, area)
+
     beam = make_gaussian(
         x=x0,
         y=y0,
@@ -840,6 +844,9 @@ def make_gaussian_plane_wave_square_aperture(
     y_flat = Y.reshape(-1)
     x0 = x_flat[:num_rays]
     y0 = y_flat[:num_rays]
+
+    area = aperture_length * aperture_length
+    amp = uniform_amp_from_area(num_rays, waist, area)
 
     beam = make_gaussian(
         x=x0,
