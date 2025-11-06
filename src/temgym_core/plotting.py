@@ -76,7 +76,7 @@ def plot_model(
     yscale: str = "linear",   # "linear", "log", or "symlog"
     y_linthresh: float = 1e-6,  # linthresh for symlog
 ):
-    """Plot a 2D schematic of a model (components vs z) with ray bundle.
+    """Plot a  schematic of a model (components vs z) with ray bundle.
 
     Parameters
     ----------

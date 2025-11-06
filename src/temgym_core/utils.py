@@ -83,7 +83,7 @@ def multi_cumsum_inplace(values, partitions, start):
 
 @njit
 def inplace_sum(px_y, px_x, mask, frame, buffer):
-    """Accumulate values into a 2D buffer at integer coordinates in-place.
+    """Accumulate values into a  buffer at integer coordinates in-place.
 
     Parameters
     ----------
@@ -280,7 +280,7 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np, prefactor=None):
     return u2
 
 
-# ---------- Fresnel FFT 2D ----------
+# ---------- Fresnel FFT  ----------
 def fresnel_fft_2d(X, Y, U, wavelength, z):
     k = 2*np.pi/wavelength
     dx = X[0, 1] - X[0, 0]
@@ -639,7 +639,7 @@ def grid_line_area(extent: float, n_cells: int, line_width: float) -> float:
     # Total covered measure along one axis by the union of equally spaced strips
     cover_1D = jnp.minimum(L, w + (n_lines - 1) * jnp.minimum(w, s))
 
-    # Inclusion–exclusion for the 2D union (vertical ∪ horizontal)
+    # Inclusion–exclusion for the  union (vertical ∪ horizontal)
     A = L * cover_1D + L * cover_1D - cover_1D * cover_1D
     return float(A)
 
@@ -712,7 +712,7 @@ def reconstruct_complex(
 
     Parameters
     ----------
-    hologram_intensity : 2D float array
+    hologram_intensity :  float array
         Raw intensity image of the hologram.
     exclude_radius : int
         Radius around DC to exclude when auto-picking a sideband.
@@ -801,8 +801,8 @@ def remove_background_with_reference(
 
     Parameters
     ----------
-    sample_complex : 2D complex array
-    reference_complex : 2D complex array
+    sample_complex :  complex array
+    reference_complex :  complex array
     amp_threshold : float
         Mask out pixels where |R| < amp_threshold * median(|R|).
     unwrap : bool
