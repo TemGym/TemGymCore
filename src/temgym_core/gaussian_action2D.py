@@ -13,7 +13,7 @@ from typing import Any, Callable, Generator, NamedTuple, Optional, Sequence, Tup
 
 from ase import units
 
-from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, uniform_disk, uniform_amp_from_area
+from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, lattice_points_square_cover, uniform_disk, uniform_amp_from_area
 
 
 def relativistic_mass_correction(energy: float) -> float:
@@ -831,18 +831,9 @@ def make_gaussian_plane_wave_square_aperture(
     z0: float = 0.0,
     sampling: str = "uniform, fibonacci",
 ) -> GaussianBeam:
-    # Uniform grid sampling over a square [-aperture_length / 2, aperture_length / 2]^2
-    n_x = int(jnp.ceil(jnp.sqrt(num_rays)))
-    n_y = int(jnp.ceil(num_rays / n_x))
 
-    xs = jnp.linspace(-aperture_length / 2, aperture_length / 2, n_x, dtype=jnp.float64)
-    ys = jnp.linspace(-aperture_length / 2, aperture_length / 2, n_y, dtype=jnp.float64)
-    X, Y = jnp.meshgrid(xs, ys, indexing="xy")
-
-    x_flat = X.reshape(-1)
-    y_flat = Y.reshape(-1)
-    x0 = x_flat[:num_rays]
-    y0 = y_flat[:num_rays]
+    pts = lattice_points_square_cover(num_rays, aperture_length)
+    x0, y0 = pts[:, 0], pts[:, 1]
 
     area = aperture_length * aperture_length
     amp = uniform_amp_from_area(num_rays, waist, area)
