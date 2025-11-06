@@ -7,34 +7,99 @@ import jax_dataclasses as jdc
 from jax import lax
 
 from temgym_core.components import Detector
-from temgym_core.aberrations import KrivanekCoeffs, SeidelCoeffs, Seidel_aperture_pos_aperture_slope, W_krivanek
+from temgym_core.aberrations import (
+    KrivanekCoeffs,
+    SeidelCoeffs,
+    Seidel_aperture_pos_aperture_slope,
+    W_krivanek
+)
+
 from .ray import Ray
-from typing import Any, Callable, Generator, NamedTuple, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Generator,
+    NamedTuple,
+    Sequence,
+    Tuple
+)
 
 from ase import units
 
-from .utils import energy2wavelength, fibonacci_spiral, grid_line_area, lattice_points_square_cover, uniform_disk, uniform_amp_from_area
+from .utils import (
+    energy2wavelength,
+    relativistic_mass_correction,
+    _sym,
+    fibonacci_spiral,
+    grid_line_area,
+    lattice_points_square_cover,
+    uniform_disk,
+    uniform_amp_from_area
+)
 
 
-def relativistic_mass_correction(energy: float) -> float:
-    return 1 + units._e * energy / (units._me * units._c**2)
+@jdc.pytree_dataclass(kw_only=True)
+class GaussianBeam(Ray):
+    C: jnp.ndarray | complex
+    S2: jnp.ndarray
+    voltage: jnp.ndarray | float | None = None
 
+    def derive(self,
+               x: float | jnp.ndarray | None = None,
+               y: float | jnp.ndarray | None = None,
+               dx: float | jnp.ndarray | None = None,
+               dy: float | jnp.ndarray | None = None,
+               z: float | jnp.ndarray | None = None,
+               C: jnp.ndarray | complex | None = None,
+               S2: jnp.ndarray | None = None,
+               voltage: float | jnp.ndarray | None = None,
+               pathlength: float | jnp.ndarray | None = None
+               ) -> "GaussianBeam":
 
-def _sym(M): return 0.5 * (M + jnp.swapaxes(M, -1, -2))
+        return GaussianBeam(
+            x=self.x if x is None else x,
+            y=self.y if y is None else y,
+            dx=self.dx if dx is None else dx,
+            dy=self.dy if dy is None else dy,
+            z=self.z if z is None else z,
+            C=self.C if C is None else C,
+            S2=self.S2 if S2 is None else S2,
+            voltage=self.voltage if voltage is None else voltage,
+            pathlength=self.pathlength if pathlength is None else pathlength
+        )
 
+    def to_vector(self) -> jnp.ndarray:
+        params = {
+            k: jnp.atleast_1d(v)
+            for k, v
+            in dataclasses.asdict(self).items()
+        }
+        return type(self)(**params)
 
-def center_shift_from_S(S1, S2):
-    # We need to find the location of the intensity centre of our gaussian.
-    # This might not neccessarily be where the ray is located if for instance we have
-    # just passed through a sigmoid aperture - which has the effect of modifying the imaginary part
-    # of the action S. This can introduce a linear imaginary action, which means that the intensity
-    # centre of the action S. This can introduce a linear imaginary action, which means that the intensity centre of the
-    # gaussian no longer aligns with the ray position.
-    # This function uses the gradient of the imaginary part of the action to find the intensity centre.
-    ImS2 = 0.5 * (jnp.imag(S2) + jnp.imag(S2).T)  # symmetric real
-    ImS1 = jnp.imag(S1)
-    xi = - jnp.linalg.solve(ImS2, ImS1)
-    return xi
+    @property
+    def wavelength(self) -> float:
+        return energy2wavelength(self.voltage)
+
+    @property
+    def mass(self) -> float:
+        return relativistic_mass_correction(self.voltage) * units._me
+
+    @property
+    def sigma(self) -> float:
+        return (
+            2
+            * jnp.pi
+            * self.mass
+            * units.kg
+            * units._e
+            * units.C
+            * self.wavelength
+            / (units._hplanck * units.s * units.J) ** 2
+        )
+
+    @property
+    def k(self) -> float:
+        return 2 * jnp.pi / self.wavelength
 
 
 def make_gaussian(
@@ -104,70 +169,6 @@ def make_gaussian(
     return ray
 
 
-@jdc.pytree_dataclass(kw_only=True)
-class GaussianBeam(Ray):
-    C: jnp.ndarray | complex
-    S2: jnp.ndarray
-    voltage: jnp.ndarray | float | None = None
-
-    def derive(self,
-               x: float | jnp.ndarray | None = None,
-               y: float | jnp.ndarray | None = None,
-               dx: float | jnp.ndarray | None = None,
-               dy: float | jnp.ndarray | None = None,
-               z: float | jnp.ndarray | None = None,
-               C: jnp.ndarray | complex | None = None,
-               S2: jnp.ndarray | None = None,
-               voltage: float | jnp.ndarray | None = None,
-               pathlength: float | jnp.ndarray | None = None
-               ) -> "GaussianBeam":
-
-        return GaussianBeam(
-            x=self.x if x is None else x,
-            y=self.y if y is None else y,
-            dx=self.dx if dx is None else dx,
-            dy=self.dy if dy is None else dy,
-            z=self.z if z is None else z,
-            C=self.C if C is None else C,
-            S2=self.S2 if S2 is None else S2,
-            voltage=self.voltage if voltage is None else voltage,
-            pathlength=self.pathlength if pathlength is None else pathlength
-        )
-
-    def to_vector(self) -> jnp.ndarray:
-        params = {
-            k: jnp.atleast_1d(v)
-            for k, v
-            in dataclasses.asdict(self).items()
-        }
-        return type(self)(**params)
-
-    @property
-    def wavelength(self) -> float:
-        return energy2wavelength(self.voltage)
-
-    @property
-    def mass(self) -> float:
-        return relativistic_mass_correction(self.voltage) * units._me
-
-    @property
-    def sigma(self) -> float:
-        return (
-            2
-            * jnp.pi
-            * self.mass
-            * units.kg
-            * units._e
-            * units.C
-            * self.wavelength
-            / (units._hplanck * units.s * units.J) ** 2
-        )
-
-    @property
-    def k(self) -> float:
-        return 2 * jnp.pi / self.wavelength
-
-
 def apply_action_delta(
     ray,
     dS0: complex,
@@ -182,15 +183,14 @@ def apply_action_delta(
 
     Updates:
       C   <- C * exp{i k dS0}
-      d   <- d + Re(dS1)                (store only physical tilt; set keep_imag_linear=True if you track complex)
+      d   <- d + Re(dS1)
       S2  <- S2 + sym(dS2)
-      r0  <- r0                         (unchanged)
+      r0  <- r0
 
     Returns
     -------
     r_xy_new, d_xy_new, C_new, S2_new
-      (r_xy_new == ray.r_xy)
-      If keep_imag_linear=True, also returns dS1 (complex) for optional external bookkeeping.
+
     """
     k = ray.k
     r0 = ray.r_xy
@@ -258,14 +258,12 @@ class Component:
         return 0.0
 
     def complex_action(self, xy: jnp.ndarray, k: float) -> complex:
-        L = self.log_transmission(xy)
-        # L = jnp.logaddexp(logA, -50)
+        logA = self.log_transmission(xy)
+        L = jnp.logaddexp(logA, -50)
         return self.phase_shift(xy) - 1j * (L / k)
 
     def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
         xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
-        if xy_ref.ndim != 1:
-            raise ValueError("Component._apply_single expects a scalar GaussianBeam.")
         k = jnp.squeeze(jnp.asarray(ray.k))
 
         dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, k)
@@ -311,26 +309,6 @@ class Lens(Component):
         x, y = xy[0] - self.x0, xy[1] - self.y0
         rho2 = x * x + y * y
         return -0.5 * rho2 / self.focal_length
-
-
-@jdc.pytree_dataclass(kw_only=True)
-class AberratedLens(Component):
-    focal_length: float
-    cubic_coeff: float = 0.0
-    quartic_coeff: float = 0.0
-    x0: float = 0.0
-    y0: float = 0.0
-    eps = 1e-14
-
-    def phase_shift(self, xy: jnp.ndarray):
-        x, y = xy[0] - self.x0, xy[1] - self.y0
-        rho2 = x * x + y * y
-        rho3 = rho2 * jnp.sqrt(rho2 + self.eps)
-        rho4 = rho2 * rho2
-        phase = -0.5 * rho2 / self.focal_length
-        phase = phase + self.cubic_coeff * rho3
-        phase = phase + self.quartic_coeff * rho4
-        return phase
 
 
 @jdc.pytree_dataclass(kw_only=True)
@@ -514,7 +492,7 @@ class ConstantPhaseShift(Component):
 
 @jdc.pytree_dataclass(kw_only=True)
 class LinearPhaseShift(Component):
-    linear_phase_shift: jnp.ndarray  # shape (2,)
+    linear_phase_shift: jnp.ndarray
 
     def phase_shift(self, xy: jnp.ndarray):
         return jnp.dot(self.linear_phase_shift, xy)
@@ -522,10 +500,9 @@ class LinearPhaseShift(Component):
 
 @jdc.pytree_dataclass(kw_only=True)
 class QuadraticPhaseShift(Component):
-    quadratic_phase_shift: jnp.ndarray  # shape (2, 2)
+    quadratic_phase_shift: jnp.ndarray
 
     def phase_shift(self, xy: jnp.ndarray):
-        x, y = xy[0], xy[1]
         return 0.5 * xy @ self.quadratic_phase_shift @ xy
 
 

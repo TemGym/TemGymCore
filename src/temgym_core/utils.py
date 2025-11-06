@@ -611,6 +611,10 @@ def energy2wavelength(energy: float):
     return wavelength_m
 
 
+def relativistic_mass_correction(energy: float) -> float:
+    return 1 + units._e * energy / (units._me * units._c**2)
+
+
 def uniform_amp_from_overlaps(points: jnp.ndarray, waist: float) -> float:
     # points: (N,2) centers (your x0,y0)
     diffs = points[:, None, :] - points[None, :, :]
@@ -925,3 +929,21 @@ def lattice_points_square_cover(num_rays: int, aperture_length: float):
 
     sel = jnp.concatenate(idxs) if idxs else jnp.array([], dtype=int)
     return coords[sel]
+
+# Symmetrize a matrix to ensure it's Hermitian and avoid numerical issues
+def _sym(M):
+    return 0.5 * (M + jnp.swapaxes(M, -1, -2))
+
+
+def center_shift_from_S(S1, S2):
+    # We need to find the location of the intensity centre of our gaussian.
+    # This might not neccessarily be where the ray is located if for instance we have
+    # just passed through a sigmoid aperture - which has the effect of modifying the imaginary part
+    # of the action S. This can introduce a linear imaginary action, which means that the intensity
+    # centre of the action S. This can introduce a linear imaginary action, which means that the intensity centre of the
+    # gaussian no longer aligns with the ray position.
+    # This function uses the gradient of the imaginary part of the action to find the intensity centre.
+    ImS2 = 0.5 * (jnp.imag(S2) + jnp.imag(S2).T)  # symmetric real
+    ImS1 = jnp.imag(S1)
+    xi = - jnp.linalg.solve(ImS2, ImS1)
+    return xi
