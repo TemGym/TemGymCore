@@ -342,7 +342,7 @@ class KrivanekLens(Component):
 @jdc.pytree_dataclass(kw_only=True)
 class SeidelLens(Component):
     focal_length: float
-    z1: float  # absolute distance from object to lens
+    object_plane_dist: float  # absolute distance from object to lens
     coeffs: SeidelCoeffs = SeidelCoeffs()
 
     def log_transmission(self, xy):
@@ -356,7 +356,8 @@ class SeidelLens(Component):
         coeffs = self.coeffs
         f = self.focal_length
         rho2 = x_a * x_a + y_a * y_a
-        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
+        object_plane_dist = self.object_plane_dist
+        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, object_plane_dist, coeffs)
 
     def complex_action(self, xy: jnp.ndarray, dxy: jnp.ndarray, k: float) -> complex:
         logA = self.log_transmission(xy)
@@ -405,8 +406,8 @@ class DistortedLens(SeidelLens):
 
         x_ap, y_ap = dxy[..., 0], dxy[..., 1]
         coeffs = SeidelCoeffs(E=self.IsoDist, e=self.AnisoDist)
-
-        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, self.z1, coeffs)
+        object_plane_dist = self.object_plane_dist
+        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, object_plane_dist, coeffs)
 
 
 @jdc.pytree_dataclass
