@@ -276,6 +276,8 @@ def evaluate_gaussians_jax_scan(
     batch_size: int | None = 128,
 ):
     r, dr, C, S_quad, k = _prepare_gaussian_params(gaussian_ray)
+    C = C.T
+    k = k.T
     r2 = grid.coords
     P = r2.shape[0]
     init = jnp.zeros((P,), dtype=jnp.complex128)
@@ -295,6 +297,8 @@ def evaluate_gaussians_for(
     grid: Grid,
 ):
     r, dr, C, S_quad, k = _prepare_gaussian_params(gaussian_ray)
+    C = C.T
+    k = k.T
     r2 = grid.coords
     n = r.shape[0]
     total_field = jnp.zeros((r2.shape[0],), dtype=jnp.complex128)
@@ -341,3 +345,5 @@ def map_reduce(f, reducer, init, xs, *, batch_size: int | None = None):
         if remainder_xs is not None:
             # normal scan-reduce the remainder chunk into acc (could also be vmapped?)
             acc, _ = lax.scan(scan_fn, acc, remainder_xs)
+
+            return acc
