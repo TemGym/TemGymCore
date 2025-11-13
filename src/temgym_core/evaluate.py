@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax import lax
-
 from temgym_core.grid import Grid
 from jax._src.lax.control_flow.loops import _batch_and_remainder
 
@@ -209,8 +208,8 @@ def evaluate_gaussians_gpu_kernel_wrapper(
     gaussian_ray,
     grid,
     *,
-    tile_pixels: int = 16,
-    tile_beams: int = 16,
+    tile_pixels: int = 32,
+    tile_beams: int = 32,
 ):
     r_centre, dr, C, S_quad, k = _prepare_gaussian_params(gaussian_ray)
     r2 = grid.coords
@@ -228,34 +227,52 @@ evaluate_gaussians_gpu_kernel = jax.jit(
 )
 
 
-def _prepare_gaussian_params(gaussian_ray):
-    def to_arr(x, dtype):
-        return jnp.asarray(x, dtype=dtype)
+def ensure_batch(x, sample_shape=(), dtype=None):
+    """
+    Ensure x has shape (B, *sample_shape), collapsing any existing leading dims into
+    a batch dimension. If sample_shape == (), treat x as per-beam scalars and ensure
+    shape (B,).
 
-    def with_leading_axis(x, sample_shape):
-        """
-        Ensure x has shape (B, *sample_shape). If x already has it, return as-is.
-        If x is exactly `sample_shape`, add a leading axis of size 1.
-        Otherwise, fall back to adding a leading axis without changing trailing dims.
-        """
-        x = jnp.asarray(x)
-        # Already batched: (B, *sample_shape)
-        if x.shape[:1] + sample_shape == x.shape:
-            return x
-        # Single sample: (*sample_shape) -> (1, *sample_shape)
-        if x.shape == sample_shape:
-            return x[None, ...]
-        # Scalar case when sample_shape == ()
-        if sample_shape == () and x.ndim == 0:
-            return x[None, ...]
-        # Fallback: just add a leading axis
+    Args:
+        x: array-like
+        sample_shape: tuple, the desired trailing shape
+        dtype: optional dtype conversion
+
+    Returns:
+        JAX array with leading batch axis.
+    """
+    x = jnp.asarray(x, dtype=dtype)
+    sample_shape = tuple(sample_shape)
+
+    # Scalar case → produce (B,)
+    if len(sample_shape) == 0:
+        if x.ndim == 0:
+            return x[None]           # scalar → (1,)
+        if x.ndim == 1:
+            return x                 # already (B,)
+        return x.reshape((-1,))      # collapse all dims → (B,)
+
+    # Non-scalar case
+    s = len(sample_shape)
+
+    # If trailing dims already match sample_shape → collapse leading dims to batch
+    if x.ndim >= s and tuple(x.shape[-s:]) == sample_shape:
+        return x.reshape((-1,) + sample_shape)
+
+    # Exact match to sample_shape → add leading batch axis
+    if tuple(x.shape) == sample_shape:
         return x[None, ...]
 
-    r = with_leading_axis(to_arr(gaussian_ray.r_xy, jnp.float64), (2,))
-    dr = with_leading_axis(to_arr(gaussian_ray.d_xy, jnp.float64), (2,))
-    C = with_leading_axis(to_arr(gaussian_ray.C, jnp.complex128), (1,))
-    S_quad = with_leading_axis(to_arr(gaussian_ray.S2, jnp.complex128), (2, 2))
-    k = with_leading_axis(to_arr(gaussian_ray.k, jnp.float64), (1,))
+    # Fallback: add leading axis
+    return x[None, ...]
+
+
+def _prepare_gaussian_params(gaussian_ray):
+    r = ensure_batch(gaussian_ray.r_xy, (2,), jnp.float64)
+    dr = ensure_batch(gaussian_ray.d_xy, (2,), jnp.float64)
+    C = ensure_batch(gaussian_ray.C, (), jnp.complex128)
+    S_quad = ensure_batch(gaussian_ray.S2,  (2, 2), jnp.complex128)
+    k = ensure_batch(gaussian_ray.k, (), jnp.float64)
 
     return r, dr, C, S_quad, k
 
@@ -276,8 +293,6 @@ def evaluate_gaussians_jax_scan(
     batch_size: int | None = 128,
 ):
     r, dr, C, S_quad, k = _prepare_gaussian_params(gaussian_ray)
-    C = C.T
-    k = k.T
     r2 = grid.coords
     P = r2.shape[0]
     init = jnp.zeros((P,), dtype=jnp.complex128)

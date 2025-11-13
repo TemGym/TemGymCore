@@ -8,15 +8,14 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 from .ray import Ray
-from .run import run_iter
-from .components import (
+from .components import Detector
+from .gaussian import (
     Component,
-    Detector,
     Lens,
-    Deflector,
     Biprism,
+    run_iter_vmapped
 )
-from .source import Source
+from .components import Deflector
 
 
 @dataclass
@@ -31,45 +30,18 @@ class PlotParams:
     fill_alpha: float = 0.20
     edge_lw: float = 1.8
     component_lw: float = 3.0
-    lens_height: float = 0.03  # relative to figure height
-    biprism_radius: float = 0.001  # radius of circle to draw biprism
+    lens_height: float = 0.0003  # relative to figure height
+    biprism_radius: float = 0.00001  # radius of circle to draw biprism
 
 
 def _as_name(obj: object) -> str:
     return type(obj).__name__
 
 
-def _ensure_initial_ray(
-    components: Sequence[Source | Component],
-    initial_ray: Ray | None,
-    num_rays: int,
-    random: bool,
-) -> Ray:
-    # Prefer a provided ray bundle
-    if initial_ray is not None:
-        return initial_ray
-
-    # Try to generate from the first Source found
-    for c in components:
-        if isinstance(c, Source):
-            return c.make_rays(num_rays, random=random)
-
-    # Fall back to a single on-axis ray at the first element's z
-    z0 = 0.0
-    if len(components) > 0 and hasattr(components[0], "z"):
-        z0 = float(getattr(components[0], "z"))
-    return Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=z0, pathlength=0.0)
-
-
-
-
 def plot_model(
-    components: Sequence[Source | Component],
+    components: Sequence[Component],
     *,
     rays: Ray | None = None,
-    initial_ray: Ray | None = None,
-    num_rays: int = 101,
-    random: bool = False,
     plot_params: PlotParams = PlotParams(),
     ax: mpl.axes.Axes | None = None,
     band_mode: str = "fill",  # "fill" (envelope fill) or "lines" (draw lines between rays)
@@ -80,18 +52,10 @@ def plot_model(
 
     Parameters
     ----------
-    components : sequence of Source or Component
+    components : sequence of Component
         Model elements ordered by increasing z.
     rays : Ray, optional
-        A Ray or a Ray bundle to use as the starting input. If provided,
-        this overrides `initial_ray` and any Source-based generation.
-    initial_ray : Ray, optional
-        Back-compat alias for explicitly providing the starting ray/bundle.
-        Ignored if `rays` is provided.
-    num_rays : int, default 101
-        Number of rays to generate if using a Source.
-    random : bool, default False
-        Whether to randomize sampling when using a Source.
+        A Ray or a Ray bundle to use as the starting input.
     plot_params : PlotParams, optional
         Style parameters for the plot.
     ax : matplotlib.axes.Axes, optional
@@ -110,13 +74,8 @@ def plot_model(
     """
     p = plot_params
 
-    # Prefer explicitly provided rays/bundle; then legacy initial_ray; else Source/auto
-    ray0 = rays if rays is not None else _ensure_initial_ray(
-        components, initial_ray, num_rays, random
-    )
-
     # Accumulate rays after each step (including propagations)
-    steps: list[Tuple[object, Ray]] = list(run_iter(ray0, components))
+    steps = run_iter_vmapped(rays, components)
 
     X, Z = _stack_ray_positions(steps)
 
@@ -130,7 +89,7 @@ def plot_model(
 
     # Determine x extent using both beam and detector width if present
     max_beam_x = float(np.max(np.abs(X)))
-    component_x = max_beam_x * 1.3
+    component_x = max_beam_x * 0.02
     detector_range_x = 0.0
     for c in components:
         if isinstance(c, Detector):
@@ -345,7 +304,7 @@ def _stack_ray_positions(
 ) -> Tuple[np.ndarray, np.ndarray]:
     xs: list[np.ndarray] = []
     zs: list[float] = []
-    for _, r in steps_seq:
+    for r in steps_seq:
         x = np.atleast_1d(np.asarray(r.x))
         z_arr = np.asarray(r.z)
         z_val = float(np.mean(z_arr))  # z identical across bundle; use scalar mean
