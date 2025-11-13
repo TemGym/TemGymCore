@@ -750,22 +750,30 @@ def circular_input_wave(
 def square_input_wave(
     aperture_length: float,
     waist: float,
-    num_rays: int,
     voltage: float,
     amp: float = 1.0,
     phase: float = 0.0,
     z0: float = 0.0,
+    overlap_factor: float = 2.0,
     centre_xy: Tuple[float, float] = (0.0, 0.0),
-    sampling: str = "uniform, fibonacci",
 ) -> GaussianBeam:
+
+    area = aperture_length * aperture_length
+
+    Lx = Ly = aperture_length
+    d = waist / overlap_factor  # spacing between centers
+
+    Nx = int(jnp.ceil(Lx / d)) + 1
+    Ny = int(jnp.ceil(Ly / d)) + 1
+    num_rays = Nx * Ny
 
     pts = lattice_points_square_cover(num_rays, aperture_length)
     x0, y0 = pts[:, 0], pts[:, 1]
 
-    area = aperture_length * aperture_length
     amp = uniform_amp_from_area(num_rays, waist, area)
     x0 = x0 + centre_xy[0]
     y0 = y0 + centre_xy[1]
+
     beam = make_gaussian(
         x=x0,
         y=y0,
