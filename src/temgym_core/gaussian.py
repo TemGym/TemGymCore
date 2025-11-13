@@ -19,6 +19,7 @@ from typing import (
     Any,
     Callable,
     Generator,
+    List,
     NamedTuple,
     Sequence,
     Tuple
@@ -172,14 +173,12 @@ def make_gaussian(
 def apply_action_delta(
     ray,
     dS0: complex,
-    dS1: jnp.ndarray,  # shape (2,)
-    dS2: jnp.ndarray,  # shape (2,2)
+    dS1: jnp.ndarray,
+    dS2: jnp.ndarray,
 ):
     """
     Apply a local quadratic action increment ΔS(ξ) = dS0 + dS1·ξ + 1/2 ξᵀ dS2 ξ
     evaluated at the CURRENT ray center (ξ = r - r0, with r0 = ray.r_xy).
-
-    No re-centering; absolute phase lives in ray.C.
 
     Updates:
       C   <- C * exp{i k dS0}
@@ -312,12 +311,9 @@ class Lens(Component):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class KrivanekLens(Component):
+class KrivanekLens(Lens):
     """Thin lens with Krivanek aberration model applied to the phase."""
-    focal_length: float
     coeffs: jdc.Static[KrivanekCoeffs]
-    x0: float = 0.0
-    y0: float = 0.0
     axis_eps: float = 1e-24
 
     def phase_shift(self, xy: jnp.ndarray):
@@ -340,8 +336,7 @@ class KrivanekLens(Component):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class SeidelLens(Component):
-    focal_length: float
+class SeidelLens(Lens):
     object_plane_dist: float  # absolute distance from object to lens
     coeffs: SeidelCoeffs = SeidelCoeffs()
 
@@ -445,7 +440,7 @@ class Biprism(Component):
     x0: float = 0.0
     y0: float = 0.0
     sharpness: float = 50.0
-    eps: float = 1e-12
+    eps: float = 1e-15
 
     def _uv(self, xy: jnp.ndarray):
         x, y = xy[0], xy[1]
@@ -677,27 +672,41 @@ def run_iter(
     components: Sequence[Any],
     transform: TransformT = passthrough_transform,
     propagator: BaseGaussianPropagator = FreeSpacePropagator(),
-) -> Generator[Tuple[Any, Any], Any, None]:
+) -> Tuple[GaussianBeam, Tuple[GaussianBeam, ...]]:
+
+    rays = []
+    r = ray
     for component in components:
         if isinstance(component, (Component, Detector)):
-            ray_z = ray.z
-            distance = component.z - ray_z
-            propagator_d = propagator.with_distance(distance)
-            ray, out = transform(propagator_d)(ray)
-            yield propagator_d, out
+            distance = component.z - r.z
+            prop_d = propagator.with_distance(distance)
+            r, _out = transform(prop_d)(r)
+            rays.append(r)   # append ray after propagation
 
-        ray, out = transform(component)(ray)
-        yield component, out
+        r, _out = transform(component)(r)
+        rays.append(r)       # append ray after applying component
+
+    return rays
 
 
 def run_to_end(
     ray: GaussianBeam,
     components: Sequence[Any],
+    transform: TransformT = passthrough_transform,
     propagator: BaseGaussianPropagator = FreeSpacePropagator(),
 ) -> GaussianBeam:
-    for _, ray in run_iter(ray, components, propagator=propagator):
-        pass
-    return ray
+    r = ray
+    for component in components:
+        if isinstance(component, (Component, Detector)):
+            distance = component.z - r.z
+            prop_d = propagator.with_distance(distance)
+            r, _ = transform(prop_d)(r)
+        r, _ = transform(component)(r)
+    return r
+
+
+run_iter_vmapped = jax.vmap(run_iter, in_axes=(0, None))
+run_to_end_vmapped = jax.vmap(run_to_end, in_axes=(0, None))
 
 
 def circular_input_wave(
@@ -755,6 +764,50 @@ def square_input_wave(
 
     area = aperture_length * aperture_length
     amp = uniform_amp_from_area(num_rays, waist, area)
+    x0 = x0 + centre_xy[0]
+    y0 = y0 + centre_xy[1]
+    beam = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=jnp.zeros_like(x0),
+        dy=jnp.zeros_like(y0),
+        amp=jnp.ones_like(x0) * amp,
+        phase=jnp.zeros_like(y0) + phase,
+        waist_x=jnp.ones_like(x0) * waist,
+        waist_y=jnp.ones_like(y0) * waist,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
+        z=jnp.ones_like(x0) * z0,
+        voltage=jnp.ones_like(x0) * voltage,
+    )
+    return beam
+
+
+def rectangular_input_wave(
+    aperture_width: float,
+    aperture_height: float,
+    waist: float,
+    num_rays: int,
+    voltage: float,
+    amp: float = 1.0,
+    phase: float = 0.0,
+    z0: float = 0.0,
+    centre_xy: Tuple[float, float] = (0.0, 0.0),
+    sampling: str = "uniform, fibonacci",
+) -> GaussianBeam:
+    """
+    Create a rectangular array of Gaussian rays covering a rectangle of given
+    width and height. The point distribution uses the same lattice generator
+    as the square version but scales it to the requested rectangular extents.
+    """
+    # get a unit-square lattice and scale to the requested rectangle
+    pts = lattice_points_square_cover(num_rays, 1.0)  # unit-square centered points
+    x0 = pts[:, 0] * aperture_width
+    y0 = pts[:, 1] * aperture_height
+
+    area = aperture_width * aperture_height
+    amp = uniform_amp_from_area(num_rays, waist, area)
+
     x0 = x0 + centre_xy[0]
     y0 = y0 + centre_xy[1]
     beam = make_gaussian(

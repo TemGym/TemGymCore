@@ -67,10 +67,6 @@ def run_iter(
     ------
     step : (Propagator|Source|Component, Ray)
         The operation applied and its output ray.
-
-    Notes
-    -----
-    Free-space is inserted when `component.z != ray.z`.
     """
     for component in components:
         if isinstance(component, (Source, Component)):
