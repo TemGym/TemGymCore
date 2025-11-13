@@ -795,25 +795,32 @@ def rectangular_input_wave(
     aperture_width: float,
     aperture_height: float,
     waist: float,
-    num_rays: int,
     voltage: float,
     amp: float = 1.0,
     phase: float = 0.0,
     z0: float = 0.0,
+    overlap_factor: float = 2.0,
     centre_xy: Tuple[float, float] = (0.0, 0.0),
-    sampling: str = "uniform, fibonacci",
 ) -> GaussianBeam:
     """
     Create a rectangular array of Gaussian rays covering a rectangle of given
     width and height. The point distribution uses the same lattice generator
     as the square version but scales it to the requested rectangular extents.
     """
+
+    area = aperture_width * aperture_height
+    Lx, Ly = aperture_width, aperture_height
+    d = waist / overlap_factor  # spacing between centers
+
+    Nx = int(jnp.ceil(Lx / d)) + 1
+    Ny = int(jnp.ceil(Ly / d)) + 1
+    num_rays = Nx * Ny
+
     # get a unit-square lattice and scale to the requested rectangle
     pts = lattice_points_square_cover(num_rays, 1.0)  # unit-square centered points
     x0 = pts[:, 0] * aperture_width
     y0 = pts[:, 1] * aperture_height
 
-    area = aperture_width * aperture_height
     amp = uniform_amp_from_area(num_rays, waist, area)
 
     x0 = x0 + centre_xy[0]
