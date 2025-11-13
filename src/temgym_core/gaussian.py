@@ -705,8 +705,8 @@ def run_to_end(
     return r
 
 
-run_iter_vmapped = jax.vmap(run_iter, in_axes=(0, None))
-run_to_end_vmapped = jax.vmap(run_to_end, in_axes=(0, None))
+run_iter_vmapped = jax.jit(jax.vmap(run_iter, in_axes=(0, None)))
+run_to_end_vmapped = jax.jit(jax.vmap(run_to_end, in_axes=(0, None)))
 
 
 def circular_input_wave(

@@ -208,8 +208,8 @@ def evaluate_gaussians_gpu_kernel_wrapper(
     gaussian_ray,
     grid,
     *,
-    tile_pixels: int = 32,
-    tile_beams: int = 32,
+    tile_pixels: int = 16,
+    tile_beams: int = 16,
 ):
     r_centre, dr, C, S_quad, k = _prepare_gaussian_params(gaussian_ray)
     r2 = grid.coords
