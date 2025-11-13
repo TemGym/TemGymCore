@@ -30,8 +30,8 @@ class PlotParams:
     fill_alpha: float = 0.20
     edge_lw: float = 1.8
     component_lw: float = 3.0
-    lens_height: float = 0.0003  # relative to figure height
-    biprism_radius: float = 0.00001  # radius of circle to draw biprism
+    lens_height: float = 1e-5  # relative to figure height
+    biprism_radius: float = 1e-7  # radius of circle to draw biprism
 
 
 def _as_name(obj: object) -> str:
