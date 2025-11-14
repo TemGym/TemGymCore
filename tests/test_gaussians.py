@@ -212,7 +212,7 @@ def test_free_space_paraxial_updates_q_inv():
     )
 
 
-def test_constant_component():
+def test_constant_phase_component():
     input_phase_shift = 0.5
     input_coord = jnp.array([0.5, -0.5])
     constant_component = ConstantPhaseShift(z=0.0, constant_phase_shift=input_phase_shift)
@@ -226,7 +226,7 @@ def test_constant_component():
     np.testing.assert_allclose(np.asarray(grad_grad), 0.0, rtol=1e-12, atol=1e-12)
 
 
-def test_linear_component():
+def test_linear_phase_component():
     input_phase_shift = jnp.array([-0.23, 0.512])
     input_coord = jnp.array([0.5, -0.5])
     linear_component = LinearPhaseShift(z=0.0, linear_phase_shift=input_phase_shift)
@@ -240,7 +240,7 @@ def test_linear_component():
     np.testing.assert_allclose(np.asarray(grad_grad), 0.0, rtol=1e-12, atol=1e-12)
 
 
-def test_quadratic_component():
+def test_quadratic_phase_component():
 
     fx, fy = -0.1, 0.23
     input_phase_shift = jnp.array([[fx, 0.0], [0.0, fy]])
@@ -323,7 +323,7 @@ def test_gaussian_free_space():
     plt.close(fig)
 
 
-def test_gaussian_constant_phase_shift():
+def test_gaussian_constant_phase_shift_vs_fresnel():
     voltage = 6.0165e-6
     w0x, w0y = 0.35e-3, 0.25e-3
     theta_x, theta_y = 1.4e-3, -0.7e-3
@@ -369,7 +369,7 @@ def test_gaussian_constant_phase_shift():
     plt.close(fig)
 
 
-def test_gaussian_linear_phase_shift():
+def test_gaussian_linear_phase_shift_vs_fresnel():
     voltage = 6.0165e-6  # 500 e-9 m wavelength
     w0x, w0y = 0.35e-3, 0.25e-3
     theta_x, theta_y = 1.4e-3, -0.7e-3
@@ -415,7 +415,7 @@ def test_gaussian_linear_phase_shift():
     plt.close(fig)
 
 
-def test_gaussian_quadratic_phase_shift():
+def test_gaussian_quadratic_phase_shift_vs_fresnel():
     voltage = 6.0165e-6  # 500 e-9 m wavelength
     w0x, w0y = 0.35e-3, 0.25e-3
     theta_x, theta_y = 1.4e-3, -0.7e-3

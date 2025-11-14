@@ -503,6 +503,30 @@ class QuadraticPhaseShift(Component):
 
 
 @jdc.pytree_dataclass(kw_only=True)
+class ConstantAmplitudeShift(Component):
+    log_amplitude: float
+
+    def log_transmission(self, xy: jnp.ndarray):
+        return self.log_amplitude
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class LinearAmplitudeShift(Component):
+    linear_log_amplitude: jnp.ndarray
+
+    def log_transmission(self, xy: jnp.ndarray):
+        return jnp.dot(self.linear_log_amplitude, xy)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class QuadraticAmplitudeShift(Component):
+    quadratic_log_amplitude: jnp.ndarray
+
+    def log_transmission(self, xy: jnp.ndarray):
+        return 0.5 * xy @ self.quadratic_log_amplitude @ xy
+
+
+@jdc.pytree_dataclass(kw_only=True)
 class MagneticPhaseSample(Component):
     """
     Smooth magnetic phase mask with an internal textured profile.
