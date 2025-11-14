@@ -497,25 +497,31 @@ class Biprism(Component):
         au = jnp.sqrt(u * u + eps_u * eps_u)
         return -self.strength * au
 
-    # def log_transmission(self, xy: jnp.ndarray):
-    #     u, v = self._uv(xy)
+    def log_transmission(self, xy: jnp.ndarray):
+        u, v = self._uv(xy)
 
-    #     hu = 0.5 * self.width
-    #     eps_u = self.eps * hu
-    #     au = jnp.sqrt(u * u + eps_u * eps_u)
-    #     tx = self.sharpness * (au - hu)
-    #     logA_u = -softplus(-tx)  # smooth rectangular stop in u
+        hu = 0.5 * self.width
+        eps_u = self.eps * hu
+        au = jnp.sqrt(u * u + eps_u * eps_u)
+        tx = self.sharpness * (au - hu)
+        logA_u = -softplus(-tx)  # smooth rectangular stop in u
 
-    #     if self.length is None:
-    #         logA_v = 0.0
-    #     else:
-    #         hv = 0.5 * self.length
-    #         eps_v = self.eps * hu
-    #         av = jnp.sqrt(v * v + eps_v * eps_v)
-    #         ty = self.sharpness * (av - hv)
-    #         logA_v = -softplus(-ty)
+        length_is_none = self.length is None
 
-    #     return logA_u + logA_v
+        def _with_length(_):
+            length = jnp.asarray(self.length)
+            hv = 0.5 * length
+            eps_v = self.eps * hu
+            av = jnp.sqrt(v * v + eps_v * eps_v)
+            ty = self.sharpness * (av - hv)
+            return -softplus(-ty)
+
+        def _no_length(_):
+            return jnp.asarray(0.0)
+
+        logA_v = lax.cond(length_is_none, _no_length, _with_length, operand=None)
+
+        return logA_u + logA_v
 
 
 @jdc.pytree_dataclass(kw_only=True)
