@@ -41,8 +41,8 @@ from .utils import (
 
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianBeam(Ray):
-    C: jnp.ndarray | complex
-    S2: jnp.ndarray
+    amplitude: jnp.ndarray | complex  # complex amplitude + global offsets from propagation
+    Q_inv: jnp.ndarray | complex # 2x2 complex matrix - inverse complex curvature matrix which gets updated by Quadratic actions 
     voltage: jnp.ndarray | float | None = None
 
     def derive(self,
@@ -51,10 +51,10 @@ class GaussianBeam(Ray):
                dx: float | jnp.ndarray | None = None,
                dy: float | jnp.ndarray | None = None,
                z: float | jnp.ndarray | None = None,
-               C: jnp.ndarray | complex | None = None,
-               S2: jnp.ndarray | None = None,
+               amplitude: jnp.ndarray | complex | None = None,
+               pathlength: float | jnp.ndarray | None = None,
+               Q_inv: jnp.ndarray | complex | None = None,
                voltage: float | jnp.ndarray | None = None,
-               pathlength: float | jnp.ndarray | None = None
                ) -> "GaussianBeam":
 
         return GaussianBeam(
@@ -63,8 +63,8 @@ class GaussianBeam(Ray):
             dx=self.dx if dx is None else dx,
             dy=self.dy if dy is None else dy,
             z=self.z if z is None else z,
-            C=self.C if C is None else C,
-            S2=self.S2 if S2 is None else S2,
+            amplitude=self.amplitude if amplitude is None else amplitude,
+            Q_inv=self.Q_inv if Q_inv is None else Q_inv,
             voltage=self.voltage if voltage is None else voltage,
             pathlength=self.pathlength if pathlength is None else pathlength
         )
@@ -138,23 +138,23 @@ def make_gaussian(
 
     voltage = _bcast_to_n(voltage)
 
-    S2_re = jnp.zeros((n_rays, 2, 2), dtype=jnp.float64)
-    S2_re = S2_re.at[:, 0, 0].set(curv_x)
-    S2_re = S2_re.at[:, 1, 1].set(curv_y)
+    Q_inv_re = jnp.zeros((n_rays, 2, 2), dtype=jnp.float64)
+    Q_inv_re = Q_inv_re.at[:, 0, 0].set(curv_x)
+    Q_inv_re = Q_inv_re.at[:, 1, 1].set(curv_y)
 
-    S2_im = jnp.zeros((n_rays, 2, 2), dtype=jnp.float64)
-    S2_im = S2_im.at[:, 0, 0].set(wavelength / (jnp.pi * waist_x**2))
-    S2_im = S2_im.at[:, 1, 1].set(wavelength / (jnp.pi * waist_y**2))
+    Q_inv_im = jnp.zeros((n_rays, 2, 2), dtype=jnp.float64)
+    Q_inv_im = Q_inv_im.at[:, 0, 0].set(wavelength / (jnp.pi * waist_x**2))
+    Q_inv_im = Q_inv_im.at[:, 1, 1].set(wavelength / (jnp.pi * waist_y**2))
 
-    S2 = (S2_re + 1j * S2_im).astype(jnp.complex128)
+    Q_inv = (Q_inv_re + 1j * Q_inv_im).astype(jnp.complex128)
 
     amp = _bcast_to_n(amp)
     phase = _bcast_to_n(phase)
-    C = jnp.asarray(amp) * jnp.exp(1j * jnp.asarray(phase))
+    amplitude = jnp.asarray(amp) * jnp.exp(1j * jnp.asarray(phase))
 
     ray = GaussianBeam(
         x=x, y=y, dx=dx, dy=dy, z=z,
-        C=C, S2=S2, voltage=voltage,
+        amplitude=amplitude, Q_inv=Q_inv, voltage=voltage,
         pathlength=jnp.zeros_like(x),
         _one=jnp.ones_like(x),
     ).to_vector()
@@ -175,31 +175,63 @@ def apply_action_delta(
     dS0: complex,
     dS1: jnp.ndarray,
     dS2: jnp.ndarray,
+    tiny: float = 1e-30,
 ):
-    """
-    Apply a local quadratic action increment ΔS(ξ) = dS0 + dS1·ξ + 1/2 ξᵀ dS2 ξ
-    evaluated at the CURRENT ray center (ξ = r - r0, with r0 = ray.r_xy).
 
-    Updates:
-      C   <- C * exp{i k dS0}
-      d   <- d + Re(dS1)
-      S2  <- S2 + sym(dS2)
-      r0  <- r0
-
-    Returns
-    -------
-    r_xy_new, d_xy_new, C_new, S2_new
-
-    """
     k = ray.k
     r0 = ray.r_xy
 
-    C_new = ray.C * jnp.exp(1j * k * dS0)
-    d_xy_new = ray.d_xy + jnp.real(dS1)
-    S2_new = ray.S2 + dS2
-    r_xy_new = r0
+    # Old action: S_old(ξ) = S0_old + d_xy·ξ + 1/2 ξᵀ Q ξ
+    S0_old = ray.pathlength  # real
+    d_xy_old = ray.d_xy  # (2,) real
+    Q_old = ray.Q_inv  # (2,2) complex
 
-    return r_xy_new, d_xy_new, C_new, S2_new
+    # New action before recentering:
+    S0_prime = S0_old + dS0  # complex
+    S1_prime = d_xy_old + dS1  # complex (linear)
+    Q_prime = Q_old + dS2  # complex (2x2)
+
+    ImQ = jnp.real(0) + jnp.imag(Q_prime)  # ensure complex->real
+    ImS1 = jnp.imag(S1_prime)
+
+    def solve_dx(args):
+        ImQ_, ImS1_ = args
+        return jnp.linalg.solve(ImQ_, -ImS1_)
+
+    def zero_dx(args):
+        ImQ_, ImS1_ = args
+        return jnp.zeros_like(ImS1_)
+
+    det_ImQ = jnp.linalg.det(ImQ)
+    dx = lax.cond(
+        jnp.abs(det_ImQ) < tiny,
+        zero_dx,
+        solve_dx,
+        (ImQ, ImS1),
+    )
+
+    r_xy_new = r0 + dx
+    d_xy_new = ray.d_xy + jnp.real(dS1)
+
+    # --- 3. Shift to η = ξ - dx and collect new coefficients ---
+    # S(ξ) = S0' + S1'·(η+dx) + 1/2 (η+dx)^T Q' (η+dx)
+    #      = S0_new + S1_new·η + 1/2 η^T Q' η
+    S0_new = S0_prime + S1_prime @ dx + 0.5 * (dx @ (Q_prime @ dx))
+    S1_new = S1_prime + Q_prime @ dx      # (2,) complex
+    Q_new = Q_prime  # (2,2) complex
+
+    # By construction, Im(S1_new) ≈ 0; we keep only the real slope.
+    d_xy_new = jnp.real(S1_new)
+
+    # --- 4. Split S0_new into phase (pathlength) and amplitude factor ---
+    S0_new_re = jnp.real(S0_new)
+    S0_new_im = jnp.imag(S0_new)
+
+    pathlength_new = S0_new_re
+    amp_factor = jnp.exp(-k * S0_new_im)   # real attenuation
+    amplitude_new = ray.amplitude * amp_factor
+
+    return r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new
 
 
 def scalar_grad_hess_complex(
@@ -266,16 +298,20 @@ class Component:
         k = jnp.squeeze(jnp.asarray(ray.k))
 
         dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, k)
-        r_xy, r_dxy, Cn, S2 = apply_action_delta(ray, dS0=dS0, dS1=dS1, dS2=dS2)
+        r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new = apply_action_delta(ray,
+                                                                                      dS0=dS0,
+                                                                                      dS1=dS1,
+                                                                                      dS2=dS2)
 
         return ray.derive(
-            x=r_xy[..., 0],
-            y=r_xy[..., 1],
-            dx=r_dxy[..., 0],
-            dy=r_dxy[..., 1],
+            x=r_xy_new[..., 0],
+            y=r_xy_new[..., 1],
+            dx=d_xy_new[..., 0],
+            dy=d_xy_new[..., 1],
             z=ray.z,
-            C=Cn,
-            S2=S2
+            amplitude=amplitude_new,
+            pathlength=pathlength_new,
+            Q_inv=Q_new,
         )
 
     def __call__(self, ray: GaussianBeam) -> GaussianBeam:
@@ -367,16 +403,20 @@ class SeidelLens(Lens):
         k = jnp.squeeze(jnp.asarray(ray.k))
 
         dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, d_xy, k)
-        r_xy, r_dxy, Cn, S2 = apply_action_delta(ray, dS0=dS0, dS1=dS1, dS2=dS2)
+        r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new = apply_action_delta(ray,
+                                                                                      dS0=dS0,
+                                                                                      dS1=dS1,
+                                                                                      dS2=dS2)
 
         return ray.derive(
-            x=r_xy[..., 0],
-            y=r_xy[..., 1],
-            dx=r_dxy[..., 0],
-            dy=r_dxy[..., 1],
+            x=r_xy_new[..., 0],
+            y=r_xy_new[..., 1],
+            dx=d_xy_new[..., 0],
+            dy=d_xy_new[..., 1],
             z=ray.z,
-            C=Cn,
-            S2=S2
+            amplitude=amplitude_new,
+            pathlength=pathlength_new,
+            Q_inv=Q_new,
         )
 
 
@@ -504,15 +544,15 @@ class QuadraticPhaseShift(Component):
 
 @jdc.pytree_dataclass(kw_only=True)
 class ConstantAmplitudeShift(Component):
-    log_amplitude: float
+    amplitude: float
 
     def log_transmission(self, xy: jnp.ndarray):
-        return self.log_amplitude
+        return jnp.log(self.amplitude)
 
 
 @jdc.pytree_dataclass(kw_only=True)
 class LinearAmplitudeShift(Component):
-    linear_log_amplitude: jnp.ndarray
+    linear_amplitude: jnp.ndarray
 
     def log_transmission(self, xy: jnp.ndarray):
         return jnp.dot(self.linear_log_amplitude, xy)
@@ -664,30 +704,44 @@ class BaseGaussianPropagator:
 
 
 class FreeSpacePropagator(BaseGaussianPropagator):
-    """Full gaussian-beam free-space propagation ()."""
+    """Full gaussian-beam free-space propagation (2D)."""
 
     def __call__(self, ray: "GaussianBeam", distance: float) -> "GaussianBeam":
-        I = jnp.eye(2, dtype=jnp.float64)
-        theta = ray.d_xy
-        A = I + distance * ray.S2
+        # Local aliases
+        theta = ray.d_xy                # (2,) real
+        Q = ray.Q_inv                   # (2,2) complex
+
+        # ABCD for Q_inv
+        I = jnp.eye(2, dtype=jnp.complex128)
+        A = I + distance * Q            # (2,2) complex
         invA = jnp.linalg.solve(A.T, I).T
         detA = jnp.linalg.det(A)
-        Cnew = ray.C * (
-            jnp.exp(1j * ray.k * distance)
-            * detA ** (-0.5)
-            * jnp.exp(1j * ray.k * distance * 0.5 * jnp.dot(theta, theta))
-        )
-        S2new = ray.S2 @ invA
-        xy_new = ray.r_xy + distance * theta
+
+        # New curvature
+        Q_new = Q @ invA
+
+        # Centre translation (ray optics)
+        r_xy_new = ray.r_xy + distance * theta
+
+        # Pathlength: keep purely real, add geometric pieces
+        # + distance (on-axis propagation)
+        # + distance * 0.5 * |theta|^2 (obliquity / extra path from tilt)
+        theta_sq = jnp.dot(theta, theta)
+        pathlength_new = ray.pathlength + distance + 0.5 * distance * theta_sq
+
+        # Amplitude prefactor: det(I + z Q)^(-1/2)
+        # This carries both amplitude change and Gouy-like phase.
+        amplitude_new = ray.amplitude * detA**(-0.5)
 
         return ray.derive(
-            x=xy_new[..., 0],
-            y=xy_new[..., 1],
+            x=r_xy_new[..., 0],
+            y=r_xy_new[..., 1],
             dx=theta[..., 0],
             dy=theta[..., 1],
             z=ray.z + distance,
-            C=Cnew,
-            S2=S2new
+            amplitude=amplitude_new,
+            pathlength=pathlength_new,
+            Q_inv=Q_new,
         )
 
 
@@ -736,31 +790,50 @@ run_to_end_vmapped = jax.jit(jax.vmap(run_to_end, in_axes=(0, None)))
 def circular_input_wave(
     aperture_radius: float,
     waist: float,
-    num_rays: int,
     voltage: float,
+    *,
     amp: float = 1.0,
     phase: float = 0.0,
     z0: float = 0.0,
-    sampling: str = "uniform, fibonacci",
-    offset_xy: Tuple[float, float] = (0.0, 0.0)
+    overlap_factor: float = 2.0,
+    sampling: str = "fibonacci",
+    offset_xy: Tuple[float, float] = (0.0, 0.0),
 ) -> GaussianBeam:
-    if sampling == "fibonacci":
+    """
+    Create a circular distribution of Gaussian beams within a radius R.
+
+    Number of rays is estimated from aperture area, waist, and overlap_factor:
+
+        N ≈ π R^2 / ( (waist / overlap_factor)^2 )
+    """
+
+    # --- estimate number of rays ---
+    d = waist / overlap_factor
+    area = jnp.pi * aperture_radius**2
+    num_rays = int(jnp.ceil(area / (d * d)))
+
+    # --- sample rays in the aperture ---
+    if sampling.lower() == "fibonacci":
         x0, y0 = fibonacci_spiral(num_rays, aperture_radius)
     else:
         x0, y0 = uniform_disk(num_rays, aperture_radius)
+
+    # apply offset
     x0 = x0 + offset_xy[0]
     y0 = y0 + offset_xy[1]
 
-    area = jnp.pi * aperture_radius * aperture_radius
-    amp = uniform_amp_from_area(num_rays, waist, area)
+    # --- amplitude per ray ---
+    # ensures energy in overlap area matches continuous beam
+    amp_per_ray = uniform_amp_from_area(num_rays, waist, area)
 
+    # --- construct Gaussian beams ---
     beam = make_gaussian(
         x=x0,
         y=y0,
         dx=jnp.zeros_like(x0),
         dy=jnp.zeros_like(y0),
-        amp=jnp.ones_like(x0) * amp,
-        phase=jnp.zeros_like(y0) + phase,
+        amp=jnp.ones_like(x0) * amp_per_ray,
+        phase=jnp.ones_like(x0) * phase,
         waist_x=jnp.ones_like(x0) * waist,
         waist_y=jnp.ones_like(y0) * waist,
         rcurv_x=jnp.ones_like(x0) * jnp.inf,

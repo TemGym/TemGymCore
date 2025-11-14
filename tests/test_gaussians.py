@@ -188,25 +188,33 @@ def test_free_space_paraxial_updates_q_inv():
     expected_Q = Q_inv @ jnp.linalg.inv(I2 + dist * Q_inv)
 
     np.testing.assert_allclose(
-        np.asarray(ray_out.S2),
+        np.asarray(ray_out.Q_inv),
         np.asarray(expected_Q),
         rtol=1e-12,
         atol=1e-12,
     )
 
     np.testing.assert_allclose(
-        np.asarray(ray_in.C),
+        np.asarray(ray_in.amplitude),
         np.asarray(1.0 + 0.0j),
         rtol=0.0,
         atol=1e-12,
     )
-    k = 2 * jnp.pi / wavelength
     det_term = jnp.linalg.det(I2 + dist * Q_inv)
-    expected_C = ray_in.C / jnp.sqrt(det_term) * jnp.exp(1j * k * dist)
+    expected_amplitude = ray_in.amplitude / jnp.sqrt(det_term)
 
     np.testing.assert_allclose(
-        np.asarray(ray_out.C),
-        np.asarray(expected_C),
+        np.asarray(ray_out.amplitude),
+        np.asarray(expected_amplitude),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+    expected_pathlength = ray_in.pathlength + dist
+
+    np.testing.assert_allclose(
+        np.asarray(ray_out.pathlength),
+        np.asarray(expected_pathlength),
         rtol=1e-12,
         atol=1e-12,
     )
