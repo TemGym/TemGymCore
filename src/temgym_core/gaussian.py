@@ -293,45 +293,28 @@ class Component:
         L = jnp.logaddexp(logA, -50)
         return self.phase_shift(xy) - 1j * (L / k)
 
-    def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
-        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
-        k = jnp.squeeze(jnp.asarray(ray.k))
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
+        xy_ref = ray.r_xy
+        k = ray.k
 
-        dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, k)
-        r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new = apply_action_delta(ray,
-                                                                                      dS0=dS0,
-                                                                                      dS1=dS1,
-                                                                                      dS2=dS2)
-
-        return ray.derive(
-            x=r_xy_new[..., 0],
-            y=r_xy_new[..., 1],
-            dx=d_xy_new[..., 0],
-            dy=d_xy_new[..., 1],
-            z=ray.z,
-            amplitude=amplitude_new,
-            pathlength=pathlength_new,
-            Q_inv=Q_new,
+        dS0, dS1, dS2 = scalar_grad_hess_complex(
+            self.complex_action, xy_ref, k
         )
 
-    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
-        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
-        if xy_ref.ndim == 1:
-            return self._apply_single(ray)
+        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
+            ray, dS0=dS0, dS1=dS1, dS2=dS2
+        )
 
-        batch = xy_ref.shape[0]
-
-        def infer_axes(arr):
-            if arr is None:
-                return None
-            arr = jnp.asarray(arr)
-            if arr.ndim == 0:
-                return None
-            return 0 if arr.shape[0] == batch else None
-
-        in_axes = jax.tree_map(infer_axes, ray)
-        vmapped = jax.vmap(lambda r: self._apply_single(r), in_axes=in_axes)
-        return vmapped(ray)
+        return ray.derive(
+            x=r_xy[0],
+            y=r_xy[1],
+            dx=d_xy[0],
+            dy=d_xy[1],
+            z=ray.z,
+            amplitude=amplitude,
+            pathlength=pathlength,
+            Q_inv=Q_new,
+        )
 
 
 @jdc.pytree_dataclass(kw_only=True)
@@ -392,15 +375,18 @@ class SeidelLens(Lens):
 
     def complex_action(self, xy: jnp.ndarray, dxy: jnp.ndarray, k: float) -> complex:
         logA = self.log_transmission(xy)
-        L = jnp.logaddexp(logA, -20)
+        L = jnp.logaddexp(logA, -50)
         return self.phase_shift(xy, dxy) - 1j * (L / k)
 
-    def _apply_single(self, ray: GaussianBeam) -> GaussianBeam:
-        xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
-        if xy_ref.ndim != 1:
-            raise ValueError("Component._apply_single expects a scalar GaussianBeam.")
-        d_xy = jnp.asarray(ray.d_xy, dtype=jnp.float64)
-        k = jnp.squeeze(jnp.asarray(ray.k))
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
+        # xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
+        # if xy_ref.ndim != 1:
+        #     raise ValueError("Component._apply_single expects a scalar GaussianBeam.")
+        # d_xy = jnp.asarray(ray.d_xy, dtype=jnp.float64)
+        # k = jnp.squeeze(jnp.asarray(ray.k))
+        xy_ref = ray.r_xy
+        d_xy = ray.d_xy
+        k = ray.k
 
         dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, d_xy, k)
         r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new = apply_action_delta(ray,
@@ -409,10 +395,10 @@ class SeidelLens(Lens):
                                                                                       dS2=dS2)
 
         return ray.derive(
-            x=r_xy_new[..., 0],
-            y=r_xy_new[..., 1],
-            dx=d_xy_new[..., 0],
-            dy=d_xy_new[..., 1],
+            x=r_xy_new[0],
+            y=r_xy_new[1],
+            dx=d_xy_new[0],
+            dy=d_xy_new[1],
             z=ray.z,
             amplitude=amplitude_new,
             pathlength=pathlength_new,
@@ -740,10 +726,10 @@ class FreeSpacePropagator(BaseGaussianPropagator):
         amplitude_new = ray.amplitude * detA**(-0.5)
 
         return ray.derive(
-            x=r_xy_new[..., 0],
-            y=r_xy_new[..., 1],
-            dx=theta[..., 0],
-            dy=theta[..., 1],
+            x=r_xy_new[0],
+            y=r_xy_new[1],
+            dx=theta[0],
+            dy=theta[1],
             z=ray.z + distance,
             amplitude=amplitude_new,
             pathlength=pathlength_new,
