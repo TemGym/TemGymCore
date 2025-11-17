@@ -191,7 +191,13 @@ def apply_action_delta(
     S1_prime = d_xy_old + dS1  # complex (linear)
     Q_prime = Q_old + dS2  # complex (2x2)
 
-    ImQ = jnp.real(0) + jnp.imag(Q_prime)  # ensure complex->real
+    # --- 2. Recentering: solve Im(Q')·dx = -Im(S1') ---
+    # to find the position shift dx that makes Im(S1_new) = 0
+    # This equation comes from differentiating the taylor expansion and 
+    # setting the imaginary part of the differential to zero - i.e we have an equation
+    # that tells us where the gaussian peak is flat, and we solve to find how far we need to shift the co-ordinates to get there,
+    # after a linear imaginary action has been applied.
+    ImQ = jnp.imag(Q_prime)
     ImS1 = jnp.imag(S1_prime)
 
     def solve_dx(args):
@@ -220,7 +226,7 @@ def apply_action_delta(
     S1_new = S1_prime + Q_prime @ dx      # (2,) complex
     Q_new = Q_prime  # (2,2) complex
 
-    # By construction, Im(S1_new) ≈ 0; we keep only the real slope.
+    # By construction after recentering, Im(S1_new) ≈ 0; we keep only the real slope.
     d_xy_new = jnp.real(S1_new)
 
     # --- 4. Split S0_new into phase (pathlength) and amplitude factor ---
@@ -379,11 +385,6 @@ class SeidelLens(Lens):
         return self.phase_shift(xy, dxy) - 1j * (L / k)
 
     def __call__(self, ray: GaussianBeam) -> GaussianBeam:
-        # xy_ref = jnp.asarray(ray.r_xy, dtype=jnp.float64)
-        # if xy_ref.ndim != 1:
-        #     raise ValueError("Component._apply_single expects a scalar GaussianBeam.")
-        # d_xy = jnp.asarray(ray.d_xy, dtype=jnp.float64)
-        # k = jnp.squeeze(jnp.asarray(ray.k))
         xy_ref = ray.r_xy
         d_xy = ray.d_xy
         k = ray.k
@@ -700,22 +701,22 @@ class FreeSpacePropagator(BaseGaussianPropagator):
 
     def __call__(self, ray: "GaussianBeam", distance: float) -> "GaussianBeam":
         # Local aliases
-        theta = ray.d_xy                # (2,) real
-        Q = ray.Q_inv                   # (2,2) complex
+        theta = ray.d_xy  # (2,) real
+        Q = ray.Q_inv  # (2,2) complex
 
         # ABCD for Q_inv
         I = jnp.eye(2, dtype=jnp.complex128)
-        A = I + distance * Q            # (2,2) complex
+        A = I + distance * Q  # (2,2) complex
         invA = jnp.linalg.solve(A.T, I).T
         detA = jnp.linalg.det(A)
 
         # New curvature
         Q_new = Q @ invA
 
-        # Centre translation (ray optics)
+        # Centre translation
         r_xy_new = ray.r_xy + distance * theta
 
-        # Pathlength: keep purely real, add geometric pieces
+        # Pathlength update:
         # + distance (on-axis propagation)
         # + distance * 0.5 * |theta|^2 (obliquity / extra path from tilt)
         theta_sq = jnp.dot(theta, theta)
@@ -751,10 +752,10 @@ def run_iter(
             distance = component.z - r.z
             prop_d = propagator.with_distance(distance)
             r, _out = transform(prop_d)(r)
-            rays.append(r)   # append ray after propagation
+            rays.append(r)
 
         r, _out = transform(component)(r)
-        rays.append(r)       # append ray after applying component
+        rays.append(r)
 
     return rays
 
