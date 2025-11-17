@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import numpy as np
 from numba import njit
@@ -613,14 +614,6 @@ def energy2wavelength(energy: float):
 
 def relativistic_mass_correction(energy: float) -> float:
     return 1 + units._e * energy / (units._me * units._c**2)
-
-
-def uniform_amp_from_overlaps(points: jnp.ndarray, waist: float) -> float:
-    # points: (N,2) centers (your x0,y0)
-    diffs = points[:, None, :] - points[None, :, :]
-    d2 = jnp.sum(diffs**2, axis=-1)
-    K = jnp.exp(-d2 / (2.0 * waist**2))
-    return points.shape[0] / jnp.sum(K)
 
 
 def uniform_amp_from_area(num_gaussians: int, waist: float, area: float) -> float:

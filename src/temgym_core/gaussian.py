@@ -5,6 +5,7 @@ import jax.nn as jnn
 from jax.nn import softplus
 import jax_dataclasses as jdc
 from jax import lax
+from interpax import Interpolator2D
 
 from temgym_core.components import Detector
 from temgym_core.aberrations import (
@@ -35,7 +36,7 @@ from .utils import (
     grid_line_area,
     lattice_points_square_cover,
     uniform_disk,
-    uniform_amp_from_area
+    uniform_amp_from_area,
 )
 
 
@@ -637,6 +638,35 @@ class MagneticPhaseSample(Component):
 
 
 @jdc.pytree_dataclass(kw_only=True)
+class InterpolatedSample(Component):
+    interpolator: Interpolator2D
+    method: jdc.Static[str] = "catmull-rom"
+
+    @classmethod
+    def from_array(cls, sample, x_coords, y_coords, *, z=0.0, method="cubic"):
+        interpolator = Interpolator2D(
+            x=x_coords,
+            y=y_coords,
+            f=sample,
+            method=method,
+            extrap=0.0,
+        )
+        return cls(z=z, interpolator=interpolator, method=method)
+
+    def phase_shift(self, xy):
+        z = self.evaluate_complex(xy)
+        return jnp.imag(jnp.log(z + 1e-30))
+
+    def log_transmission(self, xy):
+        z = self.evaluate_complex(xy)
+        amp = jnp.abs(z)
+        return jnp.log(jnp.maximum(amp, 1e-15))
+
+    def evaluate_complex(self, xy):
+        return self.interpolator(xy[0], xy[1])
+
+
+@jdc.pytree_dataclass(kw_only=True)
 class FourierTransform:
     """
     Meta-component that performs: free-space(f) -> thin lens(f) -> free-space(f),
@@ -848,19 +878,18 @@ def square_input_wave(
     centre_xy: Tuple[float, float] = (0.0, 0.0),
 ) -> GaussianBeam:
 
-    area = aperture_length * aperture_length
+    d = waist / overlap_factor
+    Nx = int(jnp.ceil(aperture_length / d))
+    Ny = int(jnp.ceil(aperture_length / d))
 
-    Lx = Ly = aperture_length
-    d = waist / overlap_factor  # spacing between centers
+    xs = (jnp.arange(Nx) - 0.5 * (Nx - 1)) * d
+    ys = (jnp.arange(Ny) - 0.5 * (Ny - 1)) * d
+    X, Y = jnp.meshgrid(xs, ys, indexing="ij")
+    x0 = X.ravel()
+    y0 = Y.ravel()
 
-    Nx = int(jnp.ceil(Lx / d)) + 1
-    Ny = int(jnp.ceil(Ly / d)) + 1
-    num_rays = Nx * Ny
+    amp_norm = overlap_factor * 2 * jnp.pi
 
-    pts = lattice_points_square_cover(num_rays, aperture_length)
-    x0, y0 = pts[:, 0], pts[:, 1]
-
-    amp = uniform_amp_from_area(num_rays, waist, area)
     x0 = x0 + centre_xy[0]
     y0 = y0 + centre_xy[1]
 
@@ -869,7 +898,7 @@ def square_input_wave(
         y=y0,
         dx=jnp.zeros_like(x0),
         dy=jnp.zeros_like(y0),
-        amp=jnp.ones_like(x0) * amp,
+        amp=jnp.ones_like(x0) * amp / amp_norm,
         phase=jnp.zeros_like(y0) + phase,
         waist_x=jnp.ones_like(x0) * waist,
         waist_y=jnp.ones_like(y0) * waist,
