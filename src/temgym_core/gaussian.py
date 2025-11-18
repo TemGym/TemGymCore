@@ -5,7 +5,7 @@ import jax.nn as jnn
 from jax.nn import softplus
 import jax_dataclasses as jdc
 from jax import lax
-from interpax import Interpolator2D
+from interpax import Interpolator2D, Interpolator3D
 
 from temgym_core.components import Detector
 from temgym_core.aberrations import (
@@ -43,7 +43,7 @@ from .utils import (
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianBeam(Ray):
     amplitude: jnp.ndarray | complex  # complex amplitude + global offsets from propagation
-    Q_inv: jnp.ndarray | complex # 2x2 complex matrix - inverse complex curvature matrix which gets updated by Quadratic actions 
+    Q_inv: jnp.ndarray | complex # 2x2 complex matrix - inverse complex curvature matrix which gets updated by Quadratic action of components
     voltage: jnp.ndarray | float | None = None
 
     def derive(self,
@@ -182,7 +182,7 @@ def apply_action_delta(
     k = ray.k
     r0 = ray.r_xy
 
-    # Old action: S_old(ξ) = S0_old + d_xy·ξ + 1/2 ξᵀ Q ξ
+    # Old action
     S0_old = ray.pathlength  # real
     d_xy_old = ray.d_xy  # (2,) real
     Q_old = ray.Q_inv  # (2,2) complex
@@ -192,9 +192,9 @@ def apply_action_delta(
     S1_prime = d_xy_old + dS1  # complex (linear)
     Q_prime = Q_old + dS2  # complex (2x2)
 
-    # --- 2. Recentering: solve Im(Q')·dx = -Im(S1') ---
+    # Recentering: solve Im(Q')·dx = -Im(S1')
     # to find the position shift dx that makes Im(S1_new) = 0
-    # This equation comes from differentiating the taylor expansion and 
+    # This equation comes from differentiating the taylor expansion and
     # setting the imaginary part of the differential to zero - i.e we have an equation
     # that tells us where the gaussian peak is flat, and we solve to find how far we need to shift the co-ordinates to get there,
     # after a linear imaginary action has been applied.
@@ -220,9 +220,7 @@ def apply_action_delta(
     r_xy_new = r0 + dx
     d_xy_new = ray.d_xy + jnp.real(dS1)
 
-    # --- 3. Shift to η = ξ - dx and collect new coefficients ---
-    # S(ξ) = S0' + S1'·(η+dx) + 1/2 (η+dx)^T Q' (η+dx)
-    #      = S0_new + S1_new·η + 1/2 η^T Q' η
+    # Shift peak and collect new coefficients
     S0_new = S0_prime + S1_prime @ dx + 0.5 * (dx @ (Q_prime @ dx))
     S1_new = S1_prime + Q_prime @ dx      # (2,) complex
     Q_new = Q_prime  # (2,2) complex
@@ -230,12 +228,12 @@ def apply_action_delta(
     # By construction after recentering, Im(S1_new) ≈ 0; we keep only the real slope.
     d_xy_new = jnp.real(S1_new)
 
-    # --- 4. Split S0_new into phase (pathlength) and amplitude factor ---
+    # Split S0_new into phase (pathlength) and amplitude factor
     S0_new_re = jnp.real(S0_new)
     S0_new_im = jnp.imag(S0_new)
 
     pathlength_new = S0_new_re
-    amp_factor = jnp.exp(-k * S0_new_im)   # real attenuation
+    amp_factor = jnp.exp(-k * S0_new_im)
     amplitude_new = ray.amplitude * amp_factor
 
     return r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new
@@ -638,7 +636,7 @@ class MagneticPhaseSample(Component):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class InterpolatedSample(Component):
+class InterpolatedSample2D(Component):
     interpolator: Interpolator2D
     method: jdc.Static[str] = "catmull-rom"
 
@@ -664,6 +662,32 @@ class InterpolatedSample(Component):
 
     def evaluate_complex(self, xy):
         return self.interpolator(xy[0], xy[1])
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class InterpolatedFields3D(Component):
+    interpolator: Interpolator3D
+    method: jdc.Static[str] = "catmull-rom"
+
+    @classmethod
+    def from_array(cls, fields, x_coords, y_coords, z_coords, *, method="cubic"):
+        """
+        fields: array with shape (Nx, Ny, Nz, C)
+                e.g. C=2 for [V, A_z] or [V, generator_mag]
+        """
+        interpolator = Interpolator3D(
+            x=x_coords,
+            y=y_coords,
+            z=z_coords,
+            f=fields,
+            method=method,
+            extrap=0.0,
+        )
+        return cls(interpolator=interpolator, method=method)
+
+    def evaluate(self, xyz):
+        x, y, z = xyz
+        return self.interpolator(x, y, z)  # returns (..., C)
 
 
 @jdc.pytree_dataclass(kw_only=True)
