@@ -591,9 +591,11 @@ def rotation_matrix_x(theta):
 def make_tilted_uniform_cube(
     tilt_x,  # tilt angle [rad] about x-axis
     Nx=128, Ny=128, Nz=128,
-    Lx=100e-9, Ly=100e-9, Lz=100e-9,
+    L=100e-9,  # simulation side length [m]
+    cube_fraction=0.25,  # cube side length as fraction of L
     V0=10.0,  # mean inner potential [V]
     B0=1.0,  # internal B [Tesla]
+    x0=0.0, y0=0.0, z0=0.0,
 ):
     """
     Build a uniform MIP + uniform magnetisation cube, tilted by tilt_x
@@ -604,9 +606,9 @@ def make_tilted_uniform_cube(
         x_coords, y_coords, z_coords: lab coordinates
     """
     # --- lab coordinates ---
-    x_coords = jnp.linspace(-Lx / 2, Lx / 2, Nx)
-    y_coords = jnp.linspace(-Ly / 2, Ly / 2, Ny)
-    z_coords = jnp.linspace(-Lz / 2, Lz / 2, Nz)
+    x_coords = jnp.linspace(-L / 2, L / 2, Nx)
+    y_coords = jnp.linspace(-L / 2, L / 2, Ny)
+    z_coords = jnp.linspace(-L / 2, L / 2, Nz)
 
     Y_lab, X_lab, Z_lab = jnp.meshgrid(y_coords, x_coords, z_coords, indexing="ij")
 
@@ -621,9 +623,9 @@ def make_tilted_uniform_cube(
 
     # --- cube mask in object coordinates ---
     mask = (
-        (jnp.abs(X_obj) <= Lx / 4) &
-        (jnp.abs(Y_obj) <= Ly / 4) &
-        (jnp.abs(Z_obj) <= Lz / 4)
+        (jnp.abs(X_obj) <= L * cube_fraction) &
+        (jnp.abs(Y_obj) <= L * cube_fraction) &
+        (jnp.abs(Z_obj) <= L * cube_fraction)
     )
 
     # --- MIP: uniform V0 inside cube ---
@@ -638,6 +640,11 @@ def make_tilted_uniform_cube(
     A_z_lab = R[2, 2] * A_z_obj
 
     fields = jnp.stack([V, A_z_lab], axis=-1)  # (Nx, Ny, Nz, 2)
+
+    # Shift the cube to (x0, y0, z0)
+    x_coords = x_coords + x0
+    y_coords = y_coords + y0
+    z_coords = z_coords + z0
 
     return fields, x_coords, y_coords, z_coords
 
