@@ -19,22 +19,18 @@ from .ray import Ray
 from typing import (
     Any,
     Callable,
-    Generator,
-    List,
     NamedTuple,
     Sequence,
     Tuple
 )
 
 from ase import units
-
-from .utils import (
+from .constants import (
     energy2wavelength,
-    relativistic_mass_correction,
-    _sym,
+    relativistic_mass_correction
+)
+from .utils import (
     fibonacci_spiral,
-    grid_line_area,
-    lattice_points_square_cover,
     uniform_disk,
     uniform_amp_from_area,
 )
@@ -43,7 +39,7 @@ from .utils import (
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianBeam(Ray):
     amplitude: jnp.ndarray | complex  # complex amplitude + global offsets from propagation
-    Q_inv: jnp.ndarray | complex # 2x2 complex matrix - inverse complex curvature matrix which gets updated by Quadratic action of components
+    Q_inv: jnp.ndarray | complex  # 2x2 complex matrix - inverse complex curvature matrix
     voltage: jnp.ndarray | float | None = None
 
     def derive(self,
@@ -196,7 +192,8 @@ def apply_action_delta(
     # to find the position shift dx that makes Im(S1_new) = 0
     # This equation comes from differentiating the taylor expansion and
     # setting the imaginary part of the differential to zero - i.e we have an equation
-    # that tells us where the gaussian peak is flat, and we solve to find how far we need to shift the co-ordinates to get there,
+    # that tells us where the gaussian peak is flat, and we solve to find how far we need
+    # to shift the coordinates to get there,
     # after a linear imaginary action has been applied.
     ImQ = jnp.imag(Q_prime)
     ImS1 = jnp.imag(S1_prime)
@@ -279,7 +276,7 @@ def scalar_grad_hess_complex(
     hess_im = jax.hessian(im_fn, argnums=diff_argnums)(*full_args)  # (2,2)
 
     grad = grad_re + 1j * grad_im
-    hess = _sym(hess_re + 1j * hess_im)
+    hess = hess_re + 1j * hess_im
     return dS0, grad, hess
 
 
@@ -376,7 +373,12 @@ class SeidelLens(Lens):
         f = self.focal_length
         rho2 = x_a * x_a + y_a * y_a
         object_plane_dist = self.object_plane_dist
-        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, object_plane_dist, coeffs)
+        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a,
+                                                                    y_a,
+                                                                    x_ap,
+                                                                    y_ap,
+                                                                    object_plane_dist,
+                                                                    coeffs)
 
     def complex_action(self, xy: jnp.ndarray, dxy: jnp.ndarray, k: float) -> complex:
         logA = self.log_transmission(xy)
@@ -428,7 +430,12 @@ class DistortedLens(SeidelLens):
         x_ap, y_ap = dxy[..., 0], dxy[..., 1]
         coeffs = SeidelCoeffs(E=self.IsoDist, e=self.AnisoDist)
         object_plane_dist = self.object_plane_dist
-        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a, y_a, x_ap, y_ap, object_plane_dist, coeffs)
+        return -0.5 * rho2 / f - Seidel_aperture_pos_aperture_slope(x_a,
+                                                                    y_a,
+                                                                    x_ap,
+                                                                    y_ap,
+                                                                    object_plane_dist,
+                                                                    coeffs)
 
 
 @jdc.pytree_dataclass
@@ -759,9 +766,9 @@ class FreeSpacePropagator(BaseGaussianPropagator):
         Q = ray.Q_inv  # (2,2) complex
 
         # ABCD for Q_inv
-        I = jnp.eye(2, dtype=jnp.complex128)
-        A = I + distance * Q  # (2,2) complex
-        invA = jnp.linalg.solve(A.T, I).T
+        Identity = jnp.eye(2, dtype=jnp.complex128)
+        A = Identity + distance * Q  # (2,2) complex
+        invA = jnp.linalg.solve(A.T, Identity).T
         detA = jnp.linalg.det(A)
 
         # New curvature
@@ -959,10 +966,11 @@ def rectangular_input_wave(
     Ny = int(jnp.ceil(Ly / d)) + 1
     num_rays = Nx * Ny
 
-    # get a unit-square lattice and scale to the requested rectangle
-    pts = lattice_points_square_cover(num_rays, 1.0)  # unit-square centered points
-    x0 = pts[:, 0] * aperture_width
-    y0 = pts[:, 1] * aperture_height
+    xs = (jnp.arange(Nx) - 0.5 * (Nx - 1)) * d
+    ys = (jnp.arange(Ny) - 0.5 * (Ny - 1)) * d
+    X, Y = jnp.meshgrid(xs, ys, indexing="ij")
+    x0 = X.ravel()
+    y0 = Y.ravel()
 
     amp = uniform_amp_from_area(num_rays, waist, area)
 
@@ -974,64 +982,6 @@ def rectangular_input_wave(
         dx=jnp.zeros_like(x0),
         dy=jnp.zeros_like(y0),
         amp=jnp.ones_like(x0) * amp,
-        phase=jnp.zeros_like(y0) + phase,
-        waist_x=jnp.ones_like(x0) * waist,
-        waist_y=jnp.ones_like(y0) * waist,
-        rcurv_x=jnp.ones_like(x0) * jnp.inf,
-        rcurv_y=jnp.ones_like(y0) * jnp.inf,
-        z=jnp.ones_like(x0) * z0,
-        voltage=jnp.ones_like(x0) * voltage,
-    )
-    return beam
-
-
-def grid_input_wave(waist: float,
-                    voltage: float,
-                    z0: float,
-                    amp: float = 1.0,
-                    phase: float = 0.0,
-                    n_cells: int = 4,
-                    samples_per_line: int = 200,
-                    extent: float = 1.0,
-                    offset_xy: Tuple[float, float] = (0.0, 0.0)) -> GaussianBeam:
-    """
-    Vectorised creation of a square grid figure.
-    Returns:
-      points   : (N, 2) array of xy points for all grid lines (float32)
-      line_ids : (N,) int32 array indicating which line each point belongs to
-                 (0..n_lines-1 are vertical lines, n_lines..2*n_lines-1 are horizontal lines)
-    """
-    n_lines = n_cells + 1  # includes the outer square
-    xs = jnp.linspace(-extent, extent, n_lines, dtype=jnp.float32)  # (n_lines,)
-    ys = xs
-    t = jnp.linspace(-extent, extent, samples_per_line, dtype=jnp.float32)  # (samples,)
-
-    # Vertical lines: x fixed (one per xs), y varies over t
-    vert_x = jnp.broadcast_to(xs[:, None], (n_lines, samples_per_line))   # (n_lines, samples)
-    vert_y = jnp.broadcast_to(t[None, :], (n_lines, samples_per_line))    # (n_lines, samples)
-    vert_pts = jnp.stack([vert_x, vert_y], axis=-1).reshape(-1, 2)        # (n_lines*samples, 2)
-
-    # Horizontal lines: y fixed (one per ys), x varies over t
-    hor_x = jnp.broadcast_to(t[None, :], (n_lines, samples_per_line))     # (n_lines, samples)
-    hor_y = jnp.broadcast_to(ys[:, None], (n_lines, samples_per_line))    # (n_lines, samples)
-    hor_pts = jnp.stack([hor_x, hor_y], axis=-1).reshape(-1, 2)          # (n_lines*samples, 2)
-
-    points = jnp.concatenate([vert_pts, hor_pts], axis=0).astype(jnp.float32)
-
-    x0, y0 = points[:, 0], points[:, 1]
-
-    N = 2 * n_lines * samples_per_line  # total number of gaussians
-    n_lines = n_cells + 1
-    A_obj = grid_line_area(extent, n_cells, waist * 2)  # you choose line_width
-    amps = A_obj / (N * jnp.pi * waist**2)
-
-    x0, y0 = x0 + offset_xy[0], y0 + offset_xy[1]
-    beam = make_gaussian(
-        x=x0,
-        y=y0,
-        dx=jnp.zeros_like(x0),
-        dy=jnp.zeros_like(y0),
-        amp=amps,
         phase=jnp.zeros_like(y0) + phase,
         waist_x=jnp.ones_like(x0) * waist,
         waist_y=jnp.ones_like(y0) * waist,
