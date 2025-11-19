@@ -654,18 +654,20 @@ class InterpolatedSample2D(Component):
             y=y_coords,
             f=sample,
             method=method,
-            extrap=0.0,
+            extrap=1.0,  # Changed from 0.0 to 1.0 for unity transmission outside domain
         )
         return cls(z=z, interpolator=interpolator, method=method)
 
     def phase_shift(self, xy):
         z = self.evaluate_complex(xy)
-        return jnp.imag(jnp.log(z + 1e-30))
+        return jnp.angle(z)
 
     def log_transmission(self, xy):
         z = self.evaluate_complex(xy)
         amp = jnp.abs(z)
-        return jnp.log(jnp.maximum(amp, 1e-15))
+        amp_clamped = jnp.maximum(amp, 1e-15)
+        # If amp ≈ 0, return log(1) = 0 to preserve input amplitude
+        return jnp.where(amp < 1e-15, 0.0, jnp.log(amp_clamped))
 
     def evaluate_complex(self, xy):
         return self.interpolator(xy[0], xy[1])
