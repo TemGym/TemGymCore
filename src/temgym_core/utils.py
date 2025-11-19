@@ -590,11 +590,12 @@ def rotation_matrix_x(theta):
 
 def make_tilted_uniform_cube(
     tilt_x,  # tilt angle [rad] about x-axis
-    Nx=128, Ny=128, Nz=128,
+    N=256,
     L=100e-9,  # simulation side length [m]
     cube_fraction=0.25,  # cube side length as fraction of L
     V0=10.0,  # mean inner potential [V]
-    B0=1.0,  # internal B [Tesla]
+    B0=0.6,  # internal B [Tesla]
+    amplitude_dampening=1.0,  # target amplitude dampening inside the cube.
     x0=0.0, y0=0.0, z0=0.0,
 ):
     """
@@ -602,15 +603,15 @@ def make_tilted_uniform_cube(
     around the lab x-axis.
 
     Returns:
-        fields: (Nx, Ny, Nz, 2) with channels [V, A_z_lab]
+        fields: (Nx, Ny, Nz, 3) with channels [V, A_z_lab, mu]
         x_coords, y_coords, z_coords: lab coordinates
     """
     # --- lab coordinates ---
-    x_coords = jnp.linspace(-L / 2, L / 2, Nx)
-    y_coords = jnp.linspace(-L / 2, L / 2, Ny)
-    z_coords = jnp.linspace(-L / 2, L / 2, Nz)
+    x_coords = jnp.linspace(-L / 2, L / 2, N)
+    y_coords = jnp.linspace(-L / 2, L / 2, N)
+    z_coords = jnp.linspace(-L / 2, L / 2, N)
 
-    Y_lab, X_lab, Z_lab = jnp.meshgrid(y_coords, x_coords, z_coords, indexing="ij")
+    X_lab, Y_lab, Z_lab = jnp.meshgrid(x_coords, y_coords, z_coords, indexing="ij")
 
     # --- rotation: object -> lab ---
     R = rotation_matrix_x(tilt_x)
@@ -639,7 +640,12 @@ def make_tilted_uniform_cube(
     # Since A_obj = (0,0,A_z_obj), we have A_z_lab = R[2,2] * A_z_obj
     A_z_lab = R[2, 2] * A_z_obj
 
-    fields = jnp.stack([V, A_z_lab], axis=-1)  # (Nx, Ny, Nz, 2)
+    # --- Log-amplitude: uniform mu inside cube ---
+    t_cube = 2 * L * cube_fraction
+    mu = jnp.log(amplitude_dampening) / t_cube
+    mu_field = mu * mask
+
+    fields = jnp.stack([V, A_z_lab, mu_field], axis=-1)  # (Nx, Ny, Nz, 3)
 
     # Shift the cube to (x0, y0, z0)
     x_coords = x_coords + x0
@@ -652,6 +658,7 @@ def make_tilted_uniform_cube(
 def project_phase_along_z(fields, z_coords, voltage):
     V = fields[..., 0]    # (Nx, Ny, Nz)
     A_z = fields[..., 1]  # (Nx, Ny, Nz)
+    log_amplitude = fields[..., 2]  # (Nx, Ny, Nz)
 
     dz = z_coords[1] - z_coords[0]
     C_E = interaction_constant_CE(voltage)  # [rad / (V·m)]
@@ -659,4 +666,6 @@ def project_phase_along_z(fields, z_coords, voltage):
     g = C_E * V + e_over_hbar_val * A_z   # generator per unit length
 
     phi = jnp.sum(g, axis=-1) * dz    # integrate over z → shape (Nx, Ny)
-    return phi
+
+    amp = jnp.exp(jnp.sum(log_amplitude, axis=-1) * dz)  # integrate over z → shape (Nx, Ny)
+    return amp, phi
