@@ -27,6 +27,7 @@ from typing import (
 from ase import units
 from .constants import (
     energy2wavelength,
+    wavelength2energy,
     relativistic_mass_correction
 )
 from .utils import (
@@ -36,11 +37,19 @@ from .utils import (
 )
 
 
+LENGTH = {
+    "m": 1.0,
+    "A": 1e-10,
+    "angstrom": 1e-10,
+}
+
+
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianBeam(Ray):
     amplitude: jnp.ndarray | complex  # complex amplitude + global offsets from propagation
     Q_inv: jnp.ndarray | complex  # 2x2 complex matrix - inverse complex curvature matrix
-    voltage: jnp.ndarray | float | None = None
+    voltage: jnp.ndarray | float | None = None  # in eV
+    units: jdc.Static[str] = "m"
 
     def derive(self,
                x: float | jnp.ndarray | None = None,
@@ -75,29 +84,24 @@ class GaussianBeam(Ray):
         return type(self)(**params)
 
     @property
-    def wavelength(self) -> float:
-        return energy2wavelength(self.voltage)
+    def wavelength(self):
+        return self.wavelength_m / LENGTH[self.units]
 
     @property
-    def mass(self) -> float:
+    def mass(self):
         return relativistic_mass_correction(self.voltage) * units._me
 
     @property
-    def sigma(self) -> float:
+    def sigma(self):
+        lam = self.wavelength
         return (
-            2
-            * jnp.pi
-            * self.mass
-            * units.kg
-            * units._e
-            * units.C
-            * self.wavelength
+            2 * jnp.pi * self.mass * units.kg * units._e * units.C * lam
             / (units._hplanck * units.s * units.J) ** 2
         )
 
     @property
-    def k(self) -> float:
-        return 2 * jnp.pi / self.wavelength
+    def k(self):
+        return 2 * jnp.pi / self.wavelength_m
 
 
 def make_gaussian(
@@ -697,7 +701,7 @@ class InterpolatedFields3D(Component):
     def evaluate(self, xyz):
         x, y, z = xyz
         return self.interpolator(x, y, z)  # returns (..., C)
-
+    
 
 @jdc.pytree_dataclass(kw_only=True)
 class FourierTransform:
