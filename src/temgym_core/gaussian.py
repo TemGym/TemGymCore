@@ -27,7 +27,6 @@ from typing import (
 from ase import units
 from .constants import (
     energy2wavelength,
-    wavelength2energy,
     relativistic_mass_correction
 )
 from .utils import (
@@ -36,6 +35,7 @@ from .utils import (
     uniform_amp_from_area,
 )
 
+from .potential import potential_smoothed
 
 LENGTH = {
     "m": 1.0,
@@ -49,7 +49,7 @@ class GaussianBeam(Ray):
     amplitude: jnp.ndarray | complex  # complex amplitude + global offsets from propagation
     Q_inv: jnp.ndarray | complex  # 2x2 complex matrix - inverse complex curvature matrix
     voltage: jnp.ndarray | float | None = None  # in eV
-    units: jdc.Static[str] = "m"
+    wavelength_unit: jdc.Static[str] = "m"
 
     def derive(self,
                x: float | jnp.ndarray | None = None,
@@ -61,6 +61,7 @@ class GaussianBeam(Ray):
                pathlength: float | jnp.ndarray | None = None,
                Q_inv: jnp.ndarray | complex | None = None,
                voltage: float | jnp.ndarray | None = None,
+               wavelength_unit: str | None = None,
                ) -> "GaussianBeam":
 
         return GaussianBeam(
@@ -72,20 +73,19 @@ class GaussianBeam(Ray):
             amplitude=self.amplitude if amplitude is None else amplitude,
             Q_inv=self.Q_inv if Q_inv is None else Q_inv,
             voltage=self.voltage if voltage is None else voltage,
-            pathlength=self.pathlength if pathlength is None else pathlength
+            pathlength=self.pathlength if pathlength is None else pathlength,
+            wavelength_unit=self.wavelength_unit if wavelength_unit is None else wavelength_unit,
         )
 
     def to_vector(self) -> jnp.ndarray:
-        params = {
-            k: jnp.atleast_1d(v)
-            for k, v
-            in dataclasses.asdict(self).items()
-        }
+        params = {}
+        for k, v in dataclasses.asdict(self).items():
+            params[k] = v if isinstance(v, str) or v is None else jnp.atleast_1d(v)
         return type(self)(**params)
 
     @property
     def wavelength(self):
-        return self.wavelength_m / LENGTH[self.units]
+        return energy2wavelength(self.voltage) / LENGTH[self.wavelength_unit]
 
     @property
     def mass(self):
@@ -101,7 +101,7 @@ class GaussianBeam(Ray):
 
     @property
     def k(self):
-        return 2 * jnp.pi / self.wavelength_m
+        return 2 * jnp.pi / self.wavelength
 
 
 def make_gaussian(
@@ -117,9 +117,10 @@ def make_gaussian(
     waist_y=1.0,
     rcurv_x=jnp.inf,
     rcurv_y=jnp.inf,
+    wavelength_unit: str = "m",
 ) -> "GaussianBeam":
 
-    wavelength = energy2wavelength(voltage)
+    wavelength = energy2wavelength(voltage) / LENGTH[wavelength_unit]
 
     x = jnp.atleast_1d(x)
     n_rays = x.shape[0]
@@ -158,6 +159,7 @@ def make_gaussian(
         amplitude=amplitude, Q_inv=Q_inv, voltage=voltage,
         pathlength=jnp.zeros_like(x),
         _one=jnp.ones_like(x),
+        wavelength_unit=wavelength_unit,
     ).to_vector()
 
     if n_rays == 1:
@@ -658,7 +660,7 @@ class InterpolatedSample2D(Component):
             y=y_coords,
             f=sample,
             method=method,
-            extrap=1.0,  # Changed from 0.0 to 1.0 for unity transmission outside domain
+            extrap=1.0, # transmission = 1 outside the sample - no attenuation
         )
         return cls(z=z, interpolator=interpolator, method=method)
 
@@ -670,7 +672,7 @@ class InterpolatedSample2D(Component):
         z = self.evaluate_complex(xy)
         amp = jnp.abs(z)
         amp_clamped = jnp.maximum(amp, 1e-15)
-        # If amp ≈ 0, return log(1) = 0 to preserve input amplitude
+        # If amp = 0, return log(1) = 0 to preserve input amplitude
         return jnp.where(amp < 1e-15, 0.0, jnp.log(amp_clamped))
 
     def evaluate_complex(self, xy):
@@ -701,7 +703,56 @@ class InterpolatedFields3D(Component):
     def evaluate(self, xyz):
         x, y, z = xyz
         return self.interpolator(x, y, z)  # returns (..., C)
-    
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class AtomicPotential():
+    atom_xyz: jnp.ndarray  # atom position
+    element_params: jnp.ndarray
+    cutoff_radius: float  # In angstroms
+
+    def complex_action(self, xy: jnp.ndarray, z: jnp.ndarray, sigma, k: float) -> complex:
+        logA = self.log_transmission(xy)
+        L = jnp.logaddexp(logA, -50)
+        return self.phase_shift(xy, z, sigma, k) - 1j * (L / k)
+
+    def log_transmission(self, xy):
+        return 0.0
+
+    def phase_shift(self, xy: jnp.ndarray, z, sigma, k: float) -> complex:
+        x, y = xy[0], xy[1]
+        r = jnp.sqrt((x - self.atom_xyz[0])**2 + (y - self.atom_xyz[1])**2 +
+                     (z - self.atom_xyz[2])**2)
+        V = potential_smoothed(r, self.element_params, self.cutoff_radius)
+
+        interaction_constant = sigma / k  # Interaction constant is in radians originally, so we divide by k to get metres
+        return -interaction_constant * V
+
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
+        xy_ref = ray.r_xy
+        z = ray.z
+        k = ray.k
+        sigma = ray.sigma
+
+        dS0, dS1, dS2 = scalar_grad_hess_complex(
+            self.complex_action, xy_ref, z, sigma, k
+        )
+
+        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
+            ray, dS0=dS0, dS1=dS1, dS2=dS2
+        )
+
+        return ray.derive(
+            x=r_xy[0],
+            y=r_xy[1],
+            dx=d_xy[0],
+            dy=d_xy[1],
+            z=ray.z,
+            amplitude=amplitude,
+            pathlength=pathlength,
+            Q_inv=Q_new,
+        )
+
 
 @jdc.pytree_dataclass(kw_only=True)
 class FourierTransform:
@@ -843,8 +894,8 @@ def run_to_end(
     return r
 
 
-run_iter_vmapped = jax.jit(jax.vmap(run_iter, in_axes=(0, None)))
-run_to_end_vmapped = jax.jit(jax.vmap(run_to_end, in_axes=(0, None)))
+run_iter_vmapped = jax.jit(jax.vmap(run_iter, in_axes=(0, None)), static_argnums=(3))
+run_to_end_vmapped = jax.jit(jax.vmap(run_to_end, in_axes=(0, None)), static_argnums=(3))
 
 
 def circular_input_wave(
@@ -858,6 +909,7 @@ def circular_input_wave(
     overlap_factor: float = 2.0,
     sampling: str = "fibonacci",
     offset_xy: Tuple[float, float] = (0.0, 0.0),
+    wavelength_unit: str = "m",
 ) -> GaussianBeam:
     """
     Create a circular distribution of Gaussian beams within a radius R.
@@ -900,6 +952,7 @@ def circular_input_wave(
         rcurv_y=jnp.ones_like(y0) * jnp.inf,
         z=jnp.ones_like(x0) * z0,
         voltage=jnp.ones_like(x0) * voltage,
+        wavelength_unit=wavelength_unit,
     )
     return beam
 
@@ -913,6 +966,7 @@ def square_input_wave(
     z0: float = 0.0,
     overlap_factor: float = 2.0,
     centre_xy: Tuple[float, float] = (0.0, 0.0),
+    wavelength_unit: str = "m",
 ) -> GaussianBeam:
 
     d = waist / overlap_factor
@@ -943,6 +997,7 @@ def square_input_wave(
         rcurv_y=jnp.ones_like(y0) * jnp.inf,
         z=jnp.ones_like(x0) * z0,
         voltage=jnp.ones_like(x0) * voltage,
+        wavelength_unit=wavelength_unit,
     )
     return beam
 
@@ -957,6 +1012,7 @@ def rectangular_input_wave(
     z0: float = 0.0,
     overlap_factor: float = 2.0,
     centre_xy: Tuple[float, float] = (0.0, 0.0),
+    wavelength_unit: str = "m",
 ) -> GaussianBeam:
     """
     Create a rectangular array of Gaussian rays covering a rectangle of given
@@ -995,5 +1051,6 @@ def rectangular_input_wave(
         rcurv_y=jnp.ones_like(y0) * jnp.inf,
         z=jnp.ones_like(x0) * z0,
         voltage=jnp.ones_like(x0) * voltage,
+        wavelength_unit=wavelength_unit,
     )
     return beam
