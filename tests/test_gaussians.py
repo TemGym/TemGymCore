@@ -19,7 +19,6 @@ from temgym_core.gaussian import (
 from temgym_core.components import Detector
 
 from temgym_core.utils import (
-    energy2wavelength,
     fresnel_fft_2d,
     zero_phase,
     make_aperture,
@@ -27,6 +26,7 @@ from temgym_core.utils import (
     fresnel_lens_imaging_solution,
 )
 
+from temgym_core.constants import energy2wavelength
 from temgym_core.evaluate import evaluate_gaussians_for
 from temgym_core.transfer_matrices import calculate_z1_and_z2_from_M_and_f
 

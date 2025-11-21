@@ -1,18 +1,16 @@
 import jax.numpy as jnp
 import jax
-from jax.scipy.special import bessel_jn
-
-
-def J0(x):
-    # returns J_0(x)
-    return bessel_jn(x, v=0)[0]
+from scipy.special import j0
+from jax.scipy.integrate import trapezoid
+from scipy.integrate import simpson
+from scipy.special import kn
 
 # Si parameters as JAX array
 Si = jnp.array([
-    [ 2.87189142611612, -2.06173501195173,  2.17114024204478,
+    [2.87189142611612, -2.06173501195173,  2.17114024204478,
      -0.0663073633058801, 0.00301070709670513],
-    [ 5.08487103642989,  0.429178185305126, 0.366485434192162,
-      0.119710611296903, 0.0143994536128397],
+    [5.08487103642989,  0.429178185305126, 0.366485434192162,
+    0.119710611296903, 0.0143994536128397],
 ])
 
 
@@ -24,6 +22,58 @@ def potential(r, p):
         p[0, 3] * (2.0 / (p[1, 3] * r) + 1.0) * jnp.exp(-p[1, 3] * r) +
         p[0, 4] * (2.0 / (p[1, 4] * r) + 1.0) * jnp.exp(-p[1, 4] * r)
 )
+
+
+def projected_potential(r, p):
+    v = 2 * (
+        2 * p[0][:, None] / p[1][:, None] * kn(0, r[None] * p[1][:, None])
+        + p[0][:, None] * r[None] * kn(1, r[None] * p[1][:, None])
+    ).sum(0)
+    return v.astype(jnp.float32)
+
+
+def scattering_factor(k2, p):
+    return (
+        (p[0, 0] * (2.0 + p[1, 0] * k2) / (1.0 + p[1, 0] * k2) ** 2)
+        + (p[0, 1] * (2.0 + p[1, 1] * k2) / (1.0 + p[1, 1] * k2) ** 2)
+        + (p[0, 2] * (2.0 + p[1, 2] * k2) / (1.0 + p[1, 2] * k2) ** 2)
+        + (p[0, 3] * (2.0 + p[1, 3] * k2) / (1.0 + p[1, 3] * k2) ** 2)
+        + (p[0, 4] * (2.0 + p[1, 4] * k2) / (1.0 + p[1, 4] * k2) ** 2)
+    )
+
+
+def projected_scattering_factor(k2, p):
+    pi = jnp.array(jnp.pi)
+    pi2 = jnp.array(jnp.pi**2)
+    k2 = 4 * pi2 * k2
+    f = (
+        8
+        * pi
+        * (
+            (
+                p[0, 0] / p[1, 0] / (k2 + p[1, 0] ** 2)
+                + p[0, 0] * p[1, 0] / (k2 + p[1, 0] ** 2) ** 2
+            )
+            + (
+                p[0, 1] / p[1, 1] / (k2 + p[1, 1] ** 2)
+                + p[0, 1] * p[1, 1] / (k2 + p[1, 1] ** 2) ** 2
+            )
+            + (
+                p[0, 2] / p[1, 2] / (k2 + p[1, 2] ** 2)
+                + p[0, 2] * p[1, 2] / (k2 + p[1, 2] ** 2) ** 2
+            )
+            + (
+                p[0, 3] / p[1, 3] / (k2 + p[1, 3] ** 2)
+                + p[0, 3] * p[1, 3] / (k2 + p[1, 3] ** 2) ** 2
+            )
+            + (
+                p[0, 4] / p[1, 4] / (k2 + p[1, 4] ** 2)
+                + p[0, 4] * p[1, 4] / (k2 + p[1, 4] ** 2) ** 2
+            )
+        )
+    )
+    return f
+
 
 # Derivative of potential with respect to r
 dV_dr = lambda r, p: jax.grad(lambda rr: potential(rr, p))(r)
@@ -69,70 +119,78 @@ def potential_smoothed(r, p, r_pix):
     return V_eff
 
 
-def chi_of_b(b, p, r_pix, z_grid, sigma):
-    """
-    b: scalar impact parameter
-    z_grid: 1D array of z points (symmetric around 0)
-    sigma: interaction constant (TEM σ)
-    """
-    # r(z) along straight line at impact parameter b
-    r = jnp.sqrt(b**2 + z_grid**2)
-
-    # V(r) along the trajectory
-    V_line = potential_smoothed(r, p, r_pix)
-
-    # z-integration (simple trapezoidal rule)
-    dz = z_grid[1] - z_grid[0]
-    # manual trapezoid to be 100% JAX-core friendly
-    trap = dz * (0.5 * (V_line[0] + V_line[-1]) + jnp.sum(V_line[1:-1]))
-
-    chi = sigma * trap
+def chi_of_b(b, p, sigma):
+    V = projected_potential(b, p)
+    chi = sigma * V
     return chi
 
 
 chi_of_b_vmap = jax.vmap(chi_of_b, in_axes=(0, None, None, None, None))
 
 
-def glauber_amplitude(q, k, p, r_pix,
-                      b_max, nb,
-                      z_max, nz,
-                      sigma):
+def glauber_amplitude_radial(q, k, b_grid, Gamma_b):
     """
-    q: scalar |q|
+    Core radial Hankel integral used in all cases:
+
+        f(q) = i k ∫_0^∞ db  b J0(q b) Γ(b)
+
+    q:       scalar |q|
+    k:       incident wavenumber
+    b_grid:  1D jnp array of b values (0 ... b_max)
+    Gamma_b: 1D jnp array Γ(b) = 1 - exp(i χ(b)) on the same grid
+    """
+    # SciPy Bessel J0 evaluated on numpy view of b_grid*q
+    J0_eval_np = j0((q * b_grid).astype(float))
+    J0_eval = jnp.asarray(J0_eval_np)
+
+    integrand = b_grid * J0_eval * Gamma_b
+
+    db = b_grid[1] - b_grid[0]
+    f_q = 1j * k * simpson(integrand, dx=db)
+    return f_q
+
+
+def glauber_scattering_amplitude(q,
+                                 k,
+                                 p,
+                                 b_max,
+                                 nb,
+                                 r_cutoff,
+                                 sigma):
+    """
+    q: scalar |q| - scattering angle
     k: incident wavenumber
-    p: Si parameters
-    r_pix: pixel size
+    p: Potential parameters
+    r_cutoff: cutoff region to smooth centre of atom potential with spline
     b_max: max impact parameter
     nb: number of b points
     z_max: max z for line integral
     nz: number of z points
     sigma: interaction constant
     """
-
     # b and z grids
-    b_grid = jnp.linspace(1e-5, b_max, nb)
-    z_grid = jnp.linspace(-z_max, z_max, nz)
+    b_grid = jnp.linspace(r_cutoff, b_max, nb)
 
     # eikonal phase for each b
-    chi_b = chi_of_b_vmap(b_grid, p, r_pix, z_grid, sigma)
+    chi_b = chi_of_b(b_grid, p, sigma)
 
-    # profile function Γ(b) = 1 - exp(i χ(b))
     Gamma_b = 1.0 - jnp.exp(1j * chi_b)
 
-    J0_eval = J0(q * b_grid)
+    # reuse the common radial integral
+    return glauber_amplitude_radial(q, k, b_grid, Gamma_b)
 
 
-    # radial integral: f(q) = i k ∫_0^∞ db b J0(qb) Γ(b)
-    integrand = b_grid * J0_eval * Gamma_b
-    db = b_grid[1] - b_grid[0]
-    trap = db * (0.5 * (integrand[0] + integrand[-1]) + jnp.sum(integrand[1:-1]))
-
-    f_q = 1j * k * trap
-    return f_q
-
-
-# Vectorize over multiple q if needed:
-glauber_amplitude_vmap = jax.vmap(
-    glauber_amplitude,
-    in_axes=(0, None, None, None, None, None, None, None, None),
-)
+def glauber_scattering_amplitude_many_q(q_array,
+                                        k,
+                                        p,
+                                        b_max,
+                                        nb,
+                                        r_cutoff,
+                                        sigma):
+    """
+    Convenience wrapper for an array of q values (no vmap, just a loop).
+    """
+    f_list = []
+    for q in q_array:
+        f_list.append(glauber_scattering_amplitude(float(q), k, p, b_max, nb, r_cutoff, sigma))
+    return jnp.stack(f_list)
