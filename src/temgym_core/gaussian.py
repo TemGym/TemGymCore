@@ -1054,3 +1054,73 @@ def rectangular_input_wave(
         wavelength_unit=wavelength_unit,
     )
     return beam
+
+
+def probe_input_wave(
+    waist: float,
+    voltage: float,
+    semi_angle: float,
+    amp: float = 1.0,
+    phase: float = 0.0,
+    phase_space_overlap: float = 2.0,
+    z0: float = 0.0,
+    centre_xy: Tuple[float, float] = (0.0, 0.0),
+    wavelength_unit: str = "m",
+) -> GaussianBeam:
+    """
+    Create a probe wave where all rays originate from a single spatial point
+    but have a uniform distribution of angles within a cone defined by `semi_angle`.
+
+    This is effectively the Fourier transform of the `circular_input_wave`:
+    instead of spatial spread with zero angle, we have zero spatial spread
+    with angular spread.
+    """
+    # Calculate wavelength to determine angular spacing
+    wavelength = energy2wavelength(voltage) / LENGTH[wavelength_unit]
+
+    # Angular divergence of a single Gaussian ray with the given waist
+    theta_div = wavelength / (jnp.pi * waist)
+
+    # Spacing in angle space
+    d_theta = theta_div / phase_space_overlap
+
+    # Estimate number of rays needed to cover the solid angle
+    # Area in angle space ≈ π * semi_angle^2
+    # Area of one ray in angle space ≈ d_theta^2
+    area_angle = jnp.pi * semi_angle**2
+    num_rays = int(jnp.ceil(area_angle / (d_theta**2)))
+
+    # Sample angles uniformly in a disk of radius `semi_angle`
+    # We use the same spiral generator but interpret the outputs as angles (dx, dy)
+    dx, dy = fibonacci_spiral(num_rays, semi_angle)
+
+    # All rays start at the same spatial position
+    x0 = jnp.ones_like(dx) * centre_xy[0]
+    y0 = jnp.ones_like(dy) * centre_xy[1]
+
+    # Amplitude scaling
+    # Total power should be conserved.
+    # If we sum coherent Gaussians with different angles at the same point,
+    # the interference is complex. For incoherent summation or simple tiling,
+    # we often scale by 1/N or 1/sqrt(N).
+    # Here we use a similar heuristic to uniform_amp_from_area but for angles.
+    # amp_per_ray = amp / jnp.sqrt(num_rays) * (some_overlap_factor)
+    # A simple heuristic that often works for "flat" illumination in the far field:
+    amp_per_ray = amp / jnp.sqrt(num_rays) * phase_space_overlap
+
+    beam = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=dx,
+        dy=dy,
+        amp=jnp.ones_like(x0) * amp_per_ray,
+        phase=jnp.ones_like(x0) * phase,
+        waist_x=jnp.ones_like(x0) * waist,
+        waist_y=jnp.ones_like(y0) * waist,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
+        z=jnp.ones_like(x0) * z0,
+        voltage=jnp.ones_like(x0) * voltage,
+        wavelength_unit=wavelength_unit,
+    )
+    return beam
