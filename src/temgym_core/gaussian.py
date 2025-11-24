@@ -46,9 +46,10 @@ LENGTH = {
 
 @jdc.pytree_dataclass(kw_only=True)
 class GaussianBeam(Ray):
-    amplitude: jnp.ndarray | complex  # complex amplitude + global offsets from propagation
-    Q_inv: jnp.ndarray | complex  # 2x2 complex matrix - inverse complex curvature matrix
-    voltage: jnp.ndarray | float | None = None  # in eV
+    amplitude: jnp.ndarray | complex
+    Q_inv: jnp.ndarray | complex          # (2,2) complex
+    C3: jnp.ndarray | complex | None = None  # (2,2,2) complex cubic tensor
+    voltage: jnp.ndarray | float | None = None
     wavelength_unit: jdc.Static[str] = "m"
 
     def derive(self,
@@ -60,6 +61,7 @@ class GaussianBeam(Ray):
                amplitude: jnp.ndarray | complex | None = None,
                pathlength: float | jnp.ndarray | None = None,
                Q_inv: jnp.ndarray | complex | None = None,
+               C3: jnp.ndarray | complex | None = None,
                voltage: float | jnp.ndarray | None = None,
                _one: float | jnp.ndarray | None = None,
                wavelength_unit: str | None = None,
@@ -74,6 +76,7 @@ class GaussianBeam(Ray):
             amplitude=self.amplitude if amplitude is None else amplitude,
             pathlength=self.pathlength if pathlength is None else pathlength,
             Q_inv=self.Q_inv if Q_inv is None else Q_inv,
+            C3=self.C3 if C3 is None else C3,
             voltage=self.voltage if voltage is None else voltage,
             _one=self._one if _one is None else _one,
             wavelength_unit=self.wavelength_unit if wavelength_unit is None else wavelength_unit,
@@ -175,35 +178,49 @@ def make_gaussian(
     return ray
 
 
+def contract_C_dx3(C, dx):
+    # scalar: C_{ijk} dx_i dx_j dx_k
+    return jnp.einsum("ijk,i,j,k->", C, dx, dx, dx)
+
+
+def contract_C_dx2(C, dx):
+    # vector: v_i = C_{ijk} dx_j dx_k
+    return jnp.einsum("ijk,j,k->i", C, dx, dx)
+
+
+def contract_C_dx1(C, dx):
+    # matrix: M_{ij} = C_{ijk} dx_k
+    return jnp.einsum("ijk,k->ij", C, dx)
+
+
 def apply_action_delta(
-    ray,
+    ray: GaussianBeam,
     dS0: complex,
     dS1: jnp.ndarray,
     dS2: jnp.ndarray,
+    dS3: jnp.ndarray,
     tiny: float = 1e-30,
 ):
 
     k = ray.k
     r0 = ray.r_xy
 
-    # Old action
-    S0_old = ray.pathlength  # real
-    d_xy_old = ray.d_xy  # (2,) real
-    Q_old = ray.Q_inv  # (2,2) complex
+    # Old action coeffs
+    S0_old = ray.pathlength            # real
+    d_xy_old = ray.d_xy                # (2,) real
+    Q_old = ray.Q_inv                  # (2,2) complex
+    C_old = ray.C3
+    if C_old is None:
+        C_old = jnp.zeros((2, 2, 2), dtype=Q_old.dtype)
 
-    # New action before recentering:
-    S0_prime = S0_old + dS0  # complex
-    S1_prime = d_xy_old + dS1  # complex (linear)
-    Q_prime = Q_old + dS2  # complex (2x2)
+    # New action before recentering (still expanded around r0):
+    S0_prime = S0_old + dS0            # complex
+    S1_prime = d_xy_old + dS1          # (2,) complex
+    Q_prime  = Q_old + dS2             # (2,2) complex
+    C_prime  = C_old + dS3             # (2,2,2) complex
 
-    # Recentering: solve Im(Q')·dx = -Im(S1')
-    # to find the position shift dx that makes Im(S1_new) = 0
-    # This equation comes from differentiating the taylor expansion and
-    # setting the imaginary part of the differential to zero - i.e we have an equation
-    # that tells us where the gaussian peak is flat, and we solve to find how far we need
-    # to shift the coordinates to get there,
-    # after a linear imaginary action has been applied.
-    ImQ = jnp.imag(Q_prime)
+    # Recentering: we still use the quadratic-only condition
+    ImQ  = jnp.imag(Q_prime)
     ImS1 = jnp.imag(S1_prime)
 
     def solve_dx(args):
@@ -223,14 +240,33 @@ def apply_action_delta(
     )
 
     r_xy_new = r0 + dx
-    d_xy_new = ray.d_xy + jnp.real(dS1)
 
-    # Shift peak and collect new coefficients
-    S0_new = S0_prime + S1_prime @ dx + 0.5 * (dx @ (Q_prime @ dx))
-    S1_new = S1_prime + Q_prime @ dx      # (2,) complex
-    Q_new = Q_prime  # (2,2) complex
+    # Shift polynomial expansion to the new center = r0 + dx
+    # using the exact cubic polynomial formulas:
 
-    # By construction after recentering, Im(S1_new) ≈ 0; we keep only the real slope.
+    # Scalar term:
+    S0_new = (
+        S0_prime
+        + S1_prime @ dx
+        + 0.5 * (dx @ (Q_prime @ dx))
+        + (1.0 / 6.0) * contract_C_dx3(C_prime, dx)
+    )
+
+    # Linear term:
+    S1_new = (
+        S1_prime
+        + Q_prime @ dx
+        + 0.5 * contract_C_dx2(C_prime, dx)
+    )   # (2,) complex
+
+    # Quadratic term (Hessian at new center):
+    Q_new = Q_prime + contract_C_dx1(C_prime, dx)  # (2,2) complex
+
+    # Cubic term: invariant under shift for a pure cubic polynomial
+    C_new = C_prime
+
+    # By construction (neglecting cubic in the solve) Im(S1_new) ≈ small but not exactly 0.
+    # We still take the real part as the slope.
     d_xy_new = jnp.real(S1_new)
 
     # Split S0_new into phase (pathlength) and amplitude factor
@@ -241,51 +277,51 @@ def apply_action_delta(
     amp_factor = jnp.exp(-k * S0_new_im)
     amplitude_new = ray.amplitude * amp_factor
 
-    return r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new
+    return r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new, C_new
 
-
-def scalar_grad_hess_complex(
+def taylor_expand(
     fn: Callable[..., complex],
     x: jnp.ndarray,
     *args: Any,
     diff_argnums: int | Sequence[int] = 0,
-) -> Tuple[complex, jnp.ndarray, jnp.ndarray]:
+) -> Tuple[complex, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
-    Return (dS0, grad, hess) where dS0 = fn(x, *args) (complex scalar),
-    grad = ∇_x fn (complex vector), hess = sym(∇^2_x fn) (complex matrix).
+    Return (dS0, grad, hess, third) for a complex scalar fn(x,*args).
 
-    Parameters
-    ----------
-    fn : Callable
-        Function returning a complex scalar. The first argument is differentiated.
-    x : jnp.ndarray
-        Expansion point for the differentiated argument.
-    *args :
-        Additional positional arguments passed to `fn` but treated as constants
-        during differentiation.
-    diff_argnums : int or tuple of ints, default 0
-        Indices of the arguments of `fn` with respect to which gradients and
-        Hessians are taken. By default only the first argument is differentiated.
+    third has shape (2,2,2) and is the fully symmetric 3rd derivative tensor.
     """
     full_args = (x, *args)
 
-    def re_fn(*fn_args):  # scalar real
+    def re_fn(*fn_args):
         return jnp.real(fn(*fn_args))
 
-    def im_fn(*fn_args):  # scalar real
+    def im_fn(*fn_args):
         return jnp.imag(fn(*fn_args))
 
-    # evaluate function at x for dS0
     dS0 = fn(*full_args)
 
-    grad_re = jax.grad(re_fn, argnums=diff_argnums)(*full_args)  # (2,)
-    grad_im = jax.grad(im_fn, argnums=diff_argnums)(*full_args)  # (2,)
-    hess_re = jax.hessian(re_fn, argnums=diff_argnums)(*full_args)  # (2,2)
-    hess_im = jax.hessian(im_fn, argnums=diff_argnums)(*full_args)  # (2,2)
+    grad_re = jax.grad(re_fn, argnums=diff_argnums)(*full_args)
+    grad_im = jax.grad(im_fn, argnums=diff_argnums)(*full_args)
+
+    hess_re = jax.hessian(re_fn, argnums=diff_argnums)(*full_args)
+    hess_im = jax.hessian(im_fn, argnums=diff_argnums)(*full_args)
+
+    # 3rd derivative: jacobian of the Hessian
+    third_re = jax.jacfwd(
+        jax.hessian(re_fn, argnums=diff_argnums),
+        argnums=diff_argnums
+    )(*full_args)  # (2,2,2)
+
+    third_im = jax.jacfwd(
+        jax.hessian(im_fn, argnums=diff_argnums),
+        argnums=diff_argnums
+    )(*full_args)  # (2,2,2)
 
     grad = grad_re + 1j * grad_im
     hess = hess_re + 1j * hess_im
-    return dS0, grad, hess
+    third = third_re + 1j * third_im
+
+    return dS0, grad, hess, third
 
 
 @jdc.pytree_dataclass
@@ -307,12 +343,12 @@ class Component:
         xy_ref = ray.r_xy
         k = ray.k
 
-        dS0, dS1, dS2 = scalar_grad_hess_complex(
+        dS0, dS1, dS2, dS3 = taylor_expand(
             self.complex_action, xy_ref, k
         )
 
-        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
-            ray, dS0=dS0, dS1=dS1, dS2=dS2
+        r_xy, d_xy, amplitude, pathlength, Q_new, C3_new = apply_action_delta(
+            ray, dS0=dS0, dS1=dS1, dS2=dS2, dS3=dS3
         )
 
         return ray.derive(
@@ -324,6 +360,7 @@ class Component:
             amplitude=amplitude,
             pathlength=pathlength,
             Q_inv=Q_new,
+            C3=C3_new,
         )
 
 
@@ -398,11 +435,12 @@ class SeidelLens(Lens):
         d_xy = ray.d_xy
         k = ray.k
 
-        dS0, dS1, dS2 = scalar_grad_hess_complex(self.complex_action, xy_ref, d_xy, k)
-        r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new = apply_action_delta(ray,
+        dS0, dS1, dS2, dS3 = taylor_expand(self.complex_action, xy_ref, d_xy, k)
+        r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new, C3_new = apply_action_delta(ray,
                                                                                       dS0=dS0,
                                                                                       dS1=dS1,
-                                                                                      dS2=dS2)
+                                                                                      dS2=dS2,
+                                                                                      dS3=dS3)
 
         return ray.derive(
             x=r_xy_new[0],
@@ -736,12 +774,12 @@ class AtomicPotential():
         k = ray.k
         sigma = ray.sigma
 
-        dS0, dS1, dS2 = scalar_grad_hess_complex(
+        dS0, dS1, dS2, dS3 = taylor_expand(
             self.complex_action, xy_ref, z, sigma, k
         )
 
-        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
-            ray, dS0=dS0, dS1=dS1, dS2=dS2
+        r_xy, d_xy, amplitude, pathlength, Q_new, C3_new = apply_action_delta(
+            ray, dS0=dS0, dS1=dS1, dS2=dS2, dS3=dS3
         )
 
         return ray.derive(
@@ -753,6 +791,7 @@ class AtomicPotential():
             amplitude=amplitude,
             pathlength=pathlength,
             Q_inv=Q_new,
+            C3=C3_new,
         )
 
 
