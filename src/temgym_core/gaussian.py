@@ -689,6 +689,130 @@ class MagneticPhaseSample(Component):
 
 
 @jdc.pytree_dataclass(kw_only=True)
+class RandomPhaseSample(Component):
+    """
+    Correlated random phase mask to mimic an amorphous support film.
+
+    Parameters
+    ----------
+    strength : float
+        RMS phase amplitude in radians inside the mask.
+    width, height : float
+        Extents of the rectangle (metres) before optional rotation.
+    x0, y0 : float
+        Centre of the phase object in laboratory coordinates (metres).
+    theta : float
+        Rotation angle (radians) applied counter-clockwise.
+    edge_sharpness : float
+        Steepness of the soft-rectangle edges. Higher → sharper.
+    correlation_length : float
+        Sets the typical spatial scale of the random phase variations (metres).
+    eps : float
+        Small constant to keep divisions numerically stable.
+    """
+    strength: float
+    width: float
+    height: float
+    x0: float = 0.0
+    y0: float = 0.0
+    theta: float = 0.0
+    edge_sharpness: float = 5e6
+    correlation_length: float = 2e-9
+    eps: float = 1e-9
+
+    def _local_coords(self, xy):
+        x = xy[0] - self.x0
+        y = xy[1] - self.y0
+        c = jnp.cos(self.theta)
+        s = jnp.sin(self.theta)
+        u = c * x + s * y
+        v = -s * x + c * y
+        return u, v
+
+    def _soft_indicator(self, coord, half_extent):
+        sharp = self.edge_sharpness
+        pos = jax.nn.sigmoid(sharp * (coord + half_extent))
+        neg = jax.nn.sigmoid(sharp * (coord - half_extent))
+        plateau = (
+            jax.nn.sigmoid(sharp * half_extent)
+            - jax.nn.sigmoid(-sharp * half_extent)
+        )
+        plateau = jnp.maximum(plateau, 1e-9)
+        return (pos - neg) / plateau
+
+    # --- correlated pseudo-random field ---
+
+    def _hash(self, i, j):
+        """
+        Simple deterministic hash → pseudo-random in [0, 1).
+        (Value noise style; JAX-compatible.)
+        """
+        return jnp.mod(
+            jnp.sin(127.1 * i + 311.7 * j) * 43758.5453,
+            1.0,
+        )
+
+    def _value_noise(self, x, y):
+        """
+        2D value noise with bilinear interpolation.
+        x, y are continuous coordinates in 'noise-space'.
+        """
+        xi = jnp.floor(x)
+        yi = jnp.floor(y)
+        xf = x - xi
+        yf = y - yi
+
+        n00 = self._hash(xi,     yi)
+        n10 = self._hash(xi + 1, yi)
+        n01 = self._hash(xi,     yi + 1)
+        n11 = self._hash(xi + 1, yi + 1)
+
+        def fade(t):
+            # smoothstep-like interpolation curve
+            return t * t * (3.0 - 2.0 * t)
+
+        u = fade(xf)
+        v = fade(yf)
+
+        nx0 = n00 + u * (n10 - n00)
+        nx1 = n01 + u * (n11 - n01)
+        nxy = nx0 + v * (nx1 - nx0)
+        return nxy  # in [0,1]
+
+    # --- main phase function ---
+
+    def phase_shift(self, xy):
+        """
+        Random, correlated phase shift at point xy = (x, y) in metres.
+        Returns phase in radians.
+        """
+        u, v = self._local_coords(xy)
+
+        hx = 0.5 * self.width
+        hy = 0.5 * self.height
+
+        # Soft rectangular aperture
+        mask = self._soft_indicator(u, hx) * self._soft_indicator(v, hy)
+
+        corr = self.correlation_length + self.eps
+        xn = u / corr
+        yn = v / corr
+
+        # Correlated noise field, roughly zero-mean, O(1) amplitude
+        raw = self._value_noise(xn, yn)
+        noise = (raw - 0.5) * 2.0
+
+        raw2 = self._value_noise(xn * 2.0, yn * 2.0)
+        noise2 = (raw2 - 0.5) * 2.0
+        combined = 0.7 * noise + 0.3 * noise2
+
+        phase = self.strength * mask * combined
+
+        return phase
+
+
+
+@jdc.pytree_dataclass(kw_only=True)
 class InterpolatedSample2D(Component):
     interpolator: Interpolator2D
     method: jdc.Static[str] = "catmull-rom"
@@ -755,6 +879,7 @@ class AtomicPotential():
         logA = self.log_transmission(xy)
         L = jnp.logaddexp(logA, -50)
         return self.phase_shift(xy, z, sigma, k) - 1j * (L / k)
+
 
     def log_transmission(self, xy):
         return 0.0
@@ -1097,70 +1222,3 @@ def rectangular_input_wave(
     return beam
 
 
-# def probe_input_wave(
-#     waist: float,
-#     voltage: float,
-#     semi_angle: float,
-#     amp: float = 1.0,
-#     phase: float = 0.0,
-#     phase_space_overlap: float = 2.0,
-#     z0: float = 0.0,
-#     centre_xy: Tuple[float, float] = (0.0, 0.0),
-#     wavelength_unit: str = "m",
-# ) -> GaussianBeam:
-#     """
-#     Create a probe wave where all rays originate from a single spatial point
-#     but have a uniform distribution of angles within a cone defined by `semi_angle`.
-
-#     This is effectively the Fourier transform of the `circular_input_wave`:
-#     instead of spatial spread with zero angle, we have zero spatial spread
-#     with angular spread.
-#     """
-#     # Calculate wavelength to determine angular spacing
-#     wavelength = energy2wavelength(voltage) / LENGTH[wavelength_unit]
-
-#     # Waist of a single Gaussian ray with the given angular divergence
-#     theta_div = 
-#     # Spacing in angle space
-#     d_theta = theta_div / phase_space_overlap
-
-#     # Estimate number of rays needed to cover the solid angle
-#     # Area in angle space ≈ π * semi_angle^2
-#     # Area of one ray in angle space ≈ d_theta^2
-#     area_angle = jnp.pi * semi_angle**2
-#     num_rays = int(jnp.ceil(area_angle / (d_theta**2)))
-
-#     # Sample angles uniformly in a disk of radius `semi_angle`
-#     # We use the same spiral generator but interpret the outputs as angles (dx, dy)
-#     dx, dy = fibonacci_spiral(num_rays, semi_angle)
-
-#     # All rays start at the same spatial position
-#     x0 = jnp.ones_like(dx) * centre_xy[0]
-#     y0 = jnp.ones_like(dy) * centre_xy[1]
-
-#     # Amplitude scaling
-#     # Total power should be conserved.
-#     # If we sum coherent Gaussians with different angles at the same point,
-#     # the interference is complex. For incoherent summation or simple tiling,
-#     # we often scale by 1/N or 1/sqrt(N).
-#     # Here we use a similar heuristic to uniform_amp_from_area but for angles.
-#     # amp_per_ray = amp / jnp.sqrt(num_rays) * (some_overlap_factor)
-#     # A simple heuristic that often works for "flat" illumination in the far field:
-#     amp_per_ray = amp / jnp.sqrt(num_rays) * phase_space_overlap
-
-#     beam = make_gaussian(
-#         x=x0,
-#         y=y0,
-#         dx=dx,
-#         dy=dy,
-#         amp=jnp.ones_like(x0) * amp_per_ray,
-#         phase=jnp.ones_like(x0) * phase,
-#         waist_x=jnp.ones_like(x0) * waist,
-#         waist_y=jnp.ones_like(y0) * waist,
-#         rcurv_x=jnp.ones_like(x0) * jnp.inf,
-#         rcurv_y=jnp.ones_like(y0) * jnp.inf,
-#         z=jnp.ones_like(x0) * z0,
-#         voltage=jnp.ones_like(x0) * voltage,
-#         wavelength_unit=wavelength_unit,
-#     )
-#     return beam
