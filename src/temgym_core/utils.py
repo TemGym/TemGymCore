@@ -239,7 +239,7 @@ def try_reshape(val, maybe_has_shape):
         return val
 
 
-def FresnelPropagator(u1, L, wavelength, z, xp=np, prefactor=None):
+def FresnelPropagator(u1, L, wavelength, z):
     """Paraxial Fresnel propagation via transfer function (frequency-domain).
 
     Parameters
@@ -264,18 +264,18 @@ def FresnelPropagator(u1, L, wavelength, z, xp=np, prefactor=None):
     dx = L / M
 
     # build frequency coordinates without manual shifting
-    fx = xp.fft.fftfreq(N, d=dx)
-    fy = xp.fft.fftfreq(M, d=dx)
-    FX, FY = xp.meshgrid(fx, fy)
+    fx = jnp.fft.fftfreq(N, d=dx)
+    fy = jnp.fft.fftfreq(M, d=dx)
+    FX, FY = jnp.meshgrid(fx, fy)
 
     # transfer function in unshifted FFT domain
-    H = xp.exp(-1j * xp.pi * wavelength * z * (FX**2 + FY**2))
+    H = jnp.exp(-1j * jnp.pi * wavelength * z * (FX**2 + FY**2))
 
     # forward FFT, multiply, and inverse FFT
-    U1 = xp.fft.fft2(u1)
+    U1 = jnp.fft.fft2(u1)
     U2 = H * U1
-    u2 = xp.fft.ifft2(U2)
-    u2 *= xp.exp(1j * 2 * xp.pi * z / wavelength)        # e^{ikz}
+    u2 = jnp.fft.ifft2(U2)
+    u2 *= jnp.exp(1j * 2 * jnp.pi * z / wavelength)        # e^{ikz}
     return u2
 
 
@@ -290,7 +290,6 @@ def fresnel_fft_2d(X, Y, U, wavelength, z):
     FX, FY = np.meshgrid(fx, fy, indexing="xy")
     H = np.exp(1j*k*z) * np.exp(-1j*np.pi*wavelength*z*(FX**2 + FY**2))
     return np.fft.ifft2(np.fft.fft2(U) * H)
-
 
 
 def FresnelPropagator1D(u1, L, wavelength, z, xp=np, prefactor=None):

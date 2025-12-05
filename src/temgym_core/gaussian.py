@@ -48,7 +48,6 @@ LENGTH = {
 class GaussianBeam(Ray):
     amplitude: jnp.ndarray | complex
     Q_inv: jnp.ndarray | complex          # (2,2) complex
-    C3: jnp.ndarray | complex | None = None  # (2,2,2) complex cubic tensor
     voltage: jnp.ndarray | float | None = None
     wavelength_unit: jdc.Static[str] = "m"
 
@@ -61,7 +60,6 @@ class GaussianBeam(Ray):
                amplitude: jnp.ndarray | complex | None = None,
                pathlength: float | jnp.ndarray | None = None,
                Q_inv: jnp.ndarray | complex | None = None,
-               C3: jnp.ndarray | complex | None = None,
                voltage: float | jnp.ndarray | None = None,
                _one: float | jnp.ndarray | None = None,
                wavelength_unit: str | None = None,
@@ -76,7 +74,6 @@ class GaussianBeam(Ray):
             amplitude=self.amplitude if amplitude is None else amplitude,
             pathlength=self.pathlength if pathlength is None else pathlength,
             Q_inv=self.Q_inv if Q_inv is None else Q_inv,
-            C3=self.C3 if C3 is None else C3,
             voltage=self.voltage if voltage is None else voltage,
             _one=self._one if _one is None else _one,
             wavelength_unit=self.wavelength_unit if wavelength_unit is None else wavelength_unit,
@@ -178,27 +175,11 @@ def make_gaussian(
     return ray
 
 
-def contract_C_dx3(C, dx):
-    # scalar: C_{ijk} dx_i dx_j dx_k
-    return jnp.einsum("ijk,i,j,k->", C, dx, dx, dx)
-
-
-def contract_C_dx2(C, dx):
-    # vector: v_i = C_{ijk} dx_j dx_k
-    return jnp.einsum("ijk,j,k->i", C, dx, dx)
-
-
-def contract_C_dx1(C, dx):
-    # matrix: M_{ij} = C_{ijk} dx_k
-    return jnp.einsum("ijk,k->ij", C, dx)
-
-
 def apply_action_delta(
     ray: GaussianBeam,
     dS0: complex,
     dS1: jnp.ndarray,
     dS2: jnp.ndarray,
-    dS3: jnp.ndarray,
     tiny: float = 1e-30,
 ):
 
@@ -209,15 +190,11 @@ def apply_action_delta(
     S0_old = ray.pathlength            # real
     d_xy_old = ray.d_xy                # (2,) real
     Q_old = ray.Q_inv                  # (2,2) complex
-    C_old = ray.C3
-    if C_old is None:
-        C_old = jnp.zeros((2, 2, 2), dtype=Q_old.dtype)
 
     # New action before recentering (still expanded around r0):
     S0_prime = S0_old + dS0            # complex
     S1_prime = d_xy_old + dS1          # (2,) complex
     Q_prime  = Q_old + dS2             # (2,2) complex
-    C_prime  = C_old + dS3             # (2,2,2) complex
 
     # Recentering: we still use the quadratic-only condition
     ImQ  = jnp.imag(Q_prime)
@@ -249,21 +226,16 @@ def apply_action_delta(
         S0_prime
         + S1_prime @ dx
         + 0.5 * (dx @ (Q_prime @ dx))
-        + (1.0 / 6.0) * contract_C_dx3(C_prime, dx)
     )
 
     # Linear term:
     S1_new = (
         S1_prime
         + Q_prime @ dx
-        + 0.5 * contract_C_dx2(C_prime, dx)
     )   # (2,) complex
 
     # Quadratic term (Hessian at new center):
-    Q_new = Q_prime + contract_C_dx1(C_prime, dx)  # (2,2) complex
-
-    # Cubic term: invariant under shift for a pure cubic polynomial
-    C_new = C_prime
+    Q_new = Q_prime
 
     # By construction (neglecting cubic in the solve) Im(S1_new) ≈ small but not exactly 0.
     # We still take the real part as the slope.
@@ -277,7 +249,8 @@ def apply_action_delta(
     amp_factor = jnp.exp(-k * S0_new_im)
     amplitude_new = ray.amplitude * amp_factor
 
-    return r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new, C_new
+    return r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new
+
 
 def taylor_expand(
     fn: Callable[..., complex],
@@ -306,22 +279,10 @@ def taylor_expand(
     hess_re = jax.hessian(re_fn, argnums=diff_argnums)(*full_args)
     hess_im = jax.hessian(im_fn, argnums=diff_argnums)(*full_args)
 
-    # 3rd derivative: jacobian of the Hessian
-    third_re = jax.jacfwd(
-        jax.hessian(re_fn, argnums=diff_argnums),
-        argnums=diff_argnums
-    )(*full_args)  # (2,2,2)
-
-    third_im = jax.jacfwd(
-        jax.hessian(im_fn, argnums=diff_argnums),
-        argnums=diff_argnums
-    )(*full_args)  # (2,2,2)
-
     grad = grad_re + 1j * grad_im
     hess = hess_re + 1j * hess_im
-    third = third_re + 1j * third_im
 
-    return dS0, grad, hess, third
+    return dS0, grad, hess
 
 
 @jdc.pytree_dataclass
@@ -343,12 +304,12 @@ class Component:
         xy_ref = ray.r_xy
         k = ray.k
 
-        dS0, dS1, dS2, dS3 = taylor_expand(
+        dS0, dS1, dS2 = taylor_expand(
             self.complex_action, xy_ref, k
         )
 
-        r_xy, d_xy, amplitude, pathlength, Q_new, C3_new = apply_action_delta(
-            ray, dS0=dS0, dS1=dS1, dS2=dS2, dS3=dS3
+        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
+            ray, dS0=dS0, dS1=dS1, dS2=dS2
         )
 
         return ray.derive(
@@ -360,7 +321,6 @@ class Component:
             amplitude=amplitude,
             pathlength=pathlength,
             Q_inv=Q_new,
-            C3=C3_new,
         )
 
 
@@ -435,12 +395,11 @@ class SeidelLens(Lens):
         d_xy = ray.d_xy
         k = ray.k
 
-        dS0, dS1, dS2, dS3 = taylor_expand(self.complex_action, xy_ref, d_xy, k)
-        r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new, C3_new = apply_action_delta(ray,
+        dS0, dS1, dS2 = taylor_expand(self.complex_action, xy_ref, d_xy, k)
+        r_xy_new, d_xy_new, amplitude_new, pathlength_new, Q_new = apply_action_delta(ray,
                                                                                       dS0=dS0,
                                                                                       dS1=dS1,
-                                                                                      dS2=dS2,
-                                                                                      dS3=dS3)
+                                                                                      dS2=dS2)
 
         return ray.derive(
             x=r_xy_new[0],
@@ -899,12 +858,12 @@ class AtomicPotential():
         k = ray.k
         sigma = ray.sigma
 
-        dS0, dS1, dS2, dS3 = taylor_expand(
+        dS0, dS1, dS2 = taylor_expand(
             self.complex_action, xy_ref, z, sigma, k
         )
 
-        r_xy, d_xy, amplitude, pathlength, Q_new, C3_new = apply_action_delta(
-            ray, dS0=dS0, dS1=dS1, dS2=dS2, dS3=dS3
+        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
+            ray, dS0=dS0, dS1=dS1, dS2=dS2
         )
 
         return ray.derive(
@@ -916,7 +875,6 @@ class AtomicPotential():
             amplitude=amplitude,
             pathlength=pathlength,
             Q_inv=Q_new,
-            C3=C3_new,
         )
 
 
@@ -1220,5 +1178,53 @@ def rectangular_input_wave(
         wavelength_unit=wavelength_unit,
     )
     return beam
+    
 
+def sample_input_wave(
+    aperture_length: float,
+    waist: float,
+    voltage: float,
+    sample_interpolator: Interpolator2D,
+    amp: float = 1.0,
+    phase: float = 0.0,
+    z0: float = 0.0,
+    overlap_factor: float = 2.0,
+    centre_xy: Tuple[float, float] = (0.0, 0.0),
+    wavelength_unit: str = "m",
+) -> GaussianBeam:
 
+    k = 2*jnp.pi / energy2wavelength(voltage)
+    d = waist / overlap_factor
+    Nx = int(jnp.ceil(aperture_length / d))
+    Ny = int(jnp.ceil(aperture_length / d))
+
+    xs = (jnp.arange(Nx) - 0.5 * (Nx - 1)) * d
+    ys = (jnp.arange(Ny) - 0.5 * (Ny - 1)) * d
+    X, Y = jnp.meshgrid(xs, ys, indexing="ij")
+    x0 = X.ravel()
+    y0 = Y.ravel()
+
+    amp_norm = overlap_factor * 2 * jnp.pi
+
+    x0 = x0 + centre_xy[0]
+    y0 = y0 + centre_xy[1]
+
+    amplitude = jnp.abs(sample_interpolator(x0, y0))
+    phase = jnp.angle(sample_interpolator(x0, y0)) * k
+
+    beam = make_gaussian(
+        x=x0,
+        y=y0,
+        dx=jnp.zeros_like(x0),
+        dy=jnp.zeros_like(y0),
+        amp=amplitude / amp_norm,
+        phase=phase,
+        waist_x=jnp.ones_like(x0) * waist,
+        waist_y=jnp.ones_like(y0) * waist,
+        rcurv_x=jnp.ones_like(x0) * jnp.inf,
+        rcurv_y=jnp.ones_like(y0) * jnp.inf,
+        z=jnp.ones_like(x0) * z0,
+        voltage=jnp.ones_like(x0) * voltage,
+        wavelength_unit=wavelength_unit,
+    )
+    return beam
