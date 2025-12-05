@@ -117,19 +117,16 @@ class Ray(HasParamsMixin):
         return arr  # (N,2)
 
     def __getitem__(self, arg):
-        """Index a vectorized ray to get a single-element Ray.
-
-        Parameters
-        ----------
-        arg : int or slice
-            Index or slice over the vector dimension.
-
-        Returns
-        -------
-        ray : Ray
-            Ray with fields indexed as requested.
-        """
-        params = {k: v[arg] for k, v in dataclasses.asdict(self).items()}
+        params = {}
+        for k, v in dataclasses.asdict(self).items():
+            if isinstance(v, str) or v is None:
+                params[k] = v
+            else:
+                arr = jnp.atleast_1d(v)
+                try:
+                    params[k] = arr[arg]
+                except Exception:
+                    params[k] = arr
         return type(self)(**params)
 
     def to_ray(self):

@@ -216,7 +216,6 @@ def evaluate_gaussians_gpu_kernel_wrapper(
     return fld.reshape(grid.shape)
 
 
-
 evaluate_gaussians_gpu_kernel = jax.jit(
     evaluate_gaussians_gpu_kernel, static_argnames=["tile_pixels", "tile_beams"]
 )
