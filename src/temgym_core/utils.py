@@ -622,10 +622,11 @@ def make_tilted_uniform_cube(
     Z_obj = R_T[2, 0] * X_lab + R_T[2, 1] * Y_lab + R_T[2, 2] * Z_lab
 
     # --- cube mask in object coordinates ---
+    half_side = 0.5 * L * cube_fraction
     mask = (
-        (jnp.abs(X_obj) <= L * cube_fraction) &
-        (jnp.abs(Y_obj) <= L * cube_fraction) &
-        (jnp.abs(Z_obj) <= L * cube_fraction)
+        (jnp.abs(X_obj) <= half_side)
+        & (jnp.abs(Y_obj) <= half_side)
+        & (jnp.abs(Z_obj) <= half_side)
     )
 
     # --- MIP: uniform V0 inside cube ---
@@ -640,7 +641,7 @@ def make_tilted_uniform_cube(
     A_z_lab = R[2, 2] * A_z_obj
 
     # --- Log-amplitude: uniform mu inside cube ---
-    t_cube = 2 * L * cube_fraction
+    t_cube = 2 * half_side
     mu = jnp.log(amplitude_dampening) / t_cube
     mu_field = mu * mask
 
