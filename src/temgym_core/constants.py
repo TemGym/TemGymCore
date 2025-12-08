@@ -90,3 +90,12 @@ def relativistic_mass_correction(energy: float) -> float:
     m_e = units._me
     c = units._c
     return 1 + e * energy / (m_e * c**2)
+
+
+def energy2sigma(energy: float) -> float:
+    lam = energy2wavelength(energy)
+    mass = relativistic_mass_correction(energy) * units._me
+    return (
+        2 * jnp.pi * mass * units.kg * units._e * units.C * lam
+        / (units._hplanck * units.s * units.J) ** 2
+    )
