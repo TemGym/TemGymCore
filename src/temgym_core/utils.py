@@ -630,7 +630,7 @@ def make_tilted_uniform_cube(
     )
 
     # --- MIP: uniform V0 inside cube ---
-    V = V0 * mask
+    V = V0 * mask / (L * cube_fraction)
 
     # --- Magnetic gauge in object frame ---
     # A_obj = (0, 0, B0 * x_obj)
