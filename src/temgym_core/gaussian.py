@@ -154,12 +154,13 @@ def make_gaussian(
 
     amp = _bcast_to_n(amp)
     phase = _bcast_to_n(phase)
-    amplitude = jnp.asarray(amp) * jnp.exp(1j * jnp.asarray(phase))
+    amplitude = jnp.asarray(amp) * jnp.exp(1j * phase)
+    pathlength = jnp.zeros_like(phase) #phase / (2 * jnp.pi) * wavelength
 
     ray = GaussianBeam(
         x=x, y=y, dx=dx, dy=dy, z=z,
         amplitude=amplitude, Q_inv=Q_inv, voltage=voltage,
-        pathlength=jnp.zeros_like(x),
+        pathlength=pathlength,
         _one=jnp.ones_like(x),
         wavelength_unit=wavelength_unit,
     ).to_vector()
@@ -777,13 +778,13 @@ class InterpolatedSample2D(Component):
     method: jdc.Static[str] = "catmull-rom"
 
     @classmethod
-    def from_array(cls, sample, x_coords, y_coords, *, z=0.0, method="cubic"):
+    def from_array(cls, sample, x_coords, y_coords, extrap=1.0, z=0.0, method="cubic"):
         interpolator = Interpolator2D(
             x=x_coords,
             y=y_coords,
             f=sample,
             method=method,
-            extrap=1.0, # transmission = 1 outside the sample - no attenuation
+            extrap=extrap, # transmission = 1 outside the sample - no attenuation
         )
         return cls(z=z, interpolator=interpolator, method=method)
 
@@ -1184,9 +1185,8 @@ def sample_input_wave(
     aperture_length: float,
     waist: float,
     voltage: float,
-    sample_interpolator: Interpolator2D,
-    amp: float = 1.0,
-    phase: float = 0.0,
+    amp_interpolator: Interpolator2D,
+    phase_interpolator: Interpolator2D,
     z0: float = 0.0,
     overlap_factor: float = 2.0,
     centre_xy: Tuple[float, float] = (0.0, 0.0),
@@ -1209,8 +1209,8 @@ def sample_input_wave(
     x0 = x0 + centre_xy[0]
     y0 = y0 + centre_xy[1]
 
-    amplitude = jnp.abs(sample_interpolator(x0, y0))
-    phase = jnp.angle(sample_interpolator(x0, y0)) * k
+    amplitude = amp_interpolator(x0, y0)
+    phase = phase_interpolator(x0, y0)
 
     beam = make_gaussian(
         x=x0,
