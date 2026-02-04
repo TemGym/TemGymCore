@@ -348,10 +348,13 @@ def map_reduce(f, reducer, init, xs, *, batch_size: int | None = None):
             # Map f over each chunk of xs, and reduce each sequentially into init
             acc, _ = lax.scan(map_reduce_chunk, init, scan_xs)
         else:
-            acc, _ = init, None
+            acc = init
 
         if remainder_xs is not None:
             # normal scan-reduce the remainder chunk into acc (could also be vmapped?)
             acc, _ = lax.scan(scan_fn, acc, remainder_xs)
 
-            return acc
+        return acc
+
+    acc, _ = lax.scan(scan_fn, init, xs)
+    return acc
