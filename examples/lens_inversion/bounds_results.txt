@@ -1,0 +1,4 @@
+Default : 3x bounds -> 200 conv, 108 distinct -> 108 sol (3 true)
+Equal   : 3x bounds -> 200 conv, 110 distinct -> 110 sol (3 true)
+Strong  : 3x bounds -> 198 conv, 116 distinct -> 116 sol (3 true)
+Weak    : 3x bounds -> 200 conv, 109 distinct -> 109 sol (2 true)
