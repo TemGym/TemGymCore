@@ -35,6 +35,34 @@ only through $d_1 \cdot A$, which is already measured. This means:
 
 ### The degeneracy manifold
 
+**What is a 1-parameter degenerate manifold?**
+
+It is a continuous family of infinitely many solutions, all related by a
+single scaling parameter $\lambda$. For the two-lens system, if
+$(d_2, d_3, a_2, b_2)$ is a valid solution, then so is any transformed
+solution:
+
+$$d_2 \to \lambda d_2, \quad d_3 \to \lambda d_3, \quad a_2 \to \lambda^{-1}a_2, \quad b_2 \to \lambda^{-1}b_2$$
+
+for any $\lambda > 0$. Each value of $\lambda$ gives a physically distinct
+microscope configuration (different inter-lens distances and focal lengths),
+yet all of them produce **identical intensity measurements** at the detector
+for all sample positions and wobble settings.
+
+**Why do $a_2$ and $b_2$ scale as $\lambda^{-1}$?**
+
+The ABCD matrix elements contain products like $d_3 \phi_2$ that must
+remain **invariant** for measurements to be unchanged. When distances scale
+up ($d_3 \to \lambda d_3$), the optical powers must scale down
+($\phi_2 \to \lambda^{-1}\phi_2$) to keep products like $d_3 \phi_2$
+constant. Since this must hold at **every wobble value** $w$, both the
+constant term $a_2$ and the linear coefficient $b_2$ in
+$\phi_2(w) = a_2 + b_2 w$ must individually scale by $\lambda^{-1}$.
+Physically: longer distances require weaker lenses (smaller optical powers)
+to produce the same imaging effect.
+
+**Correlation structure:**
+
 The spurious solutions form a 1D curve with perfect correlations:
 
 | Parameter pair | Correlation in log-space |
@@ -126,12 +154,19 @@ constraint appended to the residual vector.
 
 ## Strategy 2: Nonlinear Excitation Model ($\phi \propto I^2$)
 
+### Physical basis
+
+For unsaturated electromagnetic lenses, the focal length follows:
+
+$$f = \frac{K \cdot V}{I^2}$$
+
+where $K$ is a geometric constant (lens geometry and number of turns),
+$V$ is accelerating voltage, and $I$ is the excitation current. Therefore
+optical power is:
+
+$$\phi(I, V) = \frac{1}{f} = \frac{I^2}{K \cdot V}$$
+
 ### Concept
-
-For magnetic lenses, the optical power is proportional to the square of
-the excitation current:
-
-$$\phi(I) = \alpha \cdot I^2$$
 
 Expanding around $I_0$ with relative wobble $w = \delta I / I_0$:
 
@@ -188,12 +223,16 @@ in $c$ than in $a$ and $b$, breaking the symmetry.
 
 ## Strategy 3: Two Accelerating Voltages
 
-### Concept
+### Physical basis
 
-For magnetic lenses, the optical power depends inversely on the
-relativistically-corrected accelerating voltage:
+From the same physical law $f = KV/I^2$, optical power at fixed current
+scales inversely with voltage:
 
 $$\phi \propto \frac{1}{V_r}, \quad V_r = V\left(1 + \frac{eV}{2 m_0 c^2}\right)$$
+
+where $V_r$ includes the relativistic correction.
+
+### Concept
 
 Changing the microscope voltage from $V_1$ to $V_2$ scales **all** optical
 powers by a known ratio:
@@ -255,25 +294,30 @@ $(\lambda, \mu)$ pair satisfies both voltage datasets simultaneously.
 
 ## Summary Comparison
 
-| Strategy | Extra information | Extra measurements | Unique? | Robustness |
-|:---------|:-----------------|:-------------------|:--------|:-----------|
-| **1. Known $d_1+d_2+d_3$** | Total column length | None | YES | All 4 regimes |
-| **2. Nonlinear $\phi(I)$** | Physics model ($\phi \propto I^2$) | None (wider wobble) | YES | All 4 regimes |
-| **3. Two voltages** | Second HT measurement | Full repeat at $V_2$ | YES | All 4 regimes |
+| Strategy | Extra information | Extra measurements | Unique? | Robustness | N-lens scaling |
+|:---------|:-----------------|:-------------------|:--------|:-----------|:---------------|
+| **1. Known $d_1+d_2+d_3$** | Total column length | None | YES | All 4 regimes | Insufficient for N≥3 |
+| **2. Nonlinear $\phi(I)$** | Physics model ($\phi \propto I^2$) | None (wider wobble) | YES | All 4 regimes | Likely N≤3 |
+| **3. Two voltages** | Second HT measurement | Full repeat at $V_2$ | YES | All 4 regimes | Any N if $4K \ge 3N+1$ |
+| **4. Nonlinear + Rotation** | $\phi \propto I^2$ and $\theta \propto I$ | Rotation from images | YES | All regimes | **Any N≤6 at one voltage!** |
 
 ### Recommended approach
 
-1. **Start with Strategy 2** (nonlinear model) — it requires no extra
-   measurements and uses well-established magnetic lens physics. Simply use
-   larger wobble amplitudes to make the quadratic term observable.
+1. **For N=2 lenses**: Use Strategy 2 or 4 — both require no extra
+   measurements beyond standard wobble. Strategy 4 adds rotation tracking
+   for extra robustness.
 
-2. **Validate with Strategy 1** — if the total column length is known
-   approximately, check that the solution's $d_1 + d_2 + d_3$ is
-   consistent. This provides an independent cross-check.
+2. **For N=3–6 lenses**: Use **Strategy 4** (nonlinear + rotation at one
+   voltage) — uniquely determines all 2N+1 parameters with K≥5 wobbles.
+   Rotation is measurable from intensity images via feature tracking.
 
-3. **Use Strategy 3 as a fallback** — if the lens response is poorly
-   characterised (e.g., hysteresis, electrostatic contributions), repeating
-   at a different voltage provides model-independent degeneracy breaking.
+3. **For N≥7 lenses or uncertain physics**: Use Strategy 3 (two voltages)
+   — model-independent but requires repeating measurements at second
+   accelerating voltage.
+
+4. **Cross-validation**: If total column length is approximately known,
+   check that fitted $d_1 + d_2 + d_3$ matches specification. Provides
+   independent verification.
 
 ### Key insight
 
@@ -282,6 +326,97 @@ degeneracy: $d_2$, $d_3$, $f_2$, and $b_2$ can trade off continuously
 while preserving all observables. Any single piece of information that
 constrains the absolute scale of the $d_2$–$d_3$–$f_2$ relationship
 breaks this degeneracy and yields a unique solution.
+
+---
+
+## Extension: Image Rotation for N>2 Lenses (NEW)
+
+### The rotation constraint
+
+Magnetic lenses rotate the image by an angle proportional to the axial
+magnetic field integral. For a thin lens approximation:
+
+$$\theta_i \propto I_i$$
+
+where $I_i$ is the lens current. The total rotation at the detector is:
+
+$$\theta_{\text{total}} = \sum_{i=1}^{N} \theta_i$$
+
+In wobble space with $I_i = I_{0,i}(1+w_i)$:
+
+$$\theta_i(w_i) = r_i(1 + w_i)$$
+
+where $r_i$ is the baseline rotation for lens $i$.
+
+**Key observation:** Rotation scales **linearly** with current, while
+optical power scales **quadratically** ($\phi \propto I^2$).
+
+### Why rotation breaks degeneracy
+
+Under the degeneracy transformation:
+- If $\phi_i \to \lambda^{-1}\phi_i$, then $I_i^2 \to \lambda^{-1}I_i^2$
+- Therefore $I_i \to \lambda^{-1/2}I_i$
+- This implies $\theta_i \to \lambda^{-1/2}\theta_i$
+
+The total rotation $\theta_{\text{total}}$ is directly measurable from
+intensity images (via feature tracking or cross-correlation). The
+degeneracy transformation cannot simultaneously satisfy:
+1. The quadratic relationship $\phi \propto I^2$
+2. The linear relationship $\theta \propto I$
+
+across all lenses with a single scaling parameter $\lambda$.
+
+### Combined strategy: Nonlinear + Rotation (ONE voltage!)
+
+When both physics models are enforced simultaneously:
+
+**Reduced parameter count:**
+- Nonlinear constraint $\phi(w) = \phi_0(1+w)^2$ means each lens has
+  only **one free parameter** $\phi_0$ (baseline optical power)
+- Total unknowns: $N+1$ distances + $N$ baseline powers = **2N+1**
+  (not 3N+1!)
+
+**Enhanced constraints:**
+- 2K equations from (A,B) measurements
+- K equations from rotation measurements
+- Total: **3K constraints**
+
+**Uniqueness condition:** $3K \ge 2N+1$
+
+| N lenses | Unknowns (2N+1) | Min wobbles $K \ge \lceil(2N+1)/3\rceil$ | Practical |
+|:---------|:----------------|:-----------------------------------------|:----------|
+| 2 | 5 | K ≥ 2 | K ≥ 3 |
+| 3 | 7 | K ≥ 3 | K ≥ 4 |
+| 4 | 9 | K ≥ 3 | K ≥ 4 |
+| 5 | 11 | K ≥ 4 | K ≥ 5 |
+| 6 | 13 | K ≥ 5 | K ≥ 5 |
+
+**Conclusion:** For N≤6 lenses, combined nonlinear + rotation with
+K≥5 wobble settings at **one voltage** should uniquely determine all
+parameters. This is substantially simpler than requiring two accelerating
+voltages and more robust than known total distance for multi-lens systems.
+
+### Practical advantages
+
+1. **Rotation is measurable from intensity images** — no phase retrieval
+   needed, just feature tracking or cross-correlation
+2. **Model-independent measurement** — unlike optical power which requires
+   calibration, rotation is directly observable
+3. **Scales to many lenses** — two voltages would require $4K \ge 3N+1$,
+   but combined strategy needs only $3K \ge 2N+1$
+4. **Single experimental session** — no need to change accelerating voltage
+   and repeat all measurements
+
+### Implementation notes
+
+- Measure rotation angle from each image by tracking known features or
+  applying 2D cross-correlation between wobbled/non-wobbled images
+- For N=2 lenses, rotation adds 3 equations (one per wobble), making
+  system $3 \times 3 \times 2 = 18$ equations for 5 unknowns
+- Rotation measurements couple different lenses through their sum, breaking
+  residual symmetries that survive in single-voltage nonlinear data alone
+- Can be combined with Strategy 3 (two voltages) for maximum robustness
+  in systems with N≥5 lenses
 
 ---
 
@@ -307,9 +442,33 @@ These are uncertain without additional information:
 
 ## Appendix: Test Code
 
-All numerical results were generated using
-[test_strategies.py](test_strategies.py) with:
+All numerical results for N=2 strategies were generated using
+[test_strategies.py](stashed/test_strategies.py) (now in stashed/) with:
 - `scipy.optimize.least_squares` (Levenberg–Marquardt)
 - 300–500 random starting points per test
 - Solutions grouped by 0.5% relative tolerance
 - Verified across 4 parameter regimes (Default, Equal, Strong, Weak)
+
+**Note:** Many test and analysis scripts have been archived to the
+`stashed/` directory as of February 2026. The core findings remain valid;
+refer to [lens_inversion.md](lens_inversion.md) for the complete
+mathematical treatment including the new rotation constraint analysis.
+
+---
+
+## Document History
+
+**Original analysis (2024-2025):** Identified the 1-parameter degeneracy
+and validated three strategies (known distance, nonlinear model, two
+voltages) for N=2 lens systems through extensive numerical testing.
+
+**Update (February 2026):** 
+- Added mathematical clarification of degeneracy manifold and scaling laws
+- Introduced image rotation $\theta \propto I$ as fourth constraint
+- Showed combined nonlinear + rotation uniquely solves N≤6 systems with
+  **one voltage** (not two!)
+- Parameter count reduction: 3N+1 → 2N+1 when both physics models enforced
+- Practical implication: K≥5 wobbles + rotation tracking sufficient for
+  most practical TEM systems
+- Folder cleanup: archived 19 test/analysis files to `stashed/` for
+  cleaner workspace
