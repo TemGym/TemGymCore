@@ -111,7 +111,9 @@ def rotate_field_fft(field: jnp.ndarray, angle: float) -> jnp.ndarray:
 
 def scale_field_fourier(field: jnp.ndarray, scale: float) -> jnp.ndarray:
     """
-    Scale field by magnification factor using Fourier padding/cropping.
+    Scale field by magnification factor.
+    
+    This maintains the same output shape as input by resampling coordinates.
     
     Parameters
     ----------
@@ -123,43 +125,28 @@ def scale_field_fourier(field: jnp.ndarray, scale: float) -> jnp.ndarray:
     Returns
     -------
     scaled_field : jnp.ndarray
-        Scaled field
+        Scaled field with same shape as input
     """
-    if abs(scale - 1.0) < 1e-10:
-        return field
-    
     ny, nx = field.shape
     
-    # Fourier transform
-    F = jnp.fft.fftshift(jnp.fft.fft2(field))
+    # Create coordinate grids for resampling
+    y = jnp.arange(ny) - ny // 2
+    x = jnp.arange(nx) - nx // 2
+    Y, X = jnp.meshgrid(y, x, indexing='ij')
     
-    # Create new grid
-    new_ny, new_nx = int(ny / scale), int(nx / scale)
+    # Scaled coordinates (inverse for sampling)
+    X_scaled = X / scale
+    Y_scaled = Y / scale
     
-    if scale > 1.0:
-        # Magnify: crop Fourier space
-        cy, cx = ny // 2, nx // 2
-        hy, hx = new_ny // 2, new_nx // 2
-        F_cropped = F[cy - hy:cy + hy, cx - hx:cx + hx]
-        scaled = jnp.fft.ifft2(jnp.fft.ifftshift(F_cropped))
-        
-        # Pad to original size
-        pad_y = (ny - new_ny) // 2
-        pad_x = (nx - new_nx) // 2
-        scaled_field = jnp.pad(scaled, ((pad_y, ny - new_ny - pad_y), (pad_x, nx - new_nx - pad_x)))
-    else:
-        # Shrink: pad Fourier space
-        pad_y = (new_ny - ny) // 2
-        pad_x = (new_nx - nx) // 2
-        F_padded = jnp.pad(F, ((pad_y, new_ny - ny - pad_y), (pad_x, new_nx - nx - pad_x)))
-        scaled = jnp.fft.ifft2(jnp.fft.ifftshift(F_padded))
-        
-        # Crop to original size
-        cy, cx = new_ny // 2, new_nx // 2
-        hy, hx = ny // 2, nx // 2
-        scaled_field = scaled[cy - hy:cy + hy, cx - hx:cx + hx]
+    # Map to indices
+    X_idx = jnp.round(X_scaled + nx // 2).astype(int)
+    Y_idx = jnp.round(Y_scaled + ny // 2).astype(int)
     
-    return scaled_field
+    # Clip and resample
+    X_idx = jnp.clip(X_idx, 0, nx - 1)
+    Y_idx = jnp.clip(Y_idx, 0, ny - 1)
+    
+    return field[Y_idx, X_idx]
 
 
 def fresnel_propagate(
