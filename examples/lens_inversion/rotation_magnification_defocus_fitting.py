@@ -17,18 +17,19 @@ import pickle
 from pathlib import Path
 from functools import partial
 import optax  # For better optimization
+from jax.scipy.ndimage import map_coordinates  # Differentiable interpolation
 
 jax.config.update("jax_enable_x64", True)
 
 
 def rotate_field(field: jnp.ndarray, angle: float) -> jnp.ndarray:
     """
-    Rotate field by given angle.
+    Rotate field by given angle using differentiable interpolation.
     
     Parameters
     ----------
     field : jnp.ndarray
-        Input field
+        Input field (real or complex)
     angle : float
         Rotation angle (radians)
         
@@ -40,8 +41,8 @@ def rotate_field(field: jnp.ndarray, angle: float) -> jnp.ndarray:
     ny, nx = field.shape
     
     # Create coordinate grids
-    y = jnp.arange(ny) - ny // 2
-    x = jnp.arange(nx) - nx // 2
+    y = jnp.arange(ny) - ny / 2.0
+    x = jnp.arange(nx) - nx / 2.0
     Y, X = jnp.meshgrid(y, x, indexing='ij')
     
     # Rotation matrix (inverse rotation for sampling)
@@ -51,20 +52,23 @@ def rotate_field(field: jnp.ndarray, angle: float) -> jnp.ndarray:
     X_rot = cos_a * X + sin_a * Y
     Y_rot = -sin_a * X + cos_a * Y
     
-    # Nearest neighbor resampling
-    X_idx = jnp.round(X_rot + nx // 2).astype(int)
-    Y_idx = jnp.round(Y_rot + ny // 2).astype(int)
+    # Convert back to image coordinates (0 to ny-1, 0 to nx-1)
+    Y_coords = Y_rot + ny / 2.0
+    X_coords = X_rot + nx / 2.0
     
-    # Clip to valid range
-    X_idx = jnp.clip(X_idx, 0, nx - 1)
-    Y_idx = jnp.clip(Y_idx, 0, ny - 1)
-    
-    return field[Y_idx, X_idx]
+    # Use bilinear interpolation for differentiability
+    # For complex fields, interpolate real and imaginary parts separately
+    if jnp.iscomplexobj(field):
+        real_part = map_coordinates(field.real, [Y_coords, X_coords], order=1, mode='constant', cval=0.0)
+        imag_part = map_coordinates(field.imag, [Y_coords, X_coords], order=1, mode='constant', cval=0.0)
+        return real_part + 1j * imag_part
+    else:
+        return map_coordinates(field, [Y_coords, X_coords], order=1, mode='constant', cval=0.0)
 
 
 def scale_field_simple(field: jnp.ndarray, scale: float) -> jnp.ndarray:
     """
-    Scale field by magnification factor using simple resampling.
+    Scale field by magnification factor using differentiable interpolation.
     
     Maintains the same output shape as input.
     
@@ -83,23 +87,25 @@ def scale_field_simple(field: jnp.ndarray, scale: float) -> jnp.ndarray:
     ny, nx = field.shape
     
     # Create coordinate grids for resampling
-    y = jnp.arange(ny) - ny // 2
-    x = jnp.arange(nx) - nx // 2
+    y = jnp.arange(ny) - ny / 2.0
+    x = jnp.arange(nx) - nx / 2.0
     Y, X = jnp.meshgrid(y, x, indexing='ij')
     
     # Scaled coordinates (inverse scaling for sampling)
     X_scaled = X / scale
     Y_scaled = Y / scale
     
-    # Map back to indices
-    X_idx = jnp.round(X_scaled + nx // 2).astype(int)
-    Y_idx = jnp.round(Y_scaled + ny // 2).astype(int)
+    # Convert back to image coordinates
+    Y_coords = Y_scaled + ny / 2.0
+    X_coords = X_scaled + nx / 2.0
     
-    # Clip to valid range
-    X_idx = jnp.clip(X_idx, 0, nx - 1)
-    Y_idx = jnp.clip(Y_idx, 0, ny - 1)
-    
-    return field[Y_idx, X_idx]
+    # Use bilinear interpolation for differentiability
+    if jnp.iscomplexobj(field):
+        real_part = map_coordinates(field.real, [Y_coords, X_coords], order=1, mode='constant', cval=0.0)
+        imag_part = map_coordinates(field.imag, [Y_coords, X_coords], order=1, mode='constant', cval=0.0)
+        return real_part + 1j * imag_part
+    else:
+        return map_coordinates(field, [Y_coords, X_coords], order=1, mode='constant', cval=0.0)
 
 
 def fresnel_propagate(
