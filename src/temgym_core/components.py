@@ -558,3 +558,173 @@ class Biprism(Component):
             dy=dy,
             pathlength=ray.pathlength + dx * x + dy * y,
         )
+
+
+@jdc.pytree_dataclass
+class RotatingLens(Lens):
+    '''Lens that rotates the beam using the rotator component before applying the lens transformation.'''
+    def __init__(self, z: float, focal_length: float, rotation: Degrees):
+        super().__init__(z=z, focal_length=focal_length)
+        self.rotation = rotation
+        self.rotator = Rotator(z=z, angle=rotation)
+
+    def __call__(self, ray: Ray):
+        # First apply the rotation to the ray
+        rotated_ray = self.rotator(ray)
+        # Then apply the lens transformation to the rotated ray
+        return super().__call__(rotated_ray)
+
+
+@jdc.pytree_dataclass
+class ElectromagneticLens(Component):
+    """Electromagnetic lens with Glaser bell model parameterization.
+
+    Models an unsaturated electromagnetic lens where focal length follows
+    f = 1/(Cf·I₀²) and image rotation follows ψ = Kv·I₀. This component
+    applies both the thin-lens refraction and accumulated image rotation
+    in a single physically-motivated transformation.
+
+    Parameters
+    ----------
+    z : float
+        Axial position in metres.
+    I0 : float
+        Nominal excitation current in ampere-turns [AT].
+    Cf : float
+        Lens geometry constant in units [1/(AT²·m)].
+        Encodes bore radius, gap width, pole-piece shape, and coil turns.
+    Kv : float
+        Rotation constant in units [rad/AT].
+        Computed from accelerating voltage via `compute_Kv_from_voltage()`.
+
+    Returns
+    -------
+    Ray
+        Ray with updated slopes (lens action) and rotated position/slopes
+        (image rotation).
+
+    Notes
+    -----
+    **Focal Length:** f = 1/(Cf·I₀²)
+
+    **Image Rotation:** ψ = Kv·I₀ [radians]
+
+    **Physics:**
+    Based on the Glaser bell model for unsaturated electromagnetic lenses.
+    The focal power scales with excitation current squared, and accumulated
+    image rotation is proportional to the integrated magnetic field (∝ I₀).
+
+    **Wobble Experiments:**
+    To model lens excitation variations (wobble), create multiple instances
+    with varied I0 values. For example, with 1% wobble:
+    - `ElectromagneticLens(z, I0=I0_nominal, Cf, Kv)`
+    - `ElectromagneticLens(z, I0=I0_nominal*1.01, Cf, Kv)`
+    - `ElectromagneticLens(z, I0=I0_nominal*1.02, Cf, Kv)`
+
+    **Typical Values:**
+    - I0: 10-10,000 AT (ampere-turns)
+    - Cf: 10⁻⁶ to 10⁻⁴ [1/(AT²·m)]
+    - Kv: ~10⁻⁸ to 10⁻⁷ [rad/AT] for 100-300 kV electrons
+    - Focal length: 1 mm to 10 cm
+    - Rotation per lens: milliradians to radians
+
+    References
+    ----------
+    See examples/lens_inversion/n_lens_inversion.ipynb for parameter
+    identification from measured transfer matrices.
+
+    Examples
+    --------
+    >>> from temgym_core.constants import compute_Kv_from_voltage
+    >>> # 200 kV electron microscope
+    >>> Kv = compute_Kv_from_voltage(200e3)  # rad/AT
+    >>> # Typical objective lens
+    >>> lens = ElectromagneticLens(
+    ...     z=0.0,
+    ...     I0=5000.0,      # ampere-turns
+    ...     Cf=5e-6,        # 1/(AT²·m)
+    ...     Kv=Kv
+    ... )
+    >>> focal_length = lens.focal_length  # metres
+    >>> rotation_rad = lens.rotation_angle  # radians
+    """
+    z: float
+    I0: float
+    Cf: float
+    Kv: float
+
+    @property
+    def focal_length(self) -> float:
+        """Compute focal length from Glaser model: f = 1/(Cf·I₀²).
+
+        Returns
+        -------
+        float
+            Focal length in metres.
+        """
+        return 1.0 / (self.Cf * self.I0**2)
+
+    @property
+    def rotation_angle(self) -> float:
+        """Compute image rotation angle: ψ = Kv·I₀.
+
+        Returns
+        -------
+        float
+            Rotation angle in radians.
+        """
+        return self.Kv * self.I0
+
+    def __call__(self, ray: Ray) -> Ray:
+        """Apply thin-lens refraction followed by image rotation.
+
+        The transformation sequence:
+        1. Paraxial thin-lens: slopes updated by -position/focal_length
+        2. Pathlength updated with paraxial phase term
+        3. Rotation: (x,y,dx,dy) rotated by accumulated angle ψ
+
+        Parameters
+        ----------
+        ray : Ray
+            Input ray state.
+
+        Returns
+        -------
+        Ray
+            Transformed ray with lens and rotation applied.
+        """
+        # Extract ray fields
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        f = self.focal_length
+
+        # Apply thin-lens transformation
+        new_dx = -x / f + dx
+        new_dy = -y / f + dy
+
+        # Update pathlength (paraxial phase)
+        pathlength = ray.pathlength - (x**2 + y**2) / (2.0 * f)
+
+        # Apply image rotation
+        angle = self.rotation_angle
+        cos_a = jnp.cos(angle)
+        sin_a = jnp.sin(angle)
+
+        # Rotate position
+        rot_x = cos_a * x - sin_a * y
+        rot_y = sin_a * x + cos_a * y
+
+        # Rotate slopes
+        rot_dx = cos_a * new_dx - sin_a * new_dy
+        rot_dy = sin_a * new_dx + cos_a * new_dy
+
+        one = ray._one * 1.0
+
+        return Ray(
+            x=rot_x,
+            y=rot_y,
+            dx=rot_dx,
+            dy=rot_dy,
+            _one=one,
+            pathlength=pathlength,
+            z=ray.z,
+        )
