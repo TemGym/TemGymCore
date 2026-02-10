@@ -259,6 +259,24 @@ def refraction_flat(n_1, n_2, xp=sp):
                          dtype=jnp.float64)
 
 
+def rotation_matrix(theta, xp=sp):
+    """
+    Returns the 3x3 ABCD matrix for a rotation by angle theta.
+    """
+    if xp == sp:
+        return xp.Matrix([[sp.cos(theta), sp.sin(theta), 0],
+                          [-sp.sin(theta), sp.cos(theta), 0],
+                          [0, 0, 1]])
+    elif xp == np:
+        c = np.cos(theta)
+        s = np.sin(theta)
+        return np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    elif xp == jnp:
+        c = jnp.cos(theta)
+        s = jnp.sin(theta)
+        return jnp.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float64)
+
+
 def calculate_z1_and_z2_from_M_and_f(M, f):
     """
     Given the magnification M and focal length f,
