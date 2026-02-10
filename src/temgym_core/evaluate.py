@@ -286,19 +286,35 @@ def evaluate_gaussians_jax_scan(
     *,
     batch_size: int | None = 128,
 ):
+    # Extract grid properties before JIT boundary
+    coords = grid.coords
+    shape = grid.shape
+    return _evaluate_gaussians_jax_scan_impl(
+        gaussian_ray, coords, shape, batch_size=batch_size
+    )
+
+
+def _evaluate_gaussians_jax_scan_impl(
+    gaussian_ray,
+    coords: jnp.ndarray,
+    shape: tuple,
+    *,
+    batch_size: int | None = 128,
+):
     r, dr, amp, pathlength, Q_inv, k = _prepare_gaussian_params(gaussian_ray)
-    r2 = grid.coords
+    r2 = coords
     P = r2.shape[0]
     init = jnp.zeros((P,), dtype=jnp.complex128)
 
     xs = (r, dr, amp, pathlength, Q_inv, k)
 
+    @jax.jit
     def f_element(x):
         r_c, dr_c, amp_c, pathlength_c, Q_inv_c, k_c = x
         return _beam_field(r_c, dr_c, amp_c, pathlength_c, Q_inv_c, k_c, det_xy=r2)
 
     out = map_reduce(f_element, jnp.add, init, xs, batch_size=batch_size)
-    return out.reshape(grid.shape)
+    return out.reshape(shape)
 
 
 def evaluate_gaussians_for(
@@ -323,8 +339,10 @@ def evaluate_gaussians_for(
     return total_field.reshape(grid.shape)
 
 
-evaluate_gaussians_jax_scan = jax.jit(evaluate_gaussians_jax_scan,
-                                      static_argnames=("batch_size", "grid"))
+_evaluate_gaussians_jax_scan_impl = jax.jit(
+    _evaluate_gaussians_jax_scan_impl,
+    static_argnames=("batch_size", "shape")
+)
 
 
 def map_reduce(f, reducer, init, xs, *, batch_size: int | None = None):
