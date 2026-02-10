@@ -444,6 +444,208 @@ class DistortedLens(SeidelLens):
                                                                     coeffs)
 
 
+@jdc.pytree_dataclass(kw_only=True)
+class ElectromagneticLens(Component):
+    """Gaussian beam equivalent of electromagnetic lens (Glaser model).
+
+    Models an unsaturated electromagnetic lens where focal length follows
+    f = 1/(Cf·I₀²) and image rotation follows ψ = Kv·I₀. This component
+    applies both the thin-lens refraction (via phase) and coordinate rotation
+    in a single physically-motivated transformation.
+
+    Parameters
+    ----------
+    I0 : float
+        Excitation current [AT] (ampere-turns).
+    Cf : float
+        Lens geometry constant [1/(AT²·m)].
+    Kv : float
+        Rotation constant [rad/AT], computed from voltage.
+    x0 : float, default 0.0
+        Lens centre offset in x [m].
+    y0 : float, default 0.0
+        Lens centre offset in y [m].
+
+    Notes
+    -----
+    **Phase encoding focal length:** φ = -ρ²/(2f)
+
+    The Hessian of this phase gives the focal power. The Taylor expansion
+    and apply_action_delta handle the lens action on the Gaussian.
+
+    **Rotation via coordinate transformation:**
+
+    After the lens acts, the entire beam (position, slope, and curvature
+    matrix Q) is rotated by ψ = Kv·I₀. The Q matrix transforms as
+    Q' = R^T @ Q @ R to maintain correct wavefront curvature under rotation.
+
+    **Consistency with ray optics:**
+
+    This implementation produces the same focal length and rotation as the
+    ray optics ElectromagneticLens component in components.py, ensuring
+    consistency across both pictures.
+
+    References
+    ----------
+    Glaser bell model for electromagnetic lenses.
+    See examples/lens_inversion/n_lens_inversion.ipynb.
+    """
+    I0: float
+    Cf: float
+    Kv: float
+    x0: float = 0.0
+    y0: float = 0.0
+
+    @property
+    def focal_length(self) -> float:
+        """Focal length from Glaser model: f = 1/(Cf·I₀²)."""
+        return 1.0 / (self.Cf * self.I0**2)
+
+    @property
+    def rotation_angle(self) -> float:
+        """Image rotation angle: ψ = Kv·I₀ [rad]."""
+        return self.Kv * self.I0
+
+    def phase_shift(self, xy: jnp.ndarray) -> float:
+        """Phase shift encoding the focal length.
+
+        Parameters
+        ----------
+        xy : jnp.ndarray
+            Position array [x, y] in metres.
+
+        Returns
+        -------
+        float
+            Phase in radians.
+        """
+        x, y = xy[0] - self.x0, xy[1] - self.y0
+        rho2 = x * x + y * y
+        return -0.5 * rho2 / self.focal_length
+
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
+        """Apply lens refraction followed by coordinate rotation.
+
+        The sequence:
+        1. Taylor expand the complex action around the ray center
+        2. Apply lens refraction via apply_action_delta
+        3. Rotate the output (position, slope, curvature matrix Q)
+
+        Parameters
+        ----------
+        ray : GaussianBeam
+            Input Gaussian beam.
+
+        Returns
+        -------
+        GaussianBeam
+            Transformed beam with lens and rotation applied.
+        """
+        # Step 1: Apply lens refraction via phase
+        xy_ref = ray.r_xy
+        k = ray.k
+
+        dS0, dS1, dS2 = taylor_expand(
+            self.complex_action, xy_ref, k
+        )
+
+        r_xy, d_xy, amplitude, pathlength, Q = apply_action_delta(
+            ray, dS0=dS0, dS1=dS1, dS2=dS2
+        )
+
+        # Step 2: Apply coordinate rotation
+        angle = self.rotation_angle
+        cos_a = jnp.cos(angle)
+        sin_a = jnp.sin(angle)
+
+        # Rotation matrix (2×2)
+        R = jnp.array([[cos_a, -sin_a],
+                       [sin_a,  cos_a]], dtype=jnp.float64)
+
+        # Rotate position and slope
+        r_xy_rot = R @ r_xy
+        d_xy_rot = R @ d_xy
+
+        # Rotate curvature matrix: Q' = R^T @ Q @ R
+        # This ensures the Gaussian's wavefront curvature tensor
+        # is transformed correctly under coordinate rotation.
+        Q_rot = R.T @ Q @ R
+
+        return ray.derive(
+            x=r_xy_rot[0],
+            y=r_xy_rot[1],
+            dx=d_xy_rot[0],
+            dy=d_xy_rot[1],
+            z=ray.z,
+            amplitude=amplitude,
+            pathlength=pathlength,
+            Q_inv=Q_rot,
+        )
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class ABCDTransfer(Component):
+    """Apply a general 2x2 ABCD transfer to a Gaussian beam.
+
+    This implements the linear transform:
+        r' = A r + B theta
+        theta' = C r + D theta
+
+    The curvature matrix is updated as:
+        Q' = (C + D Q) (A + B Q)^-1
+
+    Notes
+    -----
+    - A, B, C, D are 2x2 matrices.
+    - Use A for magnification/rotation and B for defocus-like shear.
+    """
+    A: jnp.ndarray
+    B: jnp.ndarray
+    C: jnp.ndarray = dataclasses.field(
+        default_factory=lambda: jnp.zeros((2, 2), dtype=jnp.float64)
+    )
+    D: jnp.ndarray = dataclasses.field(
+        default_factory=lambda: jnp.eye(2, dtype=jnp.float64)
+    )
+
+    def __call__(self, ray: GaussianBeam) -> GaussianBeam:
+        A = jnp.asarray(self.A, dtype=jnp.float64)
+        B = jnp.asarray(self.B, dtype=jnp.float64)
+        C = jnp.asarray(self.C, dtype=jnp.float64)
+        D = jnp.asarray(self.D, dtype=jnp.float64)
+
+        r_xy = ray.r_xy
+        d_xy = ray.d_xy
+
+        def matvec(m, v):
+            return jnp.einsum("ij,...j->...i", m, v)
+
+        def matmat(m, x):
+            return jnp.einsum("ij,...jk->...ik", m, x)
+
+        r_xy_new = matvec(A, r_xy) + matvec(B, d_xy)
+        d_xy_new = matvec(C, r_xy) + matvec(D, d_xy)
+
+        Q = ray.Q_inv
+        denom = A + matmat(B, Q)
+        numer = C + matmat(D, Q)
+        eye = jnp.eye(2, dtype=jnp.complex128)
+        inv_denom = jnp.linalg.solve(jnp.swapaxes(denom, -1, -2), eye)
+        inv_denom = jnp.swapaxes(inv_denom, -1, -2)
+        Q_new = jnp.einsum("...ij,...jk->...ik", numer, inv_denom)
+
+        return ray.derive(
+            x=r_xy_new[..., 0],
+            y=r_xy_new[..., 1],
+            dx=d_xy_new[..., 0],
+            dy=d_xy_new[..., 1],
+            z=ray.z,
+            amplitude=ray.amplitude,
+            pathlength=ray.pathlength,
+            Q_inv=Q_new,
+        )
+
+
 @jdc.pytree_dataclass
 class SigmoidAperture(Component):
     radius: float = 1.0
