@@ -327,22 +327,22 @@ def fibonacci_spiral(
 
 def electron_wavelength(voltage_kev):
     """Calculate relativistic electron wavelength from acceleration voltage.
-    
+
     Parameters
     ----------
     voltage_kev : float
         Acceleration voltage in keV.
-    
+
     Returns
     -------
     wavelength : float
         De Broglie wavelength in metres.
-    
+
     Notes
     -----
-    Uses relativistic formula accounting for electron rest mass energy (511 keV).
+    Uses relativistic formula accounting for rest mass energy (511 keV).
     Formula: λ = h / sqrt(2 * m_e * e * V * (1 + e*V / (2*m_e*c^2)))
-    
+
     Examples
     --------
     >>> wavelength_200kev = electron_wavelength(200.0)
@@ -354,20 +354,20 @@ def electron_wavelength(voltage_kev):
     m_e = 9.1093837015e-31  # Electron rest mass (kg)
     e = 1.602176634e-19  # Elementary charge (C)
     c = 299792458  # Speed of light (m/s)
-    
+
     # Convert keV to Joules
     V_joules = voltage_kev * 1000 * e
-    
+
     # Rest mass energy
     E_rest = m_e * c**2
-    
+
     # Relativistic correction factor
     gamma_factor = 1 + V_joules / E_rest
-    
+
     # Relativistic momentum
     p = np.sqrt(2 * m_e * V_joules * gamma_factor)
-    
+
     # De Broglie wavelength
     wavelength = h / p
-    
+
     return wavelength
