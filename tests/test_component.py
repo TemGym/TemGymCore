@@ -418,9 +418,9 @@ def test_biprism_with_lens_and_prop():
 def test_electromagnetic_lens():
     """Test ElectromagneticLens matches Lens + Rotator composition."""
     # Setup electromagnetic lens parameters
-    Kv = compute_Kv_from_voltage(200e3)  # 200 kV
+    Rc = compute_Kv_from_voltage(200e3)  # 200 kV
     I0 = 5000.0  # ampere-turns
-    Cf = 5e-6    # 1/(AT²·m)
+    Gc = 5e-6    # 1/(AT²·m)
 
     # Create ElectromagneticLens
     em_lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
@@ -456,26 +456,26 @@ def test_electromagnetic_lens():
 
 def test_electromagnetic_lens_properties():
     """Test ElectromagneticLens focal_length and rotation_angle properties."""
-    Kv = 5.3e-4  # rad/AT
+    Rc = 5.3e-4  # rad/AT
     I0 = 5000.0  # AT
-    Cf = 5e-6    # 1/(AT²·m)
+    Gc = 5e-6    # 1/(AT²·m)
 
     lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
 
     # Test focal length: f = 1/(Cf·I0²)
-    expected_f = 1.0 / (Cf * I0**2)
+    expected_f = 1.0 / (Gc * I0**2)
     np.testing.assert_allclose(lens.focal_length, expected_f, rtol=1e-10)
 
     # Test rotation angle: ψ = Kv·I0
-    expected_psi = Kv * I0
+    expected_psi = Rc * I0
     np.testing.assert_allclose(lens.rotation_angle, expected_psi, rtol=1e-10)
 
 
 def test_electromagnetic_lens_zero_rotation():
     """Test ElectromagneticLens with zero rotation (Kv=0) behaves like pure Lens."""
     I0 = 5000.0
-    Cf = 5e-6
-    Kv = 0.0  # No rotation
+    Gc = 5e-6
+    Rc = 0.0  # No rotation
 
     em_lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
     pure_lens = Lens(z=0.0, focal_length=em_lens.focal_length)

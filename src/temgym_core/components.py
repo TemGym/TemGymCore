@@ -525,18 +525,18 @@ class RotatingLens(Component):
 class ElectromagneticLens(GaussianActionComponent):
     z: float
     I0: float
-    Cf: float
-    Kv: float
+    Gc: float  # Geometry constant
+    Rc: float  # Rotation constant
     x0: float = 0.0
     y0: float = 0.0
 
     @property
     def focal_length(self) -> float:
-        return 1.0 / (self.Cf * self.I0**2)
+        return 1.0 / (self.Gc * self.I0**2)
 
     @property
     def rotation_angle(self) -> float:
-        return self.Kv * self.I0
+        return self.Rc * self.I0
 
     def phase_shift(self, xy: jnp.ndarray) -> float:
         x, y = xy[0] - self.x0, xy[1] - self.y0
