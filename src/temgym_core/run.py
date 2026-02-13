@@ -46,7 +46,7 @@ TransformT = Callable[[Union[Component, Source]], Callable[[Ray], tuple[Ray, Any
 
 def _default_propagator_for_ray(ray: Ray):
     if getattr(ray, "ray_family", "ray") == "gaussian":
-        from ._gaussian_core import FreeSpacePropagator
+        from .gaussian import FreeSpacePropagator
 
         return FreeSpacePropagator()
     return FreeSpaceParaxial()
@@ -124,6 +124,84 @@ def run_to_end(
     for _, ray in run_iter(ray, components, propagator=propagator):
         pass
     return ray
+
+
+def _normalize_ray_batch_for_vmap(ray: Ray) -> Ray:
+    x = jnp.asarray(ray.x)
+    batch_size = 1 if x.ndim == 0 else x.shape[0]
+
+    params = {}
+    for key, value in dataclasses.asdict(ray).items():
+        if isinstance(value, str) or value is None:
+            params[key] = value
+            continue
+
+        arr = jnp.asarray(value)
+        if arr.ndim == 0:
+            arr = jnp.broadcast_to(arr, (batch_size,))
+        elif arr.shape[0] == batch_size:
+            pass
+        elif arr.shape[0] == 1 and batch_size > 1:
+            arr = jnp.broadcast_to(arr, (batch_size,) + arr.shape[1:])
+        elif batch_size == 1:
+            arr = jnp.expand_dims(arr, axis=0)
+        else:
+            raise ValueError(
+                f"Incompatible leading dimension for '{key}': "
+                f"expected {batch_size} or 1, got {arr.shape[0]}."
+            )
+        params[key] = arr
+    return type(ray)(**params)
+
+
+def _run_iter_outputs(
+    ray: Ray,
+    components: Sequence[Union[Component, Source]],
+    transform: TransformT = passthrough_transform,
+    propagator: Any | None = None,
+):
+    return tuple(
+        out_ray
+        for _, out_ray in run_iter(
+            ray,
+            components,
+            transform=transform,
+            propagator=propagator,
+        )
+    )
+
+
+_run_iter_vmapped_impl = jax.jit(
+    jax.vmap(_run_iter_outputs, in_axes=(0, None, None, None)),
+    static_argnums=(2, 3),
+)
+
+
+_run_to_end_vmapped_impl = jax.jit(
+    jax.vmap(run_to_end, in_axes=(0, None, None)),
+    static_argnums=(2,),
+)
+
+
+def run_iter_vmapped(
+    ray: Ray,
+    components: Sequence[Union[Component, Source]],
+    transform: TransformT = passthrough_transform,
+    propagator: Any | None = None,
+):
+    """Vectorized run_iter returning only per-step output rays."""
+    ray = _normalize_ray_batch_for_vmap(ray)
+    return _run_iter_vmapped_impl(ray, components, transform, propagator)
+
+
+def run_to_end_vmapped(
+    ray: Ray,
+    components: Sequence[Union[Component, Source]],
+    propagator: Any | None = None,
+) -> Ray:
+    """Vectorized run_to_end over the leading ray axis."""
+    ray = _normalize_ray_batch_for_vmap(ray)
+    return _run_to_end_vmapped_impl(ray, components, propagator)
 
 
 def calculate_derivatives(ray: Ray, model: Sequence[Union[Component, Source]], order: int):
