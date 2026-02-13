@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Sequence, Tuple
 
 import numpy as np
@@ -24,19 +24,133 @@ class PlotParams:
     figsize: Tuple[float, float] = (9.0, 5.0)
     extent_scale: float = 0.7
     label_fontsize: int = 11
+    font_family: str = "DejaVu Sans"
+    text_color: str = "black"
+    tick_color: str = "black"
+    figure_facecolor: str = "white"
+    axes_facecolor: str = "white"
+    grid_major_color: str = "lightgrey"
+    grid_minor_color: str = "#EEEEEE"
+    grid_major_ls: str = "--"
+    grid_minor_ls: str = ":"
+    grid_major_lw: float = 0.5
+    grid_minor_lw: float = 0.5
     ray_color: str = "tab:blue"
     ray_lw: float = 1.2
     ray_alpha: float = 0.8
+    interior_ray_lw: float = 0.7
+    interior_ray_alpha: float = 0.25
+    center_ray_lw: float = 1.0
+    center_ray_alpha: float = 0.45
     fill_color: str = "#87cefa"  # light sky blue
     fill_alpha: float = 0.20
     edge_lw: float = 1.8
+    solid_beam: bool = False
     component_lw: float = 3.0
+    x_padding_frac: float = 0.0
+    component_half_width_frac: float = 0.02
+    show_side_guides: bool = False
+    side_guide_color: str = "#D9D9D9"
+    side_guide_lw: float = 1.0
+    side_guide_ls: str = "--"
+    side_guide_alpha: float = 0.9
     lens_height: float = 1e-5  # relative to figure height
+    auto_lens_height: bool = False
+    lens_height_frac: float = 0.03
     biprism_radius: float = 1e-7  # radius of circle to draw biprism
+
+
+def legacy_beam_plot_params(**overrides) -> PlotParams:
+    """Return a pre-tuned dark plotting style with solid beam rendering."""
+    params = PlotParams(
+        figsize=(6.0, 10.0),
+        extent_scale=0.80,
+        label_fontsize=12,
+        font_family="DejaVu Sans",
+        text_color="#DCE2EA",
+        tick_color="#C6CFDA",
+        figure_facecolor="black",
+        axes_facecolor="black",
+        grid_major_color="#2E3740",
+        grid_minor_color="#1F252C",
+        ray_color="#66EBDC",
+        ray_lw=0.65,
+        ray_alpha=0.28,
+        interior_ray_lw=0.65,
+        interior_ray_alpha=0.30,
+        center_ray_lw=1.0,
+        center_ray_alpha=0.50,
+        fill_color="#7BFFF0",
+        fill_alpha=0.50,
+        edge_lw=1.5,
+        solid_beam=True,
+        component_lw=6.0,
+        x_padding_frac=0.20,
+        component_half_width_frac=0.92,
+        show_side_guides=True,
+        side_guide_color="#DFE4EA",
+        side_guide_lw=1.1,
+        side_guide_ls="--",
+        side_guide_alpha=0.85,
+        lens_height=1e-5,
+        auto_lens_height=True,
+        lens_height_frac=0.03,
+    )
+    unknown = set(overrides) - set(PlotParams.__dataclass_fields__)
+    if unknown:
+        unknown_fmt = ", ".join(sorted(unknown))
+        raise TypeError(f"Unknown PlotParams override(s): {unknown_fmt}")
+    return replace(params, **overrides)
 
 
 def _as_name(obj: object) -> str:
     return type(obj).__name__
+
+
+def _detector_half_width_x(detector: Detector) -> float:
+    # Detector is ShapeYX / ScaleYX, i.e. (y, x). Width in x uses index 1.
+    try:
+        return float(detector.pixel_size[1] * detector.shape[1] / 2.0)
+    except Exception:
+        return float(detector.pixel_size[0] * detector.shape[0] / 2.0)
+
+
+def _style_axes(ax: mpl.axes.Axes, p: PlotParams) -> None:
+    ax.figure.patch.set_facecolor(p.figure_facecolor)
+    ax.set_facecolor(p.axes_facecolor)
+
+    ax.tick_params(axis="both", which="major", labelsize=12, colors=p.tick_color)
+    ax.tick_params(axis="both", which="minor", labelsize=10, colors=p.tick_color)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+
+    ax.grid(color=p.grid_major_color, linestyle=p.grid_major_ls, linewidth=p.grid_major_lw)
+    ax.grid(which="minor", color=p.grid_minor_color, linestyle=p.grid_minor_ls, linewidth=p.grid_minor_lw)
+
+    for label in list(ax.get_xticklabels()) + list(ax.get_yticklabels()):
+        label.set_fontfamily(p.font_family)
+        label.set_color(p.tick_color)
+
+
+def _label_component(
+    ax: mpl.axes.Axes,
+    x: float,
+    z: float,
+    name: str,
+    p: PlotParams,
+    *,
+    zorder: int = 1000,
+) -> None:
+    ax.text(
+        x,
+        z,
+        name,
+        fontsize=p.label_fontsize,
+        va="center",
+        zorder=zorder,
+        color=p.text_color,
+        fontfamily=p.font_family,
+    )
 
 
 def plot_model(
@@ -48,6 +162,7 @@ def plot_model(
     band_mode: str = "fill",  # "fill" (envelope fill) or "lines" (draw lines between rays)
     yscale: str = "linear",   # "linear", "log", or "symlog"
     y_linthresh: float = 1e-6,  # linthresh for symlog
+    include_input_rays: bool = True,
 ):
     """Plot a  schematic of a model (components vs z) with ray bundle.
 
@@ -68,15 +183,22 @@ def plot_model(
         Set y-axis (z) scaling. "log" requires all z>0; otherwise falls back to "symlog".
     y_linthresh : float, default 1e-6
         Linear range around zero used when yscale="symlog".
+    include_input_rays : bool, default True
+        If True, prepend the input ray state so plotting starts at the
+        initial ray z-position instead of the first component step.
 
     Returns
     -------
     fig, ax : matplotlib Figure and Axes
     """
     p = plot_params
+    if rays is None:
+        raise ValueError("plot_model requires `rays` to be provided.")
 
     # Accumulate rays after each step (including propagations)
-    steps = run_iter_vmapped(rays, components)
+    steps = tuple(run_iter_vmapped(rays, components))
+    if include_input_rays:
+        steps = (rays,) + steps
 
     X, Z = _stack_ray_positions(steps)
 
@@ -86,25 +208,31 @@ def plot_model(
             fig, ax = plt.subplots(figsize=p.figsize)
         else:
             fig = ax.figure
+        _style_axes(ax, p)
         return fig, ax
 
     # Determine x extent using both beam and detector width if present
     max_beam_x = float(np.max(np.abs(X)))
-    component_x = max_beam_x * 0.02
     detector_range_x = 0.0
     for c in components:
         if isinstance(c, Detector):
             # Width in x direction
             detector_range_x = max(
                 detector_range_x,
-                float(c.pixel_size[0] * c.shape[0] / 2.0),
+                _detector_half_width_x(c),
             )
-    max_x = max(component_x, detector_range_x)
+    base_max_x = max(max_beam_x, detector_range_x, np.finfo(float).eps)
+    max_x = base_max_x * (1.0 + max(0.0, p.x_padding_frac))
+    component_x = max_x * float(np.clip(p.component_half_width_frac, 0.0, 1.0))
 
     # z limits and ticks
     comp_zs = [float(getattr(c, "z")) for c in components if hasattr(c, "z")]
     min_z = min([float(np.min(Z))] + comp_zs) if comp_zs else float(np.min(Z))
     max_z = max([float(np.max(Z))] + comp_zs) if comp_zs else float(np.max(Z))
+    z_span = max(np.finfo(float).eps, max_z - min_z)
+    lens_height = p.lens_height
+    if p.auto_lens_height:
+        lens_height = max(lens_height, p.lens_height_frac * z_span)
 
     extent = p.extent_scale * max_x
 
@@ -114,12 +242,7 @@ def plot_model(
         fig = ax.figure
 
     # Style
-    ax.tick_params(axis="both", which="major", labelsize=12)
-    ax.tick_params(axis="both", which="minor", labelsize=10)
-    for side in ("top", "right", "bottom", "left"):
-        ax.spines[side].set_visible(False)
-    ax.grid(color="lightgrey", linestyle="--", linewidth=0.5)
-    ax.grid(which="minor", color="#EEEEEE", linestyle=":", linewidth=0.5)
+    _style_axes(ax, p)
 
     # Y-axis scaling (z-axis)
     scale = str(yscale).lower().strip()
@@ -143,69 +266,70 @@ def plot_model(
     ax.set_xlim([-max_x, max_x])
     ax.set_ylim([max_z, min_z])  # invert z-axis (optical drawings convention)
 
+    if p.show_side_guides and component_x > 0:
+        for xg in (-component_x, component_x):
+            ax.plot(
+                [xg, xg],
+                [min_z, max_z],
+                color=p.side_guide_color,
+                linewidth=p.side_guide_lw,
+                linestyle=p.side_guide_ls,
+                alpha=p.side_guide_alpha,
+                zorder=2,
+            )
+
     # Rays
-    if len(components) > 0:
-        ax.text(
-            extent,
-            comp_zs[0] if comp_zs else float(Z[0]),
-            _as_name(components[0]),
-            fontsize=p.label_fontsize,
-            va="center",
-            zorder=1000,
-        )
     _ = plot_ray_bundle(ax, X, Z, p, band_mode=band_mode)
 
     # Components
     aspect = p.figsize[1] / p.figsize[0]
+    left_x = -component_x
+    right_x = component_x
     for c in components:
         name = _as_name(c)
         if isinstance(c, Deflector):
-            radius = -component_x
-            ax.text(extent, c.z, name, fontsize=p.label_fontsize, va="center", zorder=1000)
+            _label_component(ax, extent, c.z, name, p)
             ax.plot(
-                [-radius, 0], [c.z, c.z], color="lightcoral",
+                [left_x, 0], [c.z, c.z], color="lightcoral",
                 linewidth=p.component_lw, zorder=999,
             )
             ax.plot(
-                [0, radius], [c.z, c.z], color="lightblue",
+                [0, right_x], [c.z, c.z], color="lightblue",
                 linewidth=p.component_lw, zorder=999,
             )
             ax.plot(
-                [-radius, radius], [c.z, c.z], color="k", alpha=0.8,
+                [left_x, right_x], [c.z, c.z], color="k", alpha=0.8,
                 linewidth=p.component_lw + 2, zorder=998,
             )
         elif isinstance(c, Lens):
-            radius = -component_x * 2
-            ax.text(extent, c.z, name, fontsize=p.label_fontsize, va="center", zorder=1000)
+            lens_width = max(np.finfo(float).eps, 2.0 * component_x)
+            _label_component(ax, extent, c.z, name, p)
             ax.add_patch(
                 mpl.patches.Arc(
-                    (0, c.z), radius, height=p.lens_height / aspect,
+                    (0, c.z), lens_width, height=lens_height / aspect,
                     theta1=0, theta2=180, linewidth=1,
                     fill=False, zorder=999, edgecolor="k",
                 )
             )
             ax.add_patch(
                 mpl.patches.Arc(
-                    (0, c.z), radius, height=p.lens_height / aspect,
+                    (0, c.z), lens_width, height=lens_height / aspect,
                     theta1=180, theta2=0, linewidth=1,
                     fill=False, zorder=-1, edgecolor="k",
                 )
             )
         elif isinstance(c, Detector):
-            ax.text(extent, c.z, name, fontsize=p.label_fontsize, va="center", zorder=1000)
-            det_rx = float(c.pixel_size[0] * c.shape[0] / 2.0)
+            _label_component(ax, extent, c.z, name, p)
+            det_rx = _detector_half_width_x(c)
             ax.plot([-det_rx, det_rx], [c.z, c.z], color="dimgrey", zorder=1000, linewidth=5)
         elif isinstance(c, (DeflectionBiprism, PhaseBiprism)):
             ax.add_patch(plt.Circle((0, c.z), p.biprism_radius, edgecolor="k", facecolor="w", zorder=1000))
         else:
             # Generic annotation at z
             if hasattr(c, "z"):
-                ax.text(
-                    extent, float(getattr(c, "z")), name,
-                    fontsize=p.label_fontsize, va="center", zorder=500,
-                )
+                _label_component(ax, extent, float(getattr(c, "z")), name, p, zorder=500)
 
-    plt.subplots_adjust(right=0.7)
+    fig.subplots_adjust(right=0.7)
     return fig, ax
 
 
@@ -233,24 +357,50 @@ def plot_ray_bundle(
     band_mode : {"fill", "lines"}
         "fill": fill between edge rays; "lines": horizontal segments between rays.
     """
-    # Draw all rays
-    ray_lines = ax.plot(
-        X, Z[:, None],
-        color=p.ray_color,
-        linewidth=p.ray_lw,
-        alpha=p.ray_alpha,
-        zorder=1,
-    )
+    nrays = X.shape[1] if X.ndim == 2 else 1
+    mode = str(band_mode).lower().strip()
+
+    # Draw rays (optionally as "solid beam" with faint interior lines)
+    ray_lines = []
+    center_lines = []
+    if p.solid_beam and nrays >= 2:
+        order0 = np.argsort(X[0, :])
+        interior_idx = order0[1:-1]
+        if interior_idx.size > 0:
+            ray_lines += ax.plot(
+                X[:, interior_idx],
+                Z[:, None],
+                color=p.ray_color,
+                linewidth=p.interior_ray_lw,
+                alpha=p.interior_ray_alpha,
+                zorder=1,
+            )
+        if nrays >= 3:
+            center_idx = int(order0[nrays // 2])
+            center_lines += ax.plot(
+                X[:, center_idx],
+                Z,
+                color=p.ray_color,
+                linewidth=p.center_ray_lw,
+                alpha=p.center_ray_alpha,
+                zorder=2,
+            )
+    else:
+        ray_lines = ax.plot(
+            X, Z[:, None],
+            color=p.ray_color,
+            linewidth=p.ray_lw,
+            alpha=p.ray_alpha,
+            zorder=1,
+        )
 
     # Band/envelope rendering
-    nrays = X.shape[1] if X.ndim == 2 else 1
     band_artists = []
     edge_lines = []
 
     if nrays >= 2:
         min_x_idx = int(np.argmin(X[0, :]))
         max_x_idx = int(np.argmax(X[0, :]))
-        mode = str(band_mode).lower().strip()
 
         if mode == "fill":
             band_artists.append(
@@ -294,6 +444,7 @@ def plot_ray_bundle(
 
     return {
         "ray_lines": ray_lines,
+        "center_lines": center_lines,
         "band_artists": band_artists,
         "edge_lines": edge_lines,
     }
