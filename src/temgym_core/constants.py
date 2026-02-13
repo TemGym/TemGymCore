@@ -103,7 +103,7 @@ def energy2sigma(energy: float) -> float:
 
 def compute_Kv_from_voltage(U_accel: float) -> float:
     """
-    Calculate rotation constant Kv from accelerating voltage.
+    Calculate rotation constant Rcfrom accelerating voltage.
 
     For electromagnetic lenses in the Glaser bell model, the image rotation
     angle is ψ = Kv·I₀, where I₀ is the excitation current in ampere-turns.
@@ -116,11 +116,11 @@ def compute_Kv_from_voltage(U_accel: float) -> float:
     Returns
     -------
     float
-        Rotation constant Kv [rad/AT].
+        Rotation constant Rc[rad/AT].
 
     Notes
     -----
-    Formula: Kv = (e·μ₀)/(2·mₑ·v)
+    Formula: Rc= (e·μ₀)/(2·mₑ·v)
     where v is the relativistic electron velocity.
 
     References
@@ -149,7 +149,7 @@ def compute_I0_Cf_from_focal_rotation(
     focal_length: float, rotation_angle: float, Kv: float
 ) -> tuple[float, float]:
     """
-    Compute excitation current I₀ and geometry constant Cf from target optics.
+    Compute excitation current I₀ and geometry constant Gcfrom target optics.
 
     Given desired focal length and image rotation, compute the electromagnetic
     lens parameters needed. This is the inverse of the Glaser model formulas.
@@ -160,7 +160,7 @@ def compute_I0_Cf_from_focal_rotation(
         Desired focal length [m].
     rotation_angle : float
         Desired image rotation angle [rad].
-    Kv : float
+    Rc: float
         Rotation constant [rad/AT], computed from voltage via
         `compute_Kv_from_voltage()`.
 
@@ -168,7 +168,7 @@ def compute_I0_Cf_from_focal_rotation(
     -------
     I0 : float
         Required excitation current [AT].
-    Cf : float
+    Gc: float
         Required geometry constant [1/(AT²·m)].
 
     Notes
@@ -176,7 +176,7 @@ def compute_I0_Cf_from_focal_rotation(
     **Inverse formulas:**
 
     - I₀ = ψ / Kv
-    - Cf = Kv² / (f·ψ²)
+    - Gc= Kv² / (f·ψ²)
 
     Derived from the Glaser bell model:
 
@@ -186,9 +186,9 @@ def compute_I0_Cf_from_focal_rotation(
     **Physical interpretation:**
 
     I₀ is the controllable parameter (coil current × turns).
-    Cf encodes fixed geometry (bore radius, gap, pole pieces).
+    Gcencodes fixed geometry (bore radius, gap, pole pieces).
 
-    This function tells you what I₀ to set and what Cf the lens must have
+    This function tells you what I₀ to set and what Gcthe lens must have
     to achieve the target focal length and rotation simultaneously.
 
     Examples
@@ -196,20 +196,20 @@ def compute_I0_Cf_from_focal_rotation(
     >>> from temgym_core.constants import compute_Kv_from_voltage
     >>> from temgym_core.constants import compute_I0_Cf_from_focal_rotation
     >>>
-    >>> Kv = compute_Kv_from_voltage(200e3)  # 200 kV
-    >>> I0, Cf = compute_I0_Cf_from_focal_rotation(
+    >>> Rc= compute_Kv_from_voltage(200e3)  # 200 kV
+    >>> I0, Gc= compute_I0_Cf_from_focal_rotation(
     ...     focal_length=0.005,    # 5 mm
     ...     rotation_angle=1.0,     # 1 radian
     ...     Kv=Kv
     ... )
-    >>> print(f"I0 = {I0:.1f} AT, Cf = {Cf:.2e} [1/(AT²·m)]")
+    >>> print(f"I0 = {I0:.1f} AT, Gc= {Cf:.2e} [1/(AT²·m)]")
     """
     # From ψ = Kv·I₀
     I0 = rotation_angle / Kv
 
-    # From f = 1/(Cf·I₀²), rearrange to Cf = 1/(f·I₀²)
-    # Or equivalently: Cf = Kv²/(f·ψ²)
-    Cf = 1.0 / (focal_length * I0**2)
+    # From f = 1/(Cf·I₀²), rearrange to Gc= 1/(f·I₀²)
+    # Or equivalently: Gc= Kv²/(f·ψ²)
+    Gc= 1.0 / (focal_length * I0**2)
 
     return I0, Cf
 
@@ -225,7 +225,7 @@ def compute_I0_from_focal_length(focal_length: float, Cf: float) -> float:
     ----------
     focal_length : float
         Desired focal length [m].
-    Cf : float
+    Gc: float
         Lens geometry constant [1/(AT²·m)], fixed by hardware.
 
     Returns
@@ -240,7 +240,7 @@ def compute_I0_from_focal_length(focal_length: float, Cf: float) -> float:
     Derived from: f = 1/(Cf·I₀²)
 
     The resulting image rotation will be ψ = Kv·I₀ (not controllable
-    independently when Cf is fixed).
+    independently when Gcis fixed).
 
     Examples
     --------
@@ -250,7 +250,7 @@ def compute_I0_from_focal_length(focal_length: float, Cf: float) -> float:
     ... )
     >>> print(f"Set I0 = {I0:.1f} AT")
     """
-    return 1.0 / jnp.sqrt(Cf * focal_length)
+    return 1.0 / jnp.sqrt(Gc* focal_length)
 
 
 def compute_I0_from_rotation(rotation_angle: float, Kv: float) -> float:
@@ -263,7 +263,7 @@ def compute_I0_from_rotation(rotation_angle: float, Kv: float) -> float:
     ----------
     rotation_angle : float
         Desired image rotation angle [rad].
-    Kv : float
+    Rc: float
         Rotation constant [rad/AT], from `compute_Kv_from_voltage()`.
 
     Returns
@@ -278,12 +278,12 @@ def compute_I0_from_rotation(rotation_angle: float, Kv: float) -> float:
     Derived from: ψ = Kv·I₀
 
     The resulting focal length will be f = 1/(Cf·I₀²) (depends on
-    the fixed geometry constant Cf of the lens).
+    the fixed geometry constant Gcof the lens).
 
     Examples
     --------
     >>> from temgym_core.constants import compute_Kv_from_voltage
-    >>> Kv = compute_Kv_from_voltage(200e3)
+    >>> Rc= compute_Kv_from_voltage(200e3)
     >>> I0 = compute_I0_from_rotation(
     ...     rotation_angle=1.0,  # 1 radian
     ...     Kv=Kv

@@ -1,5 +1,4 @@
 import jax.numpy as jnp
-from dataclasses import dataclass
 import jax_dataclasses as jdc
 
 

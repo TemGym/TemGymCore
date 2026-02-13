@@ -63,10 +63,43 @@ def evaluate_gaussians_gpu_kernel(
     T_PIX = int(tile_pixels)
     T_BEAMS = int(tile_beams)
 
+    # Pad detector/beams to tile multiples so the kernel never performs OOB
+    # ref indexing; this keeps the kernel API-compatible across Pallas changes.
+    grid_n = (P + T_PIX - 1) // T_PIX
+    P_pad = grid_n * T_PIX
+
+    num_beam_tiles = (N + T_BEAMS - 1) // T_BEAMS
+    N_pad = num_beam_tiles * T_BEAMS
+
+    def _pad_rows(x, target_rows: int):
+        pad_rows = target_rows - x.shape[0]
+        if pad_rows <= 0:
+            return x
+        pad_width = ((0, pad_rows),) + ((0, 0),) * (x.ndim - 1)
+        return jnp.pad(x, pad_width, mode="constant")
+
+    r2_f = _pad_rows(r2_f, P_pad)
+
+    r_centref = _pad_rows(r_centref, N_pad)
+    drx = _pad_rows(drx, N_pad)
+    dry = _pad_rows(dry, N_pad)
+    Qxxr = _pad_rows(Qxxr, N_pad)
+    Qxxi = _pad_rows(Qxxi, N_pad)
+    Qxyr = _pad_rows(Qxyr, N_pad)
+    Qxyi = _pad_rows(Qxyi, N_pad)
+    Qyxr = _pad_rows(Qyxr, N_pad)
+    Qyxi = _pad_rows(Qyxi, N_pad)
+    Qyyr = _pad_rows(Qyyr, N_pad)
+    Qyyi = _pad_rows(Qyyi, N_pad)
+    amp_r = _pad_rows(amp_r, N_pad)
+    amp_i = _pad_rows(amp_i, N_pad)
+    path = _pad_rows(path, N_pad)
+    kf = _pad_rows(kf, N_pad)
+
     # Output buffers
     out_shape = (
-        jax.ShapeDtypeStruct((P,), r_dtype),
-        jax.ShapeDtypeStruct((P,), r_dtype),
+        jax.ShapeDtypeStruct((P_pad,), r_dtype),
+        jax.ShapeDtypeStruct((P_pad,), r_dtype),
     )
 
     # --- Triton kernel ---
@@ -76,54 +109,43 @@ def evaluate_gaussians_gpu_kernel(
                Qyxr_ref, Qyxi_ref, Qyyr_ref, Qyyi_ref,
                amp_r_ref, amp_i_ref,
                path_ref, k_ref,
-               P_ref, N_ref,
                out_re_ref, out_im_ref):
 
         pid = pl.program_id(axis=0)
         pix_idx = pid * T_PIX + jnp.arange(T_PIX, dtype=jnp.int32)
 
-        P_rt = pl.load(P_ref, ())
-        N_rt = pl.load(N_ref, ())
-        pix_mask = pix_idx < P_rt
-
-        # Detector points
-        x = pl.load(r2_ref, (pix_idx, 0), mask=pix_mask, other=0.0)
-        y = pl.load(r2_ref, (pix_idx, 1), mask=pix_mask, other=0.0)
+        # Detector points (all in-bounds due padding)
+        x = r2_ref[pix_idx, 0]
+        y = r2_ref[pix_idx, 1]
 
         acc_re = jnp.zeros((T_PIX,), r_dtype)
         acc_im = jnp.zeros((T_PIX,), r_dtype)
 
-        def step(t, acc_re, acc_im):
+        def body_fun(t, acc):
+            acc_re, acc_im = acc
             b_idx = t * T_BEAMS + jnp.arange(T_BEAMS, dtype=jnp.int32)
-            b_mask = b_idx < N_rt
 
-            # centers
-            mx = pl.load(r_m_ref, (b_idx, 0), mask=b_mask, other=0.0)
-            my = pl.load(r_m_ref, (b_idx, 1), mask=b_mask, other=0.0)
+            # Beam data (all in-bounds due padding)
+            mx = r_m_ref[b_idx, 0]
+            my = r_m_ref[b_idx, 1]
 
-            # slopes
-            drx_b = pl.load(drx_ref, (b_idx,), mask=b_mask, other=0.0)
-            dry_b = pl.load(dry_ref, (b_idx,), mask=b_mask, other=0.0)
+            drx_b = drx_ref[b_idx]
+            dry_b = dry_ref[b_idx]
 
-            # Q_inv
-            Qxx_r = pl.load(Qxxr_ref, (b_idx,), mask=b_mask, other=0.0)
-            Qxx_i = pl.load(Qxxi_ref, (b_idx,), mask=b_mask, other=0.0)
-            Qxy_r = pl.load(Qxyr_ref, (b_idx,), mask=b_mask, other=0.0)
-            Qxy_i = pl.load(Qxyi_ref, (b_idx,), mask=b_mask, other=0.0)
-            Qyx_r = pl.load(Qyxr_ref, (b_idx,), mask=b_mask, other=0.0)
-            Qyx_i = pl.load(Qyxi_ref, (b_idx,), mask=b_mask, other=0.0)
-            Qyy_r = pl.load(Qyyr_ref, (b_idx,), mask=b_mask, other=0.0)
-            Qyy_i = pl.load(Qyyi_ref, (b_idx,), mask=b_mask, other=0.0)
+            Qxx_r = Qxxr_ref[b_idx]
+            Qxx_i = Qxxi_ref[b_idx]
+            Qxy_r = Qxyr_ref[b_idx]
+            Qxy_i = Qxyi_ref[b_idx]
+            Qyx_r = Qyxr_ref[b_idx]
+            Qyx_i = Qyxi_ref[b_idx]
+            Qyy_r = Qyyr_ref[b_idx]
+            Qyy_i = Qyyi_ref[b_idx]
 
-            # amplitude
-            ar_b = pl.load(amp_r_ref, (b_idx,), mask=b_mask, other=0.0)
-            ai_b = pl.load(amp_i_ref, (b_idx,), mask=b_mask, other=0.0)
+            ar_b = amp_r_ref[b_idx]
+            ai_b = amp_i_ref[b_idx]
 
-            # pathlength
-            path_b = pl.load(path_ref, (b_idx,), mask=b_mask, other=0.0)
-
-            # k
-            k_b = pl.load(k_ref, (b_idx,), mask=b_mask, other=0.0)
+            path_b = path_ref[b_idx]
+            k_b = k_ref[b_idx]
 
             # deltas
             dx = x[:, None] - mx[None, :]
@@ -154,36 +176,29 @@ def evaluate_gaussians_gpu_kernel(
             real_tb = atten * (ar_b[None, :] * c - ai_b[None, :] * s)
             imag_tb = atten * (ar_b[None, :] * s + ai_b[None, :] * c)
 
-            real_tb = jnp.where(b_mask[None, :], real_tb, 0.0)
-            imag_tb = jnp.where(b_mask[None, :], imag_tb, 0.0)
-
             acc_re = acc_re + jnp.sum(real_tb, axis=1)
             acc_im = acc_im + jnp.sum(imag_tb, axis=1)
 
-            return t + 1, acc_re, acc_im
+            return acc_re, acc_im
 
-        # number of beam tiles at runtime
-        num_tiles_rt = (N_rt + T_BEAMS - 1) // T_BEAMS
-        state0 = (jnp.int32(0), acc_re, acc_im)
+        acc_re, acc_im = lax.fori_loop(0, num_beam_tiles, body_fun, (acc_re, acc_im))
 
-        def cond_fun(s):
-            t, _, _ = s
-            return t < num_tiles_rt
-
-        def body_fun(s):
-            t, acc_re, acc_im = s
-            return step(t, acc_re, acc_im)
-
-        _, acc_re, acc_im = lax.while_loop(cond_fun, body_fun, state0)
-
-        pl.store(out_re_ref, (pix_idx,), acc_re, mask=pix_mask)
-        pl.store(out_im_ref, (pix_idx,), acc_im, mask=pix_mask)
+        out_re_ref[pix_idx] = acc_re
+        out_im_ref[pix_idx] = acc_im
 
     # --- launch ---
-    grid_n = (P + tile_pixels - 1) // tile_pixels
+
+    has_gpu_backend = any(
+        d.platform in ("gpu", "cuda", "rocm") for d in jax.devices()
+    )
+    pallas_kwargs = dict(out_shape=out_shape, grid=(grid_n,))
+    if has_gpu_backend:
+        pallas_kwargs["backend"] = "triton"
+    else:
+        pallas_kwargs["interpret"] = True
 
     out_re, out_im = pl.pallas_call(
-        kernel, out_shape=out_shape, grid=(grid_n,)
+        kernel, **pallas_kwargs
     )(
         r2_f, r_centref,
         drx, dry,
@@ -191,11 +206,9 @@ def evaluate_gaussians_gpu_kernel(
         Qyxr, Qyxi, Qyyr, Qyyi,
         amp_r, amp_i,
         path, kf,
-        jnp.asarray(P, jnp.int32),
-        jnp.asarray(N, jnp.int32),
     )
 
-    return out_re + 1j * out_im
+    return out_re[:P] + 1j * out_im[:P]
 
 
 def evaluate_gaussians_gpu_kernel_wrapper(

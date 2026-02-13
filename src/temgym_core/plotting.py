@@ -8,14 +8,15 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 from .ray import Ray
-from .components import Detector
-from .gaussian import (
+from .components import (
     Component,
+    DeflectionBiprism,
+    Deflector,
+    Detector,
     Lens,
-    Biprism,
-    run_iter_vmapped
+    PhaseBiprism,
 )
-from .components import Deflector
+from .gaussian import run_iter_vmapped
 
 
 @dataclass
@@ -194,7 +195,7 @@ def plot_model(
             ax.text(extent, c.z, name, fontsize=p.label_fontsize, va="center", zorder=1000)
             det_rx = float(c.pixel_size[0] * c.shape[0] / 2.0)
             ax.plot([-det_rx, det_rx], [c.z, c.z], color="dimgrey", zorder=1000, linewidth=5)
-        elif isinstance(c, Biprism):
+        elif isinstance(c, (DeflectionBiprism, PhaseBiprism)):
             ax.add_patch(plt.Circle((0, c.z), p.biprism_radius, edgecolor="k", facecolor="w", zorder=1000))
         else:
             # Generic annotation at z

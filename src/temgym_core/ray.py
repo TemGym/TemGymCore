@@ -43,6 +43,10 @@ class Ray(HasParamsMixin):
     pathlength: float
     _one: float = 1.0
 
+    @property
+    def ray_family(self) -> str:
+        return "ray"
+
     @classmethod
     def origin(cls):
         """Create a ray at the origin with zero slopes and zero pathlength.
@@ -154,11 +158,9 @@ class Ray(HasParamsMixin):
         return type(self)(**params)
 
     def to_vector(self):
-        params = {
-            k: jnp.atleast_1d(v)
-            for k, v
-            in dataclasses.asdict(self).items()
-        }
+        params = {}
+        for k, v in dataclasses.asdict(self).items():
+            params[k] = v if isinstance(v, str) or v is None else jnp.atleast_1d(v)
         return type(self)(**params)
 
     def derive(
