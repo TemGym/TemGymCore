@@ -16,7 +16,7 @@ from .components import (
     Lens,
     PhaseBiprism,
 )
-from .gaussian import run_iter_vmapped
+from .run import run_iter_vmapped
 
 
 @dataclass

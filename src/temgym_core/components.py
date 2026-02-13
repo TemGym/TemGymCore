@@ -13,7 +13,7 @@ from jax import lax
 from jax.nn import softplus
 
 from . import CoordsXY, Degrees, ScaleYX, ShapeYX
-from ._gaussian_core import (
+from .gaussian import (
     FreeSpacePropagator,
     GaussianBeam,
     apply_action_delta,
