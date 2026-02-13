@@ -421,16 +421,16 @@ def test_electromagnetic_lens():
     Kv = compute_Kv_from_voltage(200e3)  # 200 kV
     I0 = 5000.0  # ampere-turns
     Cf = 5e-6    # 1/(AT²·m)
-    
+
     # Create ElectromagneticLens
     em_lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
-    
+
     # Create equivalent manual Lens + Rotator
     focal_length = em_lens.focal_length
     rotation_rad = em_lens.rotation_angle
     manual_lens = Lens(z=0.0, focal_length=focal_length)
     rotator = Rotator(z=0.0, angle=np.rad2deg(rotation_rad))
-    
+
     # Test ray with non-zero position and slopes
     test_ray = Ray(
         x=jnp.array(1e-3),
@@ -441,11 +441,11 @@ def test_electromagnetic_lens():
         pathlength=jnp.array(0.0),
         z=jnp.array(0.0)
     )
-    
+
     # Apply transformations
     ray_em = em_lens(test_ray)
     ray_manual = rotator(manual_lens(test_ray))
-    
+
     # Compare results (numerical precision ~1e-5)
     np.testing.assert_allclose(ray_em.x, ray_manual.x, rtol=1e-5)
     np.testing.assert_allclose(ray_em.y, ray_manual.y, rtol=1e-5)
@@ -459,13 +459,13 @@ def test_electromagnetic_lens_properties():
     Kv = 5.3e-4  # rad/AT
     I0 = 5000.0  # AT
     Cf = 5e-6    # 1/(AT²·m)
-    
+
     lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
-    
+
     # Test focal length: f = 1/(Cf·I0²)
     expected_f = 1.0 / (Cf * I0**2)
     np.testing.assert_allclose(lens.focal_length, expected_f, rtol=1e-10)
-    
+
     # Test rotation angle: ψ = Kv·I0
     expected_psi = Kv * I0
     np.testing.assert_allclose(lens.rotation_angle, expected_psi, rtol=1e-10)
@@ -476,10 +476,10 @@ def test_electromagnetic_lens_zero_rotation():
     I0 = 5000.0
     Cf = 5e-6
     Kv = 0.0  # No rotation
-    
+
     em_lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
     pure_lens = Lens(z=0.0, focal_length=em_lens.focal_length)
-    
+
     test_ray = Ray(
         x=jnp.array(1e-3),
         y=jnp.array(0.5e-3),
@@ -489,10 +489,10 @@ def test_electromagnetic_lens_zero_rotation():
         pathlength=jnp.array(0.0),
         z=jnp.array(0.0)
     )
-    
+
     ray_em = em_lens(test_ray)
     ray_pure = pure_lens(test_ray)
-    
+
     # Should match exactly when no rotation
     np.testing.assert_allclose(ray_em.x, ray_pure.x, rtol=1e-10)
     np.testing.assert_allclose(ray_em.y, ray_pure.y, rtol=1e-10)

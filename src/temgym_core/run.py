@@ -44,11 +44,19 @@ def jacobian_transform(component: Union[Component, Source]):
 TransformT = Callable[[Union[Component, Source]], Callable[[Ray], tuple[Ray, Any]]]
 
 
+def _default_propagator_for_ray(ray: Ray):
+    if getattr(ray, "ray_family", "ray") == "gaussian":
+        from ._gaussian_core import FreeSpacePropagator
+
+        return FreeSpacePropagator()
+    return FreeSpaceParaxial()
+
+
 def run_iter(
     ray: Ray,
     components: Sequence[Union[Component, Source]],
     transform: TransformT = passthrough_transform,
-    propagator: BasePropagator = FreeSpaceParaxial(),
+    propagator: Any | None = None,
 ) -> Generator[tuple[Propagator | Source | Component, Ray], Any, None]:
     """Iterate a ray through the model, yielding each step's output.
 
@@ -60,14 +68,19 @@ def run_iter(
         Model sequence ordered along increasing z.
     transform : callable, default passthrough_transform
         Wraps each call to produce `(ray_out, aux)`; see helpers above.
-    propagator : BasePropagator, default FreeSpaceParaxial()
-        Propagator used between elements based on z spacing.
+    propagator : optional
+        Propagator used between elements based on z spacing. If None,
+        defaults to `FreeSpaceParaxial` for `ray_family='ray'` and to
+        gaussian `FreeSpacePropagator` for `ray_family='gaussian'`.
 
     Yields
     ------
     step : (Propagator|Source|Component, Ray)
         The operation applied and its output ray.
     """
+    if propagator is None:
+        propagator = _default_propagator_for_ray(ray)
+
     for component in components:
         if isinstance(component, (Source, Component)):
             distance = component.z - ray.z
@@ -81,7 +94,7 @@ def run_iter(
 def run_to_end(
     ray: Ray,
     components: Sequence[Union[Component, Source]],
-    propagator: BasePropagator = FreeSpaceParaxial(),
+    propagator: Any | None = None,
 ) -> Ray:
     """Propagate a ray through all components and return the final state.
 
@@ -91,8 +104,9 @@ def run_to_end(
         Initial ray.
     components : sequence of Component or Source
         Model sequence ordered along z.
-    propagator : BasePropagator, default FreeSpaceParaxial()
-        Propagation model between elements.
+    propagator : optional
+        Propagation model between elements. If None, a default is selected
+        from the input ray representation.
 
     Returns
     -------
@@ -146,7 +160,7 @@ def calculate_derivatives(ray: Ray, model: Sequence[Union[Component, Source]], o
 def solve_model(
     ray: Ray,
     model: Sequence[Union[Component, Source]],
-    propagator: BasePropagator = FreeSpaceParaxial(),
+    propagator: Any | None = None,
 ):
     """Compute per-step 5×5 ABCD matrices along the model using Jacobians.
 
@@ -156,8 +170,9 @@ def solve_model(
         Input ray.
     model : sequence of Component or Source
         Model elements in order.
-    propagator : BasePropagator, default FreeSpaceParaxial()
-        Propagation model between elements.
+    propagator : optional
+        Propagation model between elements. If None, a default is selected
+        from the input ray representation.
 
     Returns
     -------
@@ -179,6 +194,7 @@ def run_with_grads(
     input_ray: Ray,
     model: Sequence[Union[Component, Source]],
     grad_vars: Sequence["PathBuilder"],
+    propagator: Any | None = None,
 ) -> tuple[Ray, dict[Sequence[Any], Ray]]:
     """Run the model and compute Jacobians w.r.t. selected variables.
 
@@ -246,7 +262,7 @@ def run_with_grads(
             for ix, p in enumerate(model_params)
         ]
         grad_model = jax.tree.unflatten(model_tree, grad_model_params)
-        out = run_to_end(input_ray, grad_model)
+        out = run_to_end(input_ray, grad_model, propagator=propagator)
         return out, out  # double return lets us do jacobian_and_value via has_aux=True
 
     jac_fn = jax.jacobian(
