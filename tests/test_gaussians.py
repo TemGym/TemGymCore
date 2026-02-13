@@ -9,14 +9,16 @@ from skimage.restoration import unwrap_phase
 from temgym_core.gaussian import (
     make_gaussian,
     FreeSpacePropagator,
-    Lens,
+    scalar_grad_hess_complex,
+)
+from temgym_core.components import (
     ConstantPhaseShift,
+    Detector,
+    Lens,
     LinearPhaseShift,
     QuadraticPhaseShift,
-    scalar_grad_hess_complex,
-    run_to_end,
 )
-from temgym_core.components import Detector
+from temgym_core.run import run_to_end
 
 from temgym_core.utils import (
     fresnel_fft_2d,
