@@ -146,7 +146,7 @@ def compute_Kv_from_voltage(U_accel: float) -> float:
 
 
 def compute_I0_Cf_from_focal_rotation(
-    focal_length: float, rotation_angle: float, Kv: float
+    focal_length: float, rotation_angle: float, Rc: float
 ) -> tuple[float, float]:
     """
     Compute excitation current I₀ and geometry constant Gcfrom target optics.
@@ -202,7 +202,7 @@ def compute_I0_Cf_from_focal_rotation(
     ...     rotation_angle=1.0,     # 1 radian
     ...     Kv=Kv
     ... )
-    >>> print(f"I0 = {I0:.1f} AT, Gc= {Cf:.2e} [1/(AT²·m)]")
+    >>> print(f"I0 = {I0:.1f} AT, Gc= {Gc:.2e} [1/(AT²·m)]")
     """
     # From ψ = Kv·I₀
     I0 = rotation_angle / Kv
@@ -214,7 +214,7 @@ def compute_I0_Cf_from_focal_rotation(
     return I0, Cf
 
 
-def compute_I0_from_focal_length(focal_length: float, Cf: float) -> float:
+def compute_I0_from_focal_length(focal_length: float, Gc: float) -> float:
     """
     Compute excitation current I₀ from target focal length and known Cf.
 
@@ -253,7 +253,7 @@ def compute_I0_from_focal_length(focal_length: float, Cf: float) -> float:
     return 1.0 / jnp.sqrt(Gc* focal_length)
 
 
-def compute_I0_from_rotation(rotation_angle: float, Kv: float) -> float:
+def compute_I0_from_rotation(rotation_angle: float, Rc: float) -> float:
     """
     Compute excitation current I₀ from target image rotation.
 
