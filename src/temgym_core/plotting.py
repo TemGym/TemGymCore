@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 from .ray import Ray
+from .source import make_waist_divergence_rays  # noqa: F401
 from .components import (
     Component,
     DeflectionBiprism,
@@ -60,6 +61,11 @@ class PlotParams:
     auto_lens_height: bool = False
     lens_height_frac: float = 0.03
     biprism_radius: float = 1e-7  # radius of circle to draw biprism
+    solution_waist_color: str = "tab:red"
+    solution_divergence_color: str = "tab:green"
+    solution_ray_lw: float = 2.0
+    solution_ray_alpha: float = 0.95
+    solution_ray_ls: str = "-"
 
 
 def legacy_beam_plot_params(**overrides) -> PlotParams:
@@ -163,6 +169,7 @@ def plot_model(
     components: Sequence[Component],
     *,
     rays: Ray | None = None,
+    solution_rays: Ray | None = None,
     plot_params: PlotParams = PlotParams(),
     ax: mpl.axes.Axes | None = None,
     band_mode: str = "fill",  # "fill" (envelope fill) or "lines" (draw lines between rays)
@@ -178,6 +185,10 @@ def plot_model(
         Model elements ordered by increasing z.
     rays : Ray, optional
         A Ray or a Ray bundle to use as the starting input.
+    solution_rays : Ray, optional
+        Optional 2-ray bundle overlaid as (waist ray, divergence ray).
+        See `make_waist_divergence_rays` to construct this directly from
+        an input waist and voltage/wavelength.
     plot_params : PlotParams, optional
         Style parameters for the plot.
     ax : matplotlib.axes.Axes, optional
@@ -208,6 +219,20 @@ def plot_model(
 
     X, Z = _stack_ray_positions(steps)
 
+    # Optional solution-ray overlay (waist/divergence basis)
+    X_solution = None
+    Z_solution = None
+    if solution_rays is not None:
+        solution_steps = tuple(run_iter_vmapped(solution_rays, components))
+        if include_input_rays:
+            solution_steps = (solution_rays,) + solution_steps
+        X_solution, Z_solution = _stack_ray_positions(solution_steps)
+        if X_solution.size > 0 and X_solution.shape[1] != 2:
+            raise ValueError(
+                "`solution_rays` must contain exactly 2 rays "
+                "(waist ray, divergence ray)."
+            )
+
     if X.size == 0:
         # Nothing to plot
         if ax is None:
@@ -219,6 +244,8 @@ def plot_model(
 
     # Determine x extent using both beam and detector width if present
     max_beam_x = float(np.max(np.abs(X)))
+    if X_solution is not None and X_solution.size > 0:
+        max_beam_x = max(max_beam_x, float(np.max(np.abs(X_solution))))
     detector_range_x = 0.0
     for c in components:
         if isinstance(c, Detector):
@@ -233,8 +260,13 @@ def plot_model(
 
     # z limits and ticks
     comp_zs = [float(getattr(c, "z")) for c in components if hasattr(c, "z")]
-    min_z = min([float(np.min(Z))] + comp_zs) if comp_zs else float(np.min(Z))
-    max_z = max([float(np.max(Z))] + comp_zs) if comp_zs else float(np.max(Z))
+    min_z_candidates = [float(np.min(Z))]
+    max_z_candidates = [float(np.max(Z))]
+    if X_solution is not None and X_solution.size > 0:
+        min_z_candidates.append(float(np.min(Z_solution)))
+        max_z_candidates.append(float(np.max(Z_solution)))
+    min_z = min(min_z_candidates + comp_zs) if comp_zs else min(min_z_candidates)
+    max_z = max(max_z_candidates + comp_zs) if comp_zs else max(max_z_candidates)
     z_span = max(np.finfo(float).eps, max_z - min_z)
     lens_height = p.lens_height
     if p.auto_lens_height:
@@ -267,7 +299,10 @@ def plot_model(
         ax.set_yscale("linear")
 
     # Ticks and limits
-    yticks = sorted(set([float(np.min(Z)), float(np.max(Z))] + comp_zs))
+    ytick_values = [float(np.min(Z)), float(np.max(Z))]
+    if X_solution is not None and X_solution.size > 0:
+        ytick_values.extend([float(np.min(Z_solution)), float(np.max(Z_solution))])
+    yticks = sorted(set(ytick_values + comp_zs))
     if scale == "log":
         yticks = [t for t in yticks if t > 0]
     ax.set_yticks(yticks)
@@ -288,6 +323,8 @@ def plot_model(
 
     # Rays
     _ = plot_ray_bundle(ax, X, Z, p, band_mode=band_mode)
+    if X_solution is not None and X_solution.size > 0:
+        _ = plot_solution_rays(ax, X_solution, Z_solution, p)
 
     # Components
     aspect = p.figsize[1] / p.figsize[0]
@@ -454,6 +491,43 @@ def plot_ray_bundle(
         "center_lines": center_lines,
         "band_artists": band_artists,
         "edge_lines": edge_lines,
+    }
+
+
+def plot_solution_rays(
+    ax: mpl.axes.Axes,
+    X_solution: np.ndarray,
+    Z_solution: np.ndarray,
+    p: PlotParams,
+):
+    """Plot the two solution rays (waist and divergence)."""
+    if X_solution.ndim != 2 or X_solution.shape[1] != 2:
+        raise ValueError(
+            "Expected `X_solution` shape (nsteps, 2) for "
+            "(waist ray, divergence ray)."
+        )
+
+    waist_line = ax.plot(
+        X_solution[:, 0],
+        Z_solution,
+        color=p.solution_waist_color,
+        linewidth=p.solution_ray_lw,
+        alpha=p.solution_ray_alpha,
+        linestyle=p.solution_ray_ls,
+        zorder=3,
+    )
+    divergence_line = ax.plot(
+        X_solution[:, 1],
+        Z_solution,
+        color=p.solution_divergence_color,
+        linewidth=p.solution_ray_lw,
+        alpha=p.solution_ray_alpha,
+        linestyle=p.solution_ray_ls,
+        zorder=3,
+    )
+    return {
+        "waist_line": waist_line,
+        "divergence_line": divergence_line,
     }
 
 
