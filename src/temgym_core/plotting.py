@@ -49,6 +49,8 @@ class PlotParams:
     component_lw: float = 3.0
     x_padding_frac: float = 0.0
     component_half_width_frac: float = 0.02
+    label_gap_frac: float = 0.04
+    label_right_pad_frac: float = 0.35
     show_side_guides: bool = False
     side_guide_color: str = "#D9D9D9"
     side_guide_lw: float = 1.0
@@ -67,13 +69,13 @@ def legacy_beam_plot_params(**overrides) -> PlotParams:
         extent_scale=0.80,
         label_fontsize=12,
         font_family="DejaVu Sans",
-        text_color="#DCE2EA",
-        tick_color="#C6CFDA",
-        figure_facecolor="black",
-        axes_facecolor="black",
-        grid_major_color="#2E3740",
-        grid_minor_color="#1F252C",
-        ray_color="#66EBDC",
+        text_color="black",
+        tick_color="black",
+        figure_facecolor="white",
+        axes_facecolor="white",
+        grid_major_color="black",
+        grid_minor_color="black",
+        ray_color="black",
         ray_lw=0.65,
         ray_alpha=0.28,
         interior_ray_lw=0.65,
@@ -87,6 +89,8 @@ def legacy_beam_plot_params(**overrides) -> PlotParams:
         component_lw=6.0,
         x_padding_frac=0.20,
         component_half_width_frac=0.92,
+        label_gap_frac=0.04,
+        label_right_pad_frac=0.42,
         show_side_guides=True,
         side_guide_color="#DFE4EA",
         side_guide_lw=1.1,
@@ -147,9 +151,11 @@ def _label_component(
         name,
         fontsize=p.label_fontsize,
         va="center",
+        ha="left",
         zorder=zorder,
         color=p.text_color,
         fontfamily=p.font_family,
+        clip_on=False,
     )
 
 
@@ -234,7 +240,9 @@ def plot_model(
     if p.auto_lens_height:
         lens_height = max(lens_height, p.lens_height_frac * z_span)
 
-    extent = p.extent_scale * max_x
+    label_gap_x = max(np.finfo(float).eps, p.label_gap_frac * max_x)
+    label_x = max(p.extent_scale * max_x, component_x + label_gap_x)
+    x_max_plot = max(max_x, label_x + p.label_right_pad_frac * max_x)
 
     if ax is None:
         fig, ax = plt.subplots(figsize=p.figsize)
@@ -263,7 +271,7 @@ def plot_model(
     if scale == "log":
         yticks = [t for t in yticks if t > 0]
     ax.set_yticks(yticks)
-    ax.set_xlim([-max_x, max_x])
+    ax.set_xlim([-x_max_plot, x_max_plot])
     ax.set_ylim([max_z, min_z])  # invert z-axis (optical drawings convention)
 
     if p.show_side_guides and component_x > 0:
@@ -288,7 +296,7 @@ def plot_model(
     for c in components:
         name = _as_name(c)
         if isinstance(c, Deflector):
-            _label_component(ax, extent, c.z, name, p)
+            _label_component(ax, label_x, c.z, name, p)
             ax.plot(
                 [left_x, 0], [c.z, c.z], color="lightcoral",
                 linewidth=p.component_lw, zorder=999,
@@ -303,7 +311,7 @@ def plot_model(
             )
         elif isinstance(c, Lens):
             lens_width = max(np.finfo(float).eps, 2.0 * component_x)
-            _label_component(ax, extent, c.z, name, p)
+            _label_component(ax, label_x, c.z, name, p)
             ax.add_patch(
                 mpl.patches.Arc(
                     (0, c.z), lens_width, height=lens_height / aspect,
@@ -319,7 +327,7 @@ def plot_model(
                 )
             )
         elif isinstance(c, Detector):
-            _label_component(ax, extent, c.z, name, p)
+            _label_component(ax, label_x, c.z, name, p)
             det_rx = _detector_half_width_x(c)
             ax.plot([-det_rx, det_rx], [c.z, c.z], color="dimgrey", zorder=1000, linewidth=5)
         elif isinstance(c, (DeflectionBiprism, PhaseBiprism)):
@@ -327,9 +335,8 @@ def plot_model(
         else:
             # Generic annotation at z
             if hasattr(c, "z"):
-                _label_component(ax, extent, float(getattr(c, "z")), name, p, zorder=500)
+                _label_component(ax, label_x, float(getattr(c, "z")), name, p, zorder=500)
 
-    fig.subplots_adjust(right=0.7)
     return fig, ax
 
 
