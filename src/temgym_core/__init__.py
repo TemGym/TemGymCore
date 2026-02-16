@@ -80,7 +80,11 @@ class PixelsYX(NamedTuple):
 
 # Convenience re-exports
 try:
-    from .plotting import plot_model, PlotParams, legacy_beam_plot_params  # noqa: F401
+    from .plotting import (  # noqa: F401
+        plot_model,
+        PlotParams,
+        legacy_beam_plot_params,
+    )
 except Exception:
     # Plotting has optional dependencies (matplotlib); ignore import errors at package import time
     pass

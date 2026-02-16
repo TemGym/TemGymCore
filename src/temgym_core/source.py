@@ -6,6 +6,7 @@ import jax_dataclasses as jdc
 
 from .tree_utils import HasParamsMixin
 from .gaussian import GaussianBeam, make_gaussian
+from .constants import energy2wavelength
 from .ray import Ray
 from .utils import (
     concentric_rings,
@@ -18,6 +19,40 @@ from . import CoordsXY
 
 if TYPE_CHECKING:
     from interpax import Interpolator2D
+
+
+def make_waist_divergence_rays(
+    waist: float,
+    *,
+    voltage: float | None = None,
+    wavelength: float | None = None,
+    z: float = 0.0,
+    x0: float = 0.0,
+    y0: float = 0.0,
+    pathlength: float = 0.0,
+    divergence_sign: float = 1.0,
+) -> Ray:
+    """Construct a 2-ray waist/divergence paraxial basis bundle."""
+    waist = float(waist)
+    if waist <= 0:
+        raise ValueError(f"`waist` must be > 0, got {waist}.")
+    if (voltage is None) == (wavelength is None):
+        raise ValueError("Provide exactly one of `voltage` or `wavelength`.")
+
+    if wavelength is None:
+        wavelength = float(np.asarray(energy2wavelength(float(voltage))))
+    wavelength = float(wavelength)
+    if wavelength <= 0:
+        raise ValueError(f"`wavelength` must be > 0, got {wavelength}.")
+
+    theta = float(divergence_sign) * wavelength / (np.pi * waist)
+    x = np.asarray([float(x0) + waist, float(x0)], dtype=float)
+    y = np.asarray([float(y0), float(y0)], dtype=float)
+    dx = np.asarray([0.0, theta], dtype=float)
+    dy = np.asarray([0.0, 0.0], dtype=float)
+    z_vec = np.full((2,), float(z), dtype=float)
+    path_vec = np.full((2,), float(pathlength), dtype=float)
+    return Ray(x=x, y=y, dx=dx, dy=dy, z=z_vec, pathlength=path_vec)
 
 
 class Source(HasParamsMixin):
