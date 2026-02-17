@@ -6,11 +6,29 @@ import jax.numpy as jnp
 import jax_dataclasses as jdc
 
 from temgym_core.source import ParallelBeam
-from temgym_core.components import ScanGrid, Detector, Descanner, DescanError, Component, Biprism, Lens, ElectromagneticLens, Rotator
+from temgym_core.components import (
+    ScanGrid,
+    Detector,
+    Descanner,
+    DescanError,
+    Component,
+    Biprism,
+    Deflector,
+    DoubleDeflector,
+    Lens,
+    ElectromagneticLens,
+    Rotator,
+)
+from temgym_core.gaussian import make_gaussian
 from temgym_core.ray import Ray
 from temgym_core.utils import custom_jacobian_matrix
 from temgym_core.run import run_to_end
-from temgym_core.transfer_matrices import propagation_matrix_5x5, lens_matrix_5x5, biprism_matrix_5x5
+from temgym_core.transfer_matrices import (
+    propagation_matrix_5x5,
+    lens_matrix_5x5,
+    biprism_matrix_5x5,
+    double_deflector_matrix_5x5,
+)
 from temgym_core.constants import compute_Kv_from_voltage
 jax.config.update("jax_enable_x64", True)
 
@@ -413,6 +431,198 @@ def test_biprism_with_lens_and_prop():
     ABCD = custom_jacobian_matrix(ABCD)
 
     np.testing.assert_allclose(ABCD, analytic_ABCD, atol=1e-12)
+
+
+def test_double_deflector_matches_explicit_pair_ray():
+    dd = DoubleDeflector(
+        z=0.1,
+        spacing=0.03,
+        drive_x=1.3e-4,
+        drive_y=-0.9e-4,
+        balance_x=1.15,
+        balance_y=0.85,
+    )
+    detector = Detector(z=0.4, pixel_size=(1e-6, 1e-6), shape=(16, 16))
+
+    ray = Ray(
+        x=2.1e-4,
+        y=-1.3e-4,
+        dx=1.2e-3,
+        dy=-0.8e-3,
+        z=0.0,
+        pathlength=0.0,
+        _one=1.0,
+    )
+
+    model_dd = (dd, detector)
+    model_pair = (
+        Deflector(z=dd.z, def_x=dd.def1_x, def_y=dd.def1_y),
+        Deflector(z=dd.z_second, def_x=dd.def2_x, def_y=dd.def2_y),
+        detector,
+    )
+
+    out_dd = run_to_end(ray, model_dd)
+    out_pair = run_to_end(ray, model_pair)
+
+    np.testing.assert_allclose(out_dd.x, out_pair.x, atol=1e-12)
+    np.testing.assert_allclose(out_dd.y, out_pair.y, atol=1e-12)
+    np.testing.assert_allclose(out_dd.dx, out_pair.dx, atol=1e-12)
+    np.testing.assert_allclose(out_dd.dy, out_pair.dy, atol=1e-12)
+    np.testing.assert_allclose(out_dd.z, out_pair.z, atol=1e-12)
+    np.testing.assert_allclose(out_dd.pathlength, out_pair.pathlength, atol=1e-12)
+
+
+def test_double_deflector_matches_explicit_pair_gaussian():
+    dd = DoubleDeflector(
+        z=0.05,
+        spacing=0.015,
+        drive_x=2.0e-4,
+        drive_y=-1.0e-4,
+        balance_x=1.2,
+        balance_y=0.9,
+    )
+    detector = Detector(z=0.3, pixel_size=(1e-6, 1e-6), shape=(16, 16))
+
+    beam = make_gaussian(
+        x=0.0,
+        y=0.0,
+        dx=1.1e-3,
+        dy=-0.7e-3,
+        z=0.0,
+        voltage=200e3,
+        waist_x=1.6e-6,
+        waist_y=1.9e-6,
+    )
+
+    model_dd = (dd, detector)
+    model_pair = (
+        Deflector(z=dd.z, def_x=dd.def1_x, def_y=dd.def1_y),
+        Deflector(z=dd.z_second, def_x=dd.def2_x, def_y=dd.def2_y),
+        detector,
+    )
+
+    out_dd = run_to_end(beam, model_dd)
+    out_pair = run_to_end(beam, model_pair)
+
+    np.testing.assert_allclose(np.asarray(out_dd.x), np.asarray(out_pair.x), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(out_dd.y), np.asarray(out_pair.y), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(out_dd.dx), np.asarray(out_pair.dx), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(out_dd.dy), np.asarray(out_pair.dy), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(out_dd.z), np.asarray(out_pair.z), atol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(out_dd.pathlength), np.asarray(out_pair.pathlength), atol=1e-12
+    )
+    np.testing.assert_allclose(np.asarray(out_dd.Q_inv), np.asarray(out_pair.Q_inv), atol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(out_dd.amplitude), np.asarray(out_pair.amplitude), atol=1e-12
+    )
+
+
+def test_double_deflector_jacobian_matches_analytic_matrix():
+    dd = DoubleDeflector(
+        z=0.0,
+        spacing=0.02,
+        drive_x=1.4e-4,
+        drive_y=-1.1e-4,
+        balance_x=1.3,
+        balance_y=0.7,
+    )
+    ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=dd.z, pathlength=0.0, _one=1.0)
+
+    out_jac = jacobian(dd)(ray)
+    J = custom_jacobian_matrix(out_jac)
+
+    T = double_deflector_matrix_5x5(
+        dd.spacing,
+        dd.drive_x,
+        dd.drive_y,
+        dd.balance_x,
+        dd.balance_y,
+        xp=jnp,
+    )
+
+    np.testing.assert_allclose(J, T, atol=1e-12)
+
+
+def test_double_deflector_advances_to_second_plane():
+    dd = DoubleDeflector(
+        z=0.12,
+        spacing=0.025,
+        drive_x=1e-4,
+        drive_y=-2e-4,
+    )
+    ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=dd.z, pathlength=0.0, _one=1.0)
+
+    out = dd(ray)
+    np.testing.assert_allclose(out.z, dd.z_second, atol=1e-12)
+
+
+def test_double_deflector_balance_one_gives_zero_net_slope():
+    dd = DoubleDeflector(
+        z=0.1,
+        spacing=0.03,
+        drive_x=2.0e-4,
+        drive_y=-3.0e-4,
+        balance_x=1.0,
+        balance_y=1.0,
+    )
+
+    ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=0.0, pathlength=0.0, _one=1.0)
+    out = run_to_end(ray, (dd,))
+
+    np.testing.assert_allclose(out.dx, 0.0, atol=1e-12)
+    np.testing.assert_allclose(out.dy, 0.0, atol=1e-12)
+
+
+def test_double_deflector_two_lens_optimization_smoke():
+    ray0 = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=0.0, pathlength=0.0, _one=1.0)
+    target_xy = jnp.array([2.5e-4, -1.5e-4], dtype=jnp.float64)
+
+    spacing = 0.02
+    z_def = 0.1
+    lens1 = Lens(z=0.27, focal_length=0.18)
+    lens2 = Lens(z=0.42, focal_length=0.22)
+    sample = Detector(z=0.57, pixel_size=(1e-6, 1e-6), shape=(32, 32))
+
+    def loss_fn(params):
+        drive_x, drive_y, balance_x, balance_y = params
+        model = (
+            DoubleDeflector(
+                z=z_def,
+                spacing=spacing,
+                drive_x=drive_x,
+                drive_y=drive_y,
+                balance_x=balance_x,
+                balance_y=balance_y,
+            ),
+            lens1,
+            lens2,
+            sample,
+        )
+        out = run_to_end(ray0, model)
+        pos_term = jnp.sum(((jnp.array([out.x, out.y]) - target_xy) / 1e-4) ** 2)
+        ang_term = jnp.sum((jnp.array([out.dx, out.dy]) / 5e-5) ** 2)
+        return pos_term + 0.2 * ang_term
+
+    grad_fn = jax.value_and_grad(loss_fn)
+    params = jnp.array([1e-4, -1e-4, 1.0, 1.0], dtype=jnp.float64)
+
+    init_loss, init_grads = grad_fn(params)
+    assert np.isfinite(np.asarray(init_loss)).all()
+    assert np.isfinite(np.asarray(init_grads)).all()
+
+    lr = 0.005
+    for _ in range(120):
+        loss, grads = grad_fn(params)
+        assert np.isfinite(np.asarray(loss)).all()
+        assert np.isfinite(np.asarray(grads)).all()
+        grads = jnp.clip(grads, -1e3, 1e3)
+        params = params - lr * grads
+        params = params.at[:2].set(jnp.clip(params[:2], -2e-3, 2e-3))
+        params = params.at[2:].set(jnp.clip(params[2:], 0.2, 3.0))
+
+    final_loss = loss_fn(params)
+    assert float(final_loss) < float(init_loss)
 
 
 def test_electromagnetic_lens():
