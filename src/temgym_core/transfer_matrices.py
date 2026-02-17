@@ -230,6 +230,76 @@ def biprism_matrix_5x5(biprism_deflection, xp=sp):
         ], dtype=jnp.float64)
 
 
+def double_deflector_matrix_5x5(
+    spacing,
+    drive_x,
+    drive_y,
+    balance_x=1.0,
+    balance_y=1.0,
+    xp=sp,
+):
+    """
+    5x5 matrix for two deflector kicks separated by free-space spacing.
+
+    Built as D2 @ P(spacing) @ D1, where:
+      D1 adds [drive_x, drive_y] to [theta_x, theta_y],
+      D2 adds [-balance_x*drive_x, -balance_y*drive_y].
+    """
+    def2_x = -balance_x * drive_x
+    def2_y = -balance_y * drive_y
+
+    if xp == sp:
+        d1 = xp.Matrix([
+            [1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0],
+            [0, 0, 1, 0, drive_x],
+            [0, 0, 0, 1, drive_y],
+            [0, 0, 0, 0, 1],
+        ])
+        d2 = xp.Matrix([
+            [1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0],
+            [0, 0, 1, 0, def2_x],
+            [0, 0, 0, 1, def2_y],
+            [0, 0, 0, 0, 1],
+        ])
+    elif xp == np:
+        d1 = np.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, drive_x],
+            [0.0, 0.0, 0.0, 1.0, drive_y],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+        d2 = np.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, def2_x],
+            [0.0, 0.0, 0.0, 1.0, def2_y],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+    elif xp == jnp:
+        d1 = jnp.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, drive_x],
+            [0.0, 0.0, 0.0, 1.0, drive_y],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=jnp.float64)
+        d2 = jnp.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, def2_x],
+            [0.0, 0.0, 0.0, 1.0, def2_y],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ], dtype=jnp.float64)
+    else:
+        raise ValueError("xp must be one of sympy, numpy, or jax.numpy.")
+
+    p = propagation_matrix_5x5(spacing, xp=xp)
+    return d2 @ p @ d1
+
+
 def propagation_refractive_index(z, n, xp=sp):
     """
     Returns the 3x3 ABCD matrix for propagation over distance z with refractive index n.

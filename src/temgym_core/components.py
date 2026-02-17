@@ -429,6 +429,71 @@ class Deflector(Component):
 
 
 @jdc.pytree_dataclass
+class DoubleDeflector(Component):
+    """Two deflector kicks separated by an internal free-space spacing.
+
+    Notes
+    -----
+    `z` is the first deflector plane. The output ray is advanced to
+    `z + spacing` (second deflector plane).
+    `spacing` is expected to be non-negative.
+    For the usual model ordering, subsequent components should satisfy
+    `component.z >= z + spacing`.
+    `balance_x = balance_y = 1` gives free-space parallel-shift mode.
+    """
+
+    z: float
+    spacing: float
+    drive_x: float
+    drive_y: float
+    balance_x: float = 1.0
+    balance_y: float = 1.0
+
+    @property
+    def z_second(self) -> float:
+        return self.z + self.spacing
+
+    @property
+    def def1_x(self):
+        return self.drive_x
+
+    @property
+    def def1_y(self):
+        return self.drive_y
+
+    @property
+    def def2_x(self):
+        return -self.balance_x * self.drive_x
+
+    @property
+    def def2_y(self):
+        return -self.balance_y * self.drive_y
+
+    @staticmethod
+    def _apply_kick(ray: Ray | GaussianBeam, def_x, def_y):
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        return ray.derive(
+            dx=dx + def_x * ray._one,
+            dy=dy + def_y * ray._one,
+            pathlength=ray.pathlength + dx * x + dy * y,
+        )
+
+    def _call_ray(self, ray: Ray):
+        from .propagator import FreeSpaceParaxial
+
+        ray = self._apply_kick(ray, self.def1_x, self.def1_y)
+        ray = FreeSpaceParaxial()(ray, self.spacing)
+        ray = self._apply_kick(ray, self.def2_x, self.def2_y)
+        return ray
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        ray = self._apply_kick(ray, self.def1_x, self.def1_y)
+        ray = FreeSpacePropagator()(ray, self.spacing)
+        ray = self._apply_kick(ray, self.def2_x, self.def2_y)
+        return ray
+
+
+@jdc.pytree_dataclass
 class Rotator(Component):
     z: float
     angle: Degrees
@@ -1137,6 +1202,7 @@ __all__ = [
     "Detector",
     "ThickLens",
     "Deflector",
+    "DoubleDeflector",
     "Rotator",
     "DeflectionBiprism",
     "PhaseBiprism",

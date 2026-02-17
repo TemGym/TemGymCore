@@ -13,6 +13,7 @@ from .components import (
     Component,
     DeflectionBiprism,
     Deflector,
+    DoubleDeflector,
     Detector,
     Lens,
     PhaseBiprism,
@@ -49,6 +50,7 @@ class PlotParams:
     solid_beam: bool = False
     component_lw: float = 3.0
     x_padding_frac: float = 0.0
+    fixed_xmax: float | None = None
     component_half_width_frac: float = 0.02
     label_gap_frac: float = 0.04
     label_right_pad_frac: float = 0.35
@@ -88,7 +90,7 @@ def legacy_beam_plot_params(**overrides) -> PlotParams:
         interior_ray_alpha=0.30,
         center_ray_lw=1.0,
         center_ray_alpha=0.50,
-        fill_color="#7BFFF0",
+        fill_color="#43C78E",
         fill_alpha=0.50,
         edge_lw=1.5,
         solid_beam=True,
@@ -190,7 +192,8 @@ def plot_model(
         See `make_waist_divergence_rays` to construct this directly from
         an input waist and voltage/wavelength.
     plot_params : PlotParams, optional
-        Style parameters for the plot.
+        Style parameters for the plot. Set `fixed_xmax` to keep horizontal
+        scene geometry fixed across frames (useful for animations).
     ax : matplotlib.axes.Axes, optional
         Axes to draw on. If None, a new figure and axes are created.
     band_mode : {"fill", "lines"}, default "fill"
@@ -242,10 +245,8 @@ def plot_model(
         _style_axes(ax, p)
         return fig, ax
 
-    # Determine x extent using both beam and detector width if present
-    max_beam_x = float(np.max(np.abs(X)))
-    if X_solution is not None and X_solution.size > 0:
-        max_beam_x = max(max_beam_x, float(np.max(np.abs(X_solution))))
+    # Determine x extent using both beam and detector width if present.
+    # When fixed_xmax is provided, keep horizontal scene scaling stable.
     detector_range_x = 0.0
     for c in components:
         if isinstance(c, Detector):
@@ -254,7 +255,18 @@ def plot_model(
                 detector_range_x,
                 _detector_half_width_x(c),
             )
-    base_max_x = max(max_beam_x, detector_range_x, np.finfo(float).eps)
+
+    if p.fixed_xmax is None:
+        max_beam_x = float(np.max(np.abs(X)))
+        if X_solution is not None and X_solution.size > 0:
+            max_beam_x = max(max_beam_x, float(np.max(np.abs(X_solution))))
+        base_max_x = max(max_beam_x, detector_range_x, np.finfo(float).eps)
+    else:
+        fixed_xmax = float(p.fixed_xmax)
+        if not np.isfinite(fixed_xmax):
+            raise ValueError("plot_params.fixed_xmax must be finite when provided.")
+        base_max_x = max(abs(fixed_xmax), detector_range_x, np.finfo(float).eps)
+
     max_x = base_max_x * (1.0 + max(0.0, p.x_padding_frac))
     component_x = max_x * float(np.clip(p.component_half_width_frac, 0.0, 1.0))
 
@@ -330,22 +342,30 @@ def plot_model(
     aspect = p.figsize[1] / p.figsize[0]
     left_x = -component_x
     right_x = component_x
+
+    def _draw_deflector(z_pos: float) -> None:
+        ax.plot(
+            [left_x, 0], [z_pos, z_pos], color="lightcoral",
+            linewidth=p.component_lw, zorder=999,
+        )
+        ax.plot(
+            [0, right_x], [z_pos, z_pos], color="lightblue",
+            linewidth=p.component_lw, zorder=999,
+        )
+        ax.plot(
+            [left_x, right_x], [z_pos, z_pos], color="k", alpha=0.8,
+            linewidth=p.component_lw + 2, zorder=998,
+        )
+
     for c in components:
         name = _as_name(c)
-        if isinstance(c, Deflector):
+        if isinstance(c, DoubleDeflector):
             _label_component(ax, label_x, c.z, name, p)
-            ax.plot(
-                [left_x, 0], [c.z, c.z], color="lightcoral",
-                linewidth=p.component_lw, zorder=999,
-            )
-            ax.plot(
-                [0, right_x], [c.z, c.z], color="lightblue",
-                linewidth=p.component_lw, zorder=999,
-            )
-            ax.plot(
-                [left_x, right_x], [c.z, c.z], color="k", alpha=0.8,
-                linewidth=p.component_lw + 2, zorder=998,
-            )
+            _draw_deflector(c.z)
+            _draw_deflector(c.z_second)
+        elif isinstance(c, Deflector):
+            _label_component(ax, label_x, c.z, name, p)
+            _draw_deflector(c.z)
         elif isinstance(c, Lens):
             lens_width = max(np.finfo(float).eps, 2.0 * component_x)
             _label_component(ax, label_x, c.z, name, p)
