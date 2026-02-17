@@ -170,7 +170,7 @@ def plot_model(
     *,
     rays: Ray | None = None,
     solution_rays: Ray | None = None,
-    plot_params: PlotParams = PlotParams(),
+    plot_params: PlotParams = legacy_beam_plot_params(),
     ax: mpl.axes.Axes | None = None,
     band_mode: str = "fill",  # "fill" (envelope fill) or "lines" (draw lines between rays)
     yscale: str = "linear",   # "linear", "log", or "symlog"

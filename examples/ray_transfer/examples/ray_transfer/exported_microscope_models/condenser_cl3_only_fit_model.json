@@ -1,0 +1,116 @@
+{
+  "model_type": "tem_condenser_cl3_only_fit",
+  "schema_version": 1,
+  "exported_at_utc": "2026-02-17T13:03:35.607348+00:00",
+  "branch_mode": "low",
+  "beam": {
+    "voltage_V": 200000.0,
+    "waist_m": 1e-08,
+    "alpha_cap_mrad": 2.0
+  },
+  "fixed_focals_m": {
+    "f_CL1_m": 0.005253,
+    "f_Cmini_m": 0.02,
+    "f_OPL_m": 0.005
+  },
+  "geometry_m": {
+    "d_S_C1": 0.012,
+    "d_C1_C3": 0.018,
+    "d_C3_A": 0.008,
+    "d_A_Cmini": 0.025,
+    "d_Cmini_OPL": 0.018,
+    "d_OPL_Sp": 0.002
+  },
+  "fit_table": [
+    {
+      "target_fwhm_nm": 50.00000000000001,
+      "achieved_fwhm_nm": 50.01844290647434,
+      "f_CL3_m": 0.008617608333333334,
+      "alpha_mrad": 0.059824264986175324,
+      "B_SFOPL": -0.003746977970890222,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 100.00000000000001,
+      "achieved_fwhm_nm": 100.00000000041058,
+      "f_CL3_m": 0.008314709326338526,
+      "alpha_mrad": 0.04139994107874868,
+      "B_SFOPL": -0.0025930058188608244,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 150.00000000000003,
+      "achieved_fwhm_nm": 150.04239048119706,
+      "f_CL3_m": 0.008034791666666666,
+      "alpha_mrad": 0.02313845400459441,
+      "B_SFOPL": -0.0014492326392260243,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 200.00000000000003,
+      "achieved_fwhm_nm": 200.00000000010195,
+      "f_CL3_m": 0.0077741623737345245,
+      "alpha_mrad": 0.004953067671272558,
+      "B_SFOPL": -0.0003102258833748411,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 250.00000000000003,
+      "achieved_fwhm_nm": 250.0000000001063,
+      "f_CL3_m": 0.007529943244654468,
+      "alpha_mrad": 0.013229780054578002,
+      "B_SFOPL": 0.0008286218716716706,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 300.00000000000006,
+      "achieved_fwhm_nm": 300.0000000000629,
+      "f_CL3_m": 0.007300710375171392,
+      "alpha_mrad": 0.031403657772838066,
+      "B_SFOPL": 0.001966907807515756,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 350.00000000000006,
+      "achieved_fwhm_nm": 350.03332738164215,
+      "f_CL3_m": 0.007084941666666667,
+      "alpha_mrad": 0.04958452506602552,
+      "B_SFOPL": 0.003105631521964975,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 400.00000000000006,
+      "achieved_fwhm_nm": 400.1520729025947,
+      "f_CL3_m": 0.0068812583333333335,
+      "alpha_mrad": 0.06779322277978203,
+      "B_SFOPL": 0.0042460983413703,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 450.00000000000006,
+      "achieved_fwhm_nm": 450.08472322215835,
+      "f_CL3_m": 0.006689675000000002,
+      "alpha_mrad": 0.08593218253722613,
+      "B_SFOPL": 0.005382197257783456,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    },
+    {
+      "target_fwhm_nm": 500.00000000000006,
+      "achieved_fwhm_nm": 500.1051934768695,
+      "f_CL3_m": 0.0065081750000000015,
+      "alpha_mrad": 0.1041015547320783,
+      "B_SFOPL": 0.006520200998819789,
+      "stage": "base",
+      "status": "optimistix._solution.RESULTS<>"
+    }
+  ]
+}
