@@ -633,7 +633,7 @@ def test_electromagnetic_lens():
     Gc = 5e-6    # 1/(AT²·m)
 
     # Create ElectromagneticLens
-    em_lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
+    em_lens = ElectromagneticLens(z=0.0, I0=I0, Gc=Gc, Rc=Rc)
 
     # Create equivalent manual Lens + Rotator
     focal_length = em_lens.focal_length
@@ -670,24 +670,24 @@ def test_electromagnetic_lens_properties():
     I0 = 5000.0  # AT
     Gc = 5e-6    # 1/(AT²·m)
 
-    lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
+    lens = ElectromagneticLens(z=0.0, I0=I0, Gc=Gc, Rc=Rc)
 
-    # Test focal length: f = 1/(Cf·I0²)
+    # Test focal length: f = 1/(Gc·I0²)
     expected_f = 1.0 / (Gc * I0**2)
     np.testing.assert_allclose(lens.focal_length, expected_f, rtol=1e-10)
 
-    # Test rotation angle: ψ = Kv·I0
+    # Test rotation angle: ψ = Rc·I0
     expected_psi = Rc * I0
     np.testing.assert_allclose(lens.rotation_angle, expected_psi, rtol=1e-10)
 
 
 def test_electromagnetic_lens_zero_rotation():
-    """Test ElectromagneticLens with zero rotation (Kv=0) behaves like pure Lens."""
+    """Test ElectromagneticLens with zero rotation (Rc=0) behaves like pure Lens."""
     I0 = 5000.0
     Gc = 5e-6
     Rc = 0.0  # No rotation
 
-    em_lens = ElectromagneticLens(z=0.0, I0=I0, Cf=Cf, Kv=Kv)
+    em_lens = ElectromagneticLens(z=0.0, I0=I0, Gc=Gc, Rc=Rc)
     pure_lens = Lens(z=0.0, focal_length=em_lens.focal_length)
 
     test_ray = Ray(
