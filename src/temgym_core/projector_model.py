@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -707,6 +707,7 @@ class SimplifiedProjectorModel:
     weak_min_focal_m: float
     fit_table: list[dict[str, Any]]
     solver_info: dict[str, Any]
+    pl1_rotation_sign: float = 0.0
     variable_projector_current: bool = False
     projector_current_bounds_at: tuple[float, float] | None = None
 
@@ -723,6 +724,7 @@ class SimplifiedProjectorModel:
             "projector_current_at": self.projector_current_at,
             "il_gc": self.il_gc.tolist(),
             "il_rotation_signs": self.il_rotation_signs.tolist(),
+            "pl1_rotation_sign": float(self.pl1_rotation_sign),
             "il_current_bounds_at": list(self.il_current_bounds_at),
             "weak_min_focal_m": self.weak_min_focal_m,
             "fit_table": self.fit_table,
@@ -756,13 +758,15 @@ def _focals_with_fixed_strong_lenses(
 def _balanced_il_currents_from_free(
     free_currents: np.ndarray,
     il_rotation_signs: np.ndarray,
+    *,
+    extra_rotation_term: float = 0.0,
 ) -> np.ndarray:
     i1 = float(free_currents[0])
     i2 = float(free_currents[1])
     s = np.asarray(il_rotation_signs, dtype=float)
     if np.isclose(s[2], 0.0):
         raise ValueError("il_rotation_signs[2] must be non-zero for balance solve.")
-    i3 = -(s[0] * i1 + s[1] * i2) / s[2]
+    i3 = -(s[0] * i1 + s[1] * i2 + float(extra_rotation_term)) / s[2]
     return np.array([i1, i2, i3], dtype=float)
 
 
@@ -777,12 +781,18 @@ def _balanced_il_currents_from_unconstrained(
     unconstrained_free: np.ndarray,
     il_rotation_signs: np.ndarray,
     il_current_bounds_at: tuple[float, float],
+    *,
+    extra_rotation_term: float = 0.0,
 ) -> np.ndarray:
     low, high = il_current_bounds_at
     span = max(float(high - low), 1e-12)
     z = np.clip(np.asarray(unconstrained_free, dtype=float), -60.0, 60.0)
     free = low + span / (1.0 + np.exp(-z))
-    return _balanced_il_currents_from_free(free_currents=free, il_rotation_signs=il_rotation_signs)
+    return _balanced_il_currents_from_free(
+        free_currents=free,
+        il_rotation_signs=il_rotation_signs,
+        extra_rotation_term=float(extra_rotation_term),
+    )
 
 
 def _independent_il_currents_from_unconstrained(
@@ -795,10 +805,57 @@ def _independent_il_currents_from_unconstrained(
     return low + span / (1.0 + np.exp(-z))
 
 
+def _relay_imaging_errors(
+    *,
+    geometry: ProjectorGeometry,
+    objective_focal_length_m: float,
+    il_focals_m: np.ndarray,
+    saa_to_il1_m: float,
+    il2_object_to_il2_m: float,
+    pl1_object_to_pl1_m: float,
+) -> dict[str, float]:
+    d_obj = float(geometry.d_object_to_opl_m)
+    d_opl_to_il1 = float(geometry.d_opl_to_il1_m)
+    d_il1_to_il2 = float(geometry.d_il1_to_il2_m)
+    d_il2_to_il3 = float(geometry.d_il2_to_il3_m)
+    d_il3_to_pl1 = float(geometry.d_il3_to_pl1_m)
+
+    d_opl_to_saa = d_opl_to_il1 - float(saa_to_il1_m)
+    d_il1_to_il2_obj = d_il1_to_il2 - float(il2_object_to_il2_m)
+    d_il3_to_pl1_obj = d_il3_to_pl1 - float(pl1_object_to_pl1_m)
+
+    m_obj = _build_abcd_np(
+        dists=np.array([d_obj, d_opl_to_saa], dtype=float),
+        focals=np.array([float(objective_focal_length_m)], dtype=float),
+    )
+    m_il1 = _build_abcd_np(
+        dists=np.array([float(saa_to_il1_m), d_il1_to_il2_obj], dtype=float),
+        focals=np.array([float(il_focals_m[0])], dtype=float),
+    )
+    m_il23 = _build_abcd_np(
+        dists=np.array([float(il2_object_to_il2_m), d_il2_to_il3, d_il3_to_pl1_obj], dtype=float),
+        focals=np.array([float(il_focals_m[1]), float(il_focals_m[2])], dtype=float),
+    )
+
+    return {
+        "objective_saa_image_error_m": float(m_obj[0, 1]),
+        "il1_il2_object_image_error_m": float(m_il1[0, 1]),
+        "il23_pl1_object_image_error_m": float(m_il23[0, 1]),
+        "objective_saa_image_scale_m": max(d_obj + d_opl_to_saa, 1e-12),
+        "il1_il2_object_image_scale_m": max(float(saa_to_il1_m) + d_il1_to_il2_obj, 1e-12),
+        "il23_pl1_object_image_scale_m": max(
+            float(il2_object_to_il2_m) + d_il2_to_il3 + d_il3_to_pl1_obj,
+            1e-12,
+        ),
+    }
+
+
 def _evaluate_simplified_setting(
     unconstrained_free: np.ndarray,
     *,
     il_rotation_signs: np.ndarray,
+    pl1_rotation_sign: float,
+    include_pl1_in_rotation: bool,
     exact_il_rotation_balance: bool,
     il_current_bounds_at: tuple[float, float],
     il_gc: np.ndarray,
@@ -810,6 +867,9 @@ def _evaluate_simplified_setting(
     projector_current_at_fixed: float,
     geometry: ProjectorGeometry,
     rc_rad_per_at: float,
+    saa_to_il1_m: float,
+    il2_object_to_il2_m: float,
+    pl1_object_to_pl1_m: float,
 ) -> dict[str, Any]:
     u = np.asarray(unconstrained_free, dtype=float).reshape(-1)
     n_il = 2 if exact_il_rotation_balance else 3
@@ -821,23 +881,28 @@ def _evaluate_simplified_setting(
             f"variable_projector_current={variable_projector_current})."
         )
 
-    if exact_il_rotation_balance:
-        il_currents = _balanced_il_currents_from_unconstrained(
-            unconstrained_free=u[:2],
-            il_rotation_signs=il_rotation_signs,
-            il_current_bounds_at=il_current_bounds_at,
-        )
-    else:
-        il_currents = _independent_il_currents_from_unconstrained(
-            unconstrained_il=u[:3],
-            il_current_bounds_at=il_current_bounds_at,
-        )
     if variable_projector_current:
         pl1_lo, pl1_hi = projector_current_bounds_at
         z_pl1 = float(np.clip(u[n_il], -60.0, 60.0))
         projector_current_at = float(pl1_lo + (pl1_hi - pl1_lo) / (1.0 + np.exp(-z_pl1)))
     else:
         projector_current_at = float(projector_current_at_fixed)
+
+    extra_rotation_term = (
+        float(pl1_rotation_sign) * float(projector_current_at) if include_pl1_in_rotation else 0.0
+    )
+    if exact_il_rotation_balance:
+        il_currents = _balanced_il_currents_from_unconstrained(
+            unconstrained_free=u[:2],
+            il_rotation_signs=il_rotation_signs,
+            il_current_bounds_at=il_current_bounds_at,
+            extra_rotation_term=extra_rotation_term,
+        )
+    else:
+        il_currents = _independent_il_currents_from_unconstrained(
+            unconstrained_il=u[:3],
+            il_current_bounds_at=il_current_bounds_at,
+        )
 
     il_currents_safe = np.maximum(il_currents, 1e-12)
     il_focals = 1.0 / (np.asarray(il_gc, dtype=float) * il_currents_safe**2)
@@ -866,8 +931,19 @@ def _evaluate_simplified_setting(
     b_val = float(mtx[0, 1])
     a_pre = float(mtx_pre[0, 0])
     b_pre = float(mtx_pre[0, 1])
-    psi_val = float(rc_rad_per_at * np.dot(np.asarray(il_rotation_signs, dtype=float), il_currents))
+    psi_sum = float(np.dot(np.asarray(il_rotation_signs, dtype=float), il_currents))
+    if include_pl1_in_rotation:
+        psi_sum += float(pl1_rotation_sign) * float(projector_current_at)
+    psi_val = float(rc_rad_per_at * psi_sum)
     ffp_error = float(b_pre - a_pre * projector_focal_effective)
+    relay = _relay_imaging_errors(
+        geometry=geometry,
+        objective_focal_length_m=float(objective_focal_length_m),
+        il_focals_m=il_focals,
+        saa_to_il1_m=float(saa_to_il1_m),
+        il2_object_to_il2_m=float(il2_object_to_il2_m),
+        pl1_object_to_pl1_m=float(pl1_object_to_pl1_m),
+    )
     return {
         "currents": il_currents,
         "currents_safe": il_currents_safe,
@@ -880,6 +956,7 @@ def _evaluate_simplified_setting(
         "A_pre": a_pre,
         "B_pre": b_pre,
         "ffp_error_m": ffp_error,
+        **relay,
     }
 
 
@@ -888,6 +965,8 @@ def _simplified_setting_residual(
     *,
     target_magnification: float,
     il_rotation_signs: np.ndarray,
+    pl1_rotation_sign: float,
+    include_pl1_in_rotation: bool,
     exact_il_rotation_balance: bool,
     il_current_bounds_at: tuple[float, float],
     il_gc: np.ndarray,
@@ -911,10 +990,18 @@ def _simplified_setting_residual(
     projector_focal_bounds_weight: float,
     b_weight: float,
     ffp_weight: float,
+    objective_saa_image_weight: float,
+    il1_il2_object_image_weight: float,
+    il23_pl1_object_image_weight: float,
+    saa_to_il1_m: float,
+    il2_object_to_il2_m: float,
+    pl1_object_to_pl1_m: float,
 ) -> np.ndarray:
     state = _evaluate_simplified_setting(
         unconstrained_free=unconstrained_free,
         il_rotation_signs=il_rotation_signs,
+        pl1_rotation_sign=pl1_rotation_sign,
+        include_pl1_in_rotation=include_pl1_in_rotation,
         exact_il_rotation_balance=exact_il_rotation_balance,
         il_current_bounds_at=il_current_bounds_at,
         il_gc=il_gc,
@@ -926,6 +1013,9 @@ def _simplified_setting_residual(
         projector_current_at_fixed=projector_current_at_fixed,
         geometry=geometry,
         rc_rad_per_at=rc_rad_per_at,
+        saa_to_il1_m=saa_to_il1_m,
+        il2_object_to_il2_m=il2_object_to_il2_m,
+        pl1_object_to_pl1_m=pl1_object_to_pl1_m,
     )
 
     low, high = il_current_bounds_at
@@ -934,6 +1024,21 @@ def _simplified_setting_residual(
     r_b = float(b_weight) * state["B"] / max(float(total_length_m), 1e-12)
     r_psi = float(psi_weight) * state["psi_total"] / psi_scale
     r_ffp = float(ffp_weight) * state["ffp_error_m"] / max(float(projector_focal_length_m), 1e-12)
+    r_obj_saa = (
+        float(objective_saa_image_weight)
+        * float(state["objective_saa_image_error_m"])
+        / float(state["objective_saa_image_scale_m"])
+    )
+    r_il1_il2 = (
+        float(il1_il2_object_image_weight)
+        * float(state["il1_il2_object_image_error_m"])
+        / float(state["il1_il2_object_image_scale_m"])
+    )
+    r_il23_pl1 = (
+        float(il23_pl1_object_image_weight)
+        * float(state["il23_pl1_object_image_error_m"])
+        / float(state["il23_pl1_object_image_scale_m"])
+    )
 
     weak_pen = 0.2 * np.clip(weak_min_focal_m - state["il_focals"], 0.0, np.inf) / weak_min_focal_m
     i3_low = max(low - state["currents"][2], 0.0) / max(low, 1e-12)
@@ -954,7 +1059,7 @@ def _simplified_setting_residual(
         f_pl1_high = f_scale * max(f_eff - f_hi, 0.0) / max(f_hi, 1e-12)
 
     pieces: list[np.ndarray] = [
-        np.array([r_mag, r_b, r_psi, r_ffp], dtype=float),
+        np.array([r_mag, r_b, r_psi, r_ffp, r_obj_saa, r_il1_il2, r_il23_pl1], dtype=float),
         weak_pen,
         np.array([i3_low, i3_high, pl1_low, pl1_high, f_pl1_low, f_pl1_high], dtype=float),
     ]
@@ -1057,6 +1162,19 @@ def solve_simplified_projector_zoom(
     max_nfev: int = 3000,
     mag_tolerance_pct: float = 2.0,
     b_tolerance_m: float = 5.0e-5,
+    force_equal_ilpl_spacing: bool = False,
+    equal_ilpl_spacing_m: float | None = None,
+    shared_ilpl_geometry_constant: bool = False,
+    shared_ilpl_gc: float | None = None,
+    include_pl1_rotation_in_psi: bool = False,
+    pl1_rotation_sign: float = 0.0,
+    objective_saa_image_weight: float = 0.0,
+    il1_il2_object_image_weight: float = 0.0,
+    il23_pl1_object_image_weight: float = 0.0,
+    saa_to_il1_m: float = 0.0,
+    il2_object_to_il2_m: float = 0.0,
+    pl1_object_to_pl1_m: float = 0.0,
+    relay_imaging_tolerance_m: float = 5.0e-5,
 ) -> SimplifiedProjectorModel:
     """
     Solve a projector model from target magnifications with configurable
@@ -1068,7 +1186,51 @@ def solve_simplified_projector_zoom(
     `psi_total` is controlled through a weighted residual term.
     """
 
-    geometry = geometry or ProjectorGeometry()
+    geometry = replace(geometry or ProjectorGeometry())
+    if force_equal_ilpl_spacing:
+        if equal_ilpl_spacing_m is None:
+            equal_spacing = float(
+                np.mean(
+                    [
+                        float(geometry.d_il1_to_il2_m),
+                        float(geometry.d_il2_to_il3_m),
+                        float(geometry.d_il3_to_pl1_m),
+                    ]
+                )
+            )
+        else:
+            equal_spacing = float(equal_ilpl_spacing_m)
+        if equal_spacing <= 0:
+            raise ValueError("equal_ilpl_spacing_m must be > 0 when force_equal_ilpl_spacing=True.")
+        geometry = replace(
+            geometry,
+            d_il1_to_il2_m=equal_spacing,
+            d_il2_to_il3_m=equal_spacing,
+            d_il3_to_pl1_m=equal_spacing,
+        )
+    else:
+        equal_spacing = float(equal_ilpl_spacing_m) if equal_ilpl_spacing_m is not None else 0.0
+
+    if objective_saa_image_weight < 0 or il1_il2_object_image_weight < 0 or il23_pl1_object_image_weight < 0:
+        raise ValueError("Relay image weights must be >= 0.")
+    if saa_to_il1_m < 0 or il2_object_to_il2_m < 0 or pl1_object_to_pl1_m < 0:
+        raise ValueError("Relay plane offsets must be >= 0.")
+    if relay_imaging_tolerance_m < 0:
+        raise ValueError("relay_imaging_tolerance_m must be >= 0.")
+    if float(geometry.d_opl_to_il1_m) <= float(saa_to_il1_m):
+        raise ValueError("saa_to_il1_m must be < geometry.d_opl_to_il1_m.")
+    if float(geometry.d_il1_to_il2_m) <= float(il2_object_to_il2_m):
+        raise ValueError("il2_object_to_il2_m must be < geometry.d_il1_to_il2_m.")
+    if float(geometry.d_il3_to_pl1_m) <= float(pl1_object_to_pl1_m):
+        raise ValueError("pl1_object_to_pl1_m must be < geometry.d_il3_to_pl1_m.")
+    if (
+        il1_il2_object_image_weight > 0.0
+        and np.isclose(float(saa_to_il1_m), 0.0)
+        and (float(geometry.d_il1_to_il2_m) - float(il2_object_to_il2_m)) > 1e-12
+    ):
+        raise ValueError(
+            "il1_il2_object_image_weight > 0 requires saa_to_il1_m > 0 for a solvable IL1 imaging constraint."
+        )
     mags = np.asarray(target_magnifications, dtype=float).reshape(-1)
     if mags.size == 0:
         raise ValueError("target_magnifications must contain at least one value.")
@@ -1090,6 +1252,11 @@ def solve_simplified_projector_zoom(
         raise ValueError("IL reference focal lengths and currents must be > 0.")
     if np.any(np.isclose(il_s, 0.0)):
         raise ValueError("IL rotation signs must be non-zero.")
+    pl1_sign = float(pl1_rotation_sign)
+    if include_pl1_rotation_in_psi and np.isclose(pl1_sign, 0.0):
+        raise ValueError("pl1_rotation_sign must be non-zero when include_pl1_rotation_in_psi=True.")
+    if not include_pl1_rotation_in_psi:
+        pl1_sign = 0.0
 
     i_lo = float(il_current_bounds_at[0])
     i_hi = float(il_current_bounds_at[1])
@@ -1120,10 +1287,23 @@ def solve_simplified_projector_zoom(
         band_hi = 0.0
 
     rc = float(rc_rad_per_at) if rc_rad_per_at is not None else float(compute_Rc_from_voltage(voltage_v))
-    il_gc = 1.0 / (il_f_ref * il_i_ref**2)
-    projector_gc = 1.0 / max(float(projector_focal_length_m) * float(projector_current_at) ** 2, 1e-30)
+    il_gc_raw = 1.0 / (il_f_ref * il_i_ref**2)
+    projector_gc_raw = 1.0 / max(float(projector_focal_length_m) * float(projector_current_at) ** 2, 1e-30)
+    if shared_ilpl_geometry_constant:
+        if shared_ilpl_gc is not None:
+            gc_shared = float(shared_ilpl_gc)
+            if gc_shared <= 0:
+                raise ValueError("shared_ilpl_gc must be > 0.")
+        else:
+            gc_shared = float(np.exp(np.mean(np.log(np.concatenate([il_gc_raw, [projector_gc_raw]])))))
+        il_gc = np.full(3, gc_shared, dtype=float)
+        projector_gc = float(gc_shared)
+    else:
+        il_gc = il_gc_raw
+        projector_gc = float(projector_gc_raw)
+    projector_focal_nominal_m = float(1.0 / max(projector_gc * float(projector_current_at) ** 2, 1e-30))
     weak_min_focal_m = float(
-        weak_min_ratio * max(float(objective_focal_length_m), float(projector_focal_length_m))
+        weak_min_ratio * max(float(objective_focal_length_m), projector_focal_nominal_m)
     )
     total_length = max(float(geometry.total_length_m()), 1e-12)
     mag_tol_log = np.log(1.0 + max(float(mag_tolerance_pct), 0.0) / 100.0)
@@ -1154,11 +1334,13 @@ def solve_simplified_projector_zoom(
                 unconstrained_free=x,
                 target_magnification=target,
                 il_rotation_signs=il_s,
+                pl1_rotation_sign=pl1_sign,
+                include_pl1_in_rotation=bool(include_pl1_rotation_in_psi),
                 exact_il_rotation_balance=bool(exact_il_rotation_balance),
                 il_current_bounds_at=(i_lo, i_hi),
                 il_gc=il_gc,
                 objective_focal_length_m=objective_focal_length_m,
-                projector_focal_length_m=projector_focal_length_m,
+                projector_focal_length_m=projector_focal_nominal_m,
                 projector_gc=projector_gc,
                 variable_projector_current=bool(variable_projector_current),
                 projector_current_bounds_at=(pl1_lo, pl1_hi),
@@ -1181,6 +1363,12 @@ def solve_simplified_projector_zoom(
                 projector_focal_bounds_weight=float(projector_focal_bounds_weight),
                 b_weight=weight_b,
                 ffp_weight=ffp_weight,
+                objective_saa_image_weight=float(objective_saa_image_weight),
+                il1_il2_object_image_weight=float(il1_il2_object_image_weight),
+                il23_pl1_object_image_weight=float(il23_pl1_object_image_weight),
+                saa_to_il1_m=float(saa_to_il1_m),
+                il2_object_to_il2_m=float(il2_object_to_il2_m),
+                pl1_object_to_pl1_m=float(pl1_object_to_pl1_m),
             )
 
         residual_primary = make_residual(float(b_weight))
@@ -1194,17 +1382,22 @@ def solve_simplified_projector_zoom(
         state = _evaluate_simplified_setting(
             unconstrained_free=sol.x,
             il_rotation_signs=il_s,
+            pl1_rotation_sign=pl1_sign,
+            include_pl1_in_rotation=bool(include_pl1_rotation_in_psi),
             exact_il_rotation_balance=bool(exact_il_rotation_balance),
             il_current_bounds_at=(i_lo, i_hi),
             il_gc=il_gc,
             objective_focal_length_m=objective_focal_length_m,
-            projector_focal_length_m=projector_focal_length_m,
+            projector_focal_length_m=projector_focal_nominal_m,
             projector_gc=projector_gc,
             variable_projector_current=bool(variable_projector_current),
             projector_current_bounds_at=(pl1_lo, pl1_hi),
             projector_current_at_fixed=float(projector_current_at),
             geometry=geometry,
             rc_rad_per_at=rc,
+            saa_to_il1_m=float(saa_to_il1_m),
+            il2_object_to_il2_m=float(il2_object_to_il2_m),
+            pl1_object_to_pl1_m=float(pl1_object_to_pl1_m),
         )
         used_b_weight = float(b_weight)
         used_relaxed_b = False
@@ -1222,17 +1415,22 @@ def solve_simplified_projector_zoom(
             state_relaxed = _evaluate_simplified_setting(
                 unconstrained_free=sol_relaxed.x,
                 il_rotation_signs=il_s,
+                pl1_rotation_sign=pl1_sign,
+                include_pl1_in_rotation=bool(include_pl1_rotation_in_psi),
                 exact_il_rotation_balance=bool(exact_il_rotation_balance),
                 il_current_bounds_at=(i_lo, i_hi),
                 il_gc=il_gc,
                 objective_focal_length_m=objective_focal_length_m,
-                projector_focal_length_m=projector_focal_length_m,
+                projector_focal_length_m=projector_focal_nominal_m,
                 projector_gc=projector_gc,
                 variable_projector_current=bool(variable_projector_current),
                 projector_current_bounds_at=(pl1_lo, pl1_hi),
                 projector_current_at_fixed=float(projector_current_at),
                 geometry=geometry,
                 rc_rad_per_at=rc,
+                saa_to_il1_m=float(saa_to_il1_m),
+                il2_object_to_il2_m=float(il2_object_to_il2_m),
+                pl1_object_to_pl1_m=float(pl1_object_to_pl1_m),
             )
             mag_err_log_relaxed = float(
                 np.log(max(state_relaxed["magnification_abs"], 1e-20)) - np.log(target)
@@ -1255,6 +1453,9 @@ def solve_simplified_projector_zoom(
         i_pl1 = float(state["projector_current_at"])
         f_pl1 = float(state["projector_focal_effective_m"])
         ffp_err = float(state["ffp_error_m"])
+        obj_saa_err = float(state["objective_saa_image_error_m"])
+        il1_il2_err = float(state["il1_il2_object_image_error_m"])
+        il23_pl1_err = float(state["il23_pl1_object_image_error_m"])
         mag_err_log = float(np.log(max(a_pred, 1e-20)) - np.log(target))
         mag_err_pct = float(100.0 * (a_pred - target) / max(target, 1e-30))
         weak_ok = bool(np.all(il_focals >= weak_min_focal_m))
@@ -1264,6 +1465,15 @@ def solve_simplified_projector_zoom(
             (projector_focal_bounds_m is None) or (f_pl1_lo <= f_pl1 <= f_pl1_hi)
         )
         ffp_ok = bool((ffp_weight <= 0.0) or (abs(ffp_err) <= float(ffp_tolerance_m)))
+        obj_saa_ok = bool(
+            (objective_saa_image_weight <= 0.0) or (abs(obj_saa_err) <= float(relay_imaging_tolerance_m))
+        )
+        il1_il2_ok = bool(
+            (il1_il2_object_image_weight <= 0.0) or (abs(il1_il2_err) <= float(relay_imaging_tolerance_m))
+        )
+        il23_pl1_ok = bool(
+            (il23_pl1_object_image_weight <= 0.0) or (abs(il23_pl1_err) <= float(relay_imaging_tolerance_m))
+        )
         psi_tol = 1e-9 if exact_il_rotation_balance else float(psi_tolerance_rad)
         row_success = bool(
             abs(mag_err_log) <= mag_tol_log
@@ -1274,6 +1484,9 @@ def solve_simplified_projector_zoom(
             and pl1_ok
             and f_pl1_ok
             and ffp_ok
+            and obj_saa_ok
+            and il1_il2_ok
+            and il23_pl1_ok
         )
         if row_success:
             success_count += 1
@@ -1300,6 +1513,12 @@ def solve_simplified_projector_zoom(
                 "projector_focal_bounds_ok": f_pl1_ok,
                 "ffp_error_m": float(ffp_err),
                 "ffp_constraint_ok": ffp_ok,
+                "objective_saa_image_error_m": float(obj_saa_err),
+                "il1_il2_object_image_error_m": float(il1_il2_err),
+                "il23_pl1_object_image_error_m": float(il23_pl1_err),
+                "objective_saa_constraint_ok": obj_saa_ok,
+                "il1_il2_object_constraint_ok": il1_il2_ok,
+                "il23_pl1_object_constraint_ok": il23_pl1_ok,
                 "residual_norm": float(np.linalg.norm(make_residual(used_b_weight)(sol.x))),
                 "used_b_weight": float(used_b_weight),
                 "used_relaxed_b_weight": bool(used_relaxed_b),
@@ -1324,6 +1543,12 @@ def solve_simplified_projector_zoom(
             None if projector_focal_bounds_m is None else [float(f_pl1_lo), float(f_pl1_hi)]
         ),
         "projector_focal_bounds_weight": float(projector_focal_bounds_weight),
+        "shared_ilpl_geometry_constant": bool(shared_ilpl_geometry_constant),
+        "shared_ilpl_gc": float(projector_gc),
+        "include_pl1_rotation_in_psi": bool(include_pl1_rotation_in_psi),
+        "pl1_rotation_sign": float(pl1_sign),
+        "force_equal_ilpl_spacing": bool(force_equal_ilpl_spacing),
+        "equal_ilpl_spacing_m": (float(equal_spacing) if force_equal_ilpl_spacing else None),
         "exact_il_rotation_balance": bool(exact_il_rotation_balance),
         "psi_weight": float(psi_weight),
         "psi_tolerance_rad": float(psi_tolerance_rad),
@@ -1333,6 +1558,13 @@ def solve_simplified_projector_zoom(
         "trend_band_c_weight": float(trend_band_c_weight),
         "ffp_weight": float(ffp_weight),
         "ffp_tolerance_m": float(ffp_tolerance_m),
+        "objective_saa_image_weight": float(objective_saa_image_weight),
+        "il1_il2_object_image_weight": float(il1_il2_object_image_weight),
+        "il23_pl1_object_image_weight": float(il23_pl1_object_image_weight),
+        "saa_to_il1_m": float(saa_to_il1_m),
+        "il2_object_to_il2_m": float(il2_object_to_il2_m),
+        "pl1_object_to_pl1_m": float(pl1_object_to_pl1_m),
+        "relay_imaging_tolerance_m": float(relay_imaging_tolerance_m),
         "solver_method": method,
         "n_starts_per_setting": int(n_starts_per_setting),
         "b_weight": float(b_weight),
@@ -1347,7 +1579,7 @@ def solve_simplified_projector_zoom(
         rc_rad_per_at=float(rc),
         geometry=geometry,
         objective_focal_length_m=float(objective_focal_length_m),
-        projector_focal_length_m=float(projector_focal_length_m),
+        projector_focal_length_m=float(projector_focal_nominal_m),
         objective_current_at=float(objective_current_at),
         projector_current_at=float(projector_current_at),
         il_gc=np.asarray(il_gc, dtype=float),
@@ -1356,6 +1588,7 @@ def solve_simplified_projector_zoom(
         weak_min_focal_m=float(weak_min_focal_m),
         fit_table=fit_table,
         solver_info=solver_info,
+        pl1_rotation_sign=float(pl1_sign),
         variable_projector_current=bool(variable_projector_current),
         projector_current_bounds_at=(pl1_lo, pl1_hi),
     )
@@ -1373,6 +1606,15 @@ def realize_simplified_projector_setting(
     mag_clip = float(np.clip(request, float(np.min(mags)), float(np.max(mags))))
     s = np.asarray(model.il_rotation_signs, dtype=float)
     exact_il_balance = bool(model.solver_info.get("exact_il_rotation_balance", True))
+    include_pl1_rotation = bool(
+        model.solver_info.get(
+            "include_pl1_rotation_in_psi",
+            bool(abs(float(getattr(model, "pl1_rotation_sign", 0.0))) > 0.0),
+        )
+    )
+    pl1_sign = float(model.solver_info.get("pl1_rotation_sign", getattr(model, "pl1_rotation_sign", 0.0)))
+    if not include_pl1_rotation:
+        pl1_sign = 0.0
 
     i1_table = np.asarray([row["I0_IL1_at"] for row in model.fit_table], dtype=float)
     i2_table = np.asarray([row["I0_IL2_at"] for row in model.fit_table], dtype=float)
@@ -1419,6 +1661,13 @@ def realize_simplified_projector_setting(
     b_weight = float(model.solver_info.get("b_weight", 1.0))
     b_weight_relaxed = float(model.solver_info.get("b_weight_relaxed", 0.05))
     ffp_weight = float(model.solver_info.get("ffp_weight", 0.0))
+    objective_saa_image_weight = float(model.solver_info.get("objective_saa_image_weight", 0.0))
+    il1_il2_object_image_weight = float(model.solver_info.get("il1_il2_object_image_weight", 0.0))
+    il23_pl1_object_image_weight = float(model.solver_info.get("il23_pl1_object_image_weight", 0.0))
+    saa_to_il1_m = float(model.solver_info.get("saa_to_il1_m", 0.0))
+    il2_object_to_il2_m = float(model.solver_info.get("il2_object_to_il2_m", 0.0))
+    pl1_object_to_pl1_m = float(model.solver_info.get("pl1_object_to_pl1_m", 0.0))
+    relay_imaging_tolerance_m = float(model.solver_info.get("relay_imaging_tolerance_m", 5.0e-5))
     psi_weight = float(model.solver_info.get("psi_weight", 0.1))
     psi_tolerance_rad = float(model.solver_info.get("psi_tolerance_rad", 1e-9))
     trend_band = model.solver_info.get("trend_band_c_magnification", None)
@@ -1449,6 +1698,8 @@ def realize_simplified_projector_setting(
             unconstrained_free=x,
             target_magnification=mag_clip,
             il_rotation_signs=s,
+            pl1_rotation_sign=pl1_sign,
+            include_pl1_in_rotation=include_pl1_rotation,
             exact_il_rotation_balance=exact_il_balance,
             il_current_bounds_at=(i_lo, i_hi),
             il_gc=np.asarray(model.il_gc, dtype=float),
@@ -1472,6 +1723,12 @@ def realize_simplified_projector_setting(
             projector_focal_bounds_weight=pl1_focal_bounds_weight,
             b_weight=weight_b,
             ffp_weight=ffp_weight,
+            objective_saa_image_weight=objective_saa_image_weight,
+            il1_il2_object_image_weight=il1_il2_object_image_weight,
+            il23_pl1_object_image_weight=il23_pl1_object_image_weight,
+            saa_to_il1_m=saa_to_il1_m,
+            il2_object_to_il2_m=il2_object_to_il2_m,
+            pl1_object_to_pl1_m=pl1_object_to_pl1_m,
         )
 
     # Keep realization physically consistent with target magnification and B~0.
@@ -1488,6 +1745,8 @@ def realize_simplified_projector_setting(
         state = _evaluate_simplified_setting(
             unconstrained_free=sol.x,
             il_rotation_signs=s,
+            pl1_rotation_sign=pl1_sign,
+            include_pl1_in_rotation=include_pl1_rotation,
             exact_il_rotation_balance=exact_il_balance,
             il_current_bounds_at=(i_lo, i_hi),
             il_gc=np.asarray(model.il_gc, dtype=float),
@@ -1499,6 +1758,9 @@ def realize_simplified_projector_setting(
             projector_current_at_fixed=float(model.projector_current_at),
             geometry=model.geometry,
             rc_rad_per_at=model.rc_rad_per_at,
+            saa_to_il1_m=saa_to_il1_m,
+            il2_object_to_il2_m=il2_object_to_il2_m,
+            pl1_object_to_pl1_m=pl1_object_to_pl1_m,
         )
         mag_err_log = float(np.log(max(state["magnification_abs"], 1e-20)) - np.log(max(mag_clip, 1e-20)))
         if abs(mag_err_log) > mag_tol_log and b_weight_relaxed < b_weight:
@@ -1513,6 +1775,8 @@ def realize_simplified_projector_setting(
             state_relaxed = _evaluate_simplified_setting(
                 unconstrained_free=sol_relaxed.x,
                 il_rotation_signs=s,
+                pl1_rotation_sign=pl1_sign,
+                include_pl1_in_rotation=include_pl1_rotation,
                 exact_il_rotation_balance=exact_il_balance,
                 il_current_bounds_at=(i_lo, i_hi),
                 il_gc=np.asarray(model.il_gc, dtype=float),
@@ -1524,6 +1788,9 @@ def realize_simplified_projector_setting(
                 projector_current_at_fixed=float(model.projector_current_at),
                 geometry=model.geometry,
                 rc_rad_per_at=model.rc_rad_per_at,
+                saa_to_il1_m=saa_to_il1_m,
+                il2_object_to_il2_m=il2_object_to_il2_m,
+                pl1_object_to_pl1_m=pl1_object_to_pl1_m,
             )
             mag_err_relaxed = float(
                 np.log(max(state_relaxed["magnification_abs"], 1e-20)) - np.log(max(mag_clip, 1e-20))
@@ -1535,6 +1802,8 @@ def realize_simplified_projector_setting(
         state = _evaluate_simplified_setting(
             unconstrained_free=x0,
             il_rotation_signs=s,
+            pl1_rotation_sign=pl1_sign,
+            include_pl1_in_rotation=include_pl1_rotation,
             exact_il_rotation_balance=exact_il_balance,
             il_current_bounds_at=(i_lo, i_hi),
             il_gc=np.asarray(model.il_gc, dtype=float),
@@ -1546,6 +1815,9 @@ def realize_simplified_projector_setting(
             projector_current_at_fixed=float(model.projector_current_at),
             geometry=model.geometry,
             rc_rad_per_at=model.rc_rad_per_at,
+            saa_to_il1_m=saa_to_il1_m,
+            il2_object_to_il2_m=il2_object_to_il2_m,
+            pl1_object_to_pl1_m=pl1_object_to_pl1_m,
         )
         il_currents = np.asarray(state["currents"], dtype=float)
 
@@ -1561,7 +1833,10 @@ def realize_simplified_projector_setting(
     mtx = _build_abcd_np(dists=model.geometry.drifts_m(), focals=focals)
     a_pred = abs(float(mtx[0, 0]))
     b_pred = float(mtx[0, 1])
-    psi_pred = float(model.rc_rad_per_at * np.dot(s, il_currents))
+    psi_sum = float(np.dot(s, il_currents))
+    if include_pl1_rotation:
+        psi_sum += float(pl1_sign) * float(i_pl1_out)
+    psi_pred = float(model.rc_rad_per_at * psi_sum)
 
     return {
         "magnification_request": request,
@@ -1575,6 +1850,9 @@ def realize_simplified_projector_setting(
         "B": float(b_pred),
         "psi_total": float(psi_pred),
         "ffp_error_m": float(state["ffp_error_m"]),
+        "objective_saa_image_error_m": float(state["objective_saa_image_error_m"]),
+        "il1_il2_object_image_error_m": float(state["il1_il2_object_image_error_m"]),
+        "il23_pl1_object_image_error_m": float(state["il23_pl1_object_image_error_m"]),
         "i3_bounds_ok": bool(
             model.il_current_bounds_at[0] <= il_currents[2] <= model.il_current_bounds_at[1]
         ),
@@ -1585,6 +1863,18 @@ def realize_simplified_projector_setting(
         ),
         "psi_tolerance_ok": bool(
             abs(psi_pred) <= (1e-9 if exact_il_balance else psi_tolerance_rad)
+        ),
+        "objective_saa_constraint_ok": bool(
+            (objective_saa_image_weight <= 0.0)
+            or (abs(float(state["objective_saa_image_error_m"])) <= relay_imaging_tolerance_m)
+        ),
+        "il1_il2_object_constraint_ok": bool(
+            (il1_il2_object_image_weight <= 0.0)
+            or (abs(float(state["il1_il2_object_image_error_m"])) <= relay_imaging_tolerance_m)
+        ),
+        "il23_pl1_object_constraint_ok": bool(
+            (il23_pl1_object_image_weight <= 0.0)
+            or (abs(float(state["il23_pl1_object_image_error_m"])) <= relay_imaging_tolerance_m)
         ),
         "weak_constraint_ok": bool(np.all(il_focals >= model.weak_min_focal_m)),
     }
@@ -1603,6 +1893,7 @@ def build_simplified_projector_components(
     pl1_current = float(realized.get("current_pl1_at", model.projector_current_at))
     il_gc = np.asarray(model.il_gc, dtype=float)
     il_signs = np.asarray(model.il_rotation_signs, dtype=float)
+    pl1_sign = float(getattr(model, "pl1_rotation_sign", 0.0))
 
     g = model.geometry
     d = g.drifts_m()
@@ -1644,7 +1935,7 @@ def build_simplified_projector_components(
             z=float(z_pl1),
             I0=pl1_current,
             Gc=float(gc_pl1),
-            Rc=0.0,
+            Rc=float(model.rc_rad_per_at * pl1_sign),
         ),
     ]
     if include_detector_plane:
@@ -1684,6 +1975,7 @@ def load_simplified_projector_model_json(path: str | Path) -> SimplifiedProjecto
         weak_min_focal_m=float(payload["weak_min_focal_m"]),
         fit_table=list(payload["fit_table"]),
         solver_info=dict(payload["solver_info"]),
+        pl1_rotation_sign=float(payload.get("pl1_rotation_sign", 0.0)),
         variable_projector_current=bool(payload.get("variable_projector_current", False)),
         projector_current_bounds_at=(
             None

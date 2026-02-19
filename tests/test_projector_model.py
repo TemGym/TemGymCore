@@ -132,6 +132,7 @@ def test_simplified_projector_components_and_json_round_trip(tmp_path):
     assert loaded.schema_version == model.schema_version
     np.testing.assert_allclose(loaded.il_gc, model.il_gc)
     np.testing.assert_allclose(loaded.il_rotation_signs, model.il_rotation_signs)
+    assert loaded.pl1_rotation_sign == model.pl1_rotation_sign
     assert len(loaded.fit_table) == len(model.fit_table)
 
 
@@ -196,3 +197,59 @@ def test_simplified_projector_soft_balance_with_trend_and_focal_bounds():
     realized = realize_simplified_projector_setting(model=model, magnification=100.0, mode="solve")
     assert "projector_focal_bounds_ok" in realized
     assert "psi_tolerance_ok" in realized
+
+
+def test_simplified_projector_relay_constraints_equal_spacing_and_shared_constants():
+    model = solve_simplified_projector_zoom(
+        target_magnifications=[40.0, 50.0, 60.0],
+        objective_focal_length_m=8.0e-3,
+        projector_focal_length_m=8.0e-3,
+        force_equal_ilpl_spacing=True,
+        equal_ilpl_spacing_m=30.0e-3,
+        shared_ilpl_geometry_constant=True,
+        include_pl1_rotation_in_psi=True,
+        pl1_rotation_sign=-1.0,
+        objective_saa_image_weight=1.0,
+        il1_il2_object_image_weight=1.0,
+        il23_pl1_object_image_weight=1.0,
+        saa_to_il1_m=2.0e-3,
+        il2_object_to_il2_m=2.0e-3,
+        pl1_object_to_pl1_m=2.0e-3,
+        relay_imaging_tolerance_m=5.0e-3,
+        max_nfev=1400,
+    )
+
+    g = model.geometry
+    np.testing.assert_allclose(
+        [g.d_il1_to_il2_m, g.d_il2_to_il3_m, g.d_il3_to_pl1_m],
+        [30.0e-3, 30.0e-3, 30.0e-3],
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(model.il_gc, np.full(3, model.il_gc[0]), rtol=1e-12, atol=0.0)
+    assert model.pl1_rotation_sign == -1.0
+
+    for row in model.fit_table:
+        assert "objective_saa_image_error_m" in row
+        assert "il1_il2_object_image_error_m" in row
+        assert "il23_pl1_object_image_error_m" in row
+        assert "objective_saa_constraint_ok" in row
+        assert "il1_il2_object_constraint_ok" in row
+        assert "il23_pl1_object_constraint_ok" in row
+
+    mag = 50.0
+    realized = realize_simplified_projector_setting(model=model, magnification=mag, mode="solve")
+    assert "objective_saa_image_error_m" in realized
+    assert "il1_il2_object_image_error_m" in realized
+    assert "il23_pl1_object_image_error_m" in realized
+    assert "objective_saa_constraint_ok" in realized
+    assert "il1_il2_object_constraint_ok" in realized
+    assert "il23_pl1_object_constraint_ok" in realized
+
+    components = build_simplified_projector_components(model=model, magnification=mag, mode="solve")
+    np.testing.assert_allclose(
+        float(components[4].Rc),
+        float(model.rc_rad_per_at * model.pl1_rotation_sign),
+        rtol=1e-9,
+        atol=0.0,
+    )
