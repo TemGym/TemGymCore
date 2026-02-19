@@ -103,7 +103,7 @@ def energy2sigma(energy: float) -> float:
     )
 
 
-def compute_Kv_from_voltage(U_accel: float) -> float:
+def compute_Rc_from_voltage(U_accel: float) -> float:
     """
     Calculate rotation constant Rc from accelerating voltage.
 

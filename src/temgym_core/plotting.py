@@ -423,6 +423,7 @@ def plot_ray_bundle(
     """
     nrays = X.shape[1] if X.ndim == 2 else 1
     mode = str(band_mode).lower().strip()
+    X_plot, Z_plot = _break_same_z_jumps(X, Z)
 
     # Draw rays (optionally as "solid beam" with faint interior lines)
     ray_lines = []
@@ -432,8 +433,8 @@ def plot_ray_bundle(
         interior_idx = order0[1:-1]
         if interior_idx.size > 0:
             ray_lines += ax.plot(
-                X[:, interior_idx],
-                Z[:, None],
+                X_plot[:, interior_idx],
+                Z_plot[:, None],
                 color=p.ray_color,
                 linewidth=p.interior_ray_lw,
                 alpha=p.interior_ray_alpha,
@@ -442,8 +443,8 @@ def plot_ray_bundle(
         if nrays >= 3:
             center_idx = int(order0[nrays // 2])
             center_lines += ax.plot(
-                X[:, center_idx],
-                Z,
+                X_plot[:, center_idx],
+                Z_plot,
                 color=p.ray_color,
                 linewidth=p.center_ray_lw,
                 alpha=p.center_ray_alpha,
@@ -451,7 +452,7 @@ def plot_ray_bundle(
             )
     else:
         ray_lines = ax.plot(
-            X, Z[:, None],
+            X_plot, Z_plot[:, None],
             color=p.ray_color,
             linewidth=p.ray_lw,
             alpha=p.ray_alpha,
@@ -469,9 +470,9 @@ def plot_ray_bundle(
         if mode == "fill":
             band_artists.append(
                 ax.fill_betweenx(
-                    Z,
-                    X[:, min_x_idx],
-                    X[:, max_x_idx],
+                    Z_plot,
+                    X_plot[:, min_x_idx],
+                    X_plot[:, max_x_idx],
                     color=p.fill_color,
                     edgecolor=p.fill_color,
                     zorder=0,
@@ -480,14 +481,14 @@ def plot_ray_bundle(
                 )
             )
             edge_lines += ax.plot(
-                X[:, min_x_idx], Z,
+                X_plot[:, min_x_idx], Z_plot,
                 color=p.ray_color,
                 linewidth=p.edge_lw,
                 alpha=p.ray_alpha,
                 zorder=1,
             )
             edge_lines += ax.plot(
-                X[:, max_x_idx], Z,
+                X_plot[:, max_x_idx], Z_plot,
                 color=p.ray_color,
                 linewidth=p.edge_lw,
                 alpha=p.ray_alpha,
@@ -526,10 +527,11 @@ def plot_solution_rays(
             "Expected `X_solution` shape (nsteps, 2) for "
             "(waist ray, divergence ray)."
         )
+    X_plot, Z_plot = _break_same_z_jumps(X_solution, Z_solution)
 
     waist_line = ax.plot(
-        X_solution[:, 0],
-        Z_solution,
+        X_plot[:, 0],
+        Z_plot,
         color=p.solution_waist_color,
         linewidth=p.solution_ray_lw,
         alpha=p.solution_ray_alpha,
@@ -537,8 +539,8 @@ def plot_solution_rays(
         zorder=3,
     )
     divergence_line = ax.plot(
-        X_solution[:, 1],
-        Z_solution,
+        X_plot[:, 1],
+        Z_plot,
         color=p.solution_divergence_color,
         linewidth=p.solution_ray_lw,
         alpha=p.solution_ray_alpha,
@@ -551,9 +553,58 @@ def plot_solution_rays(
     }
 
 
+def _break_same_z_jumps(
+    X: np.ndarray,
+    Z: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Insert NaN separators where equal-z samples would draw x jumps."""
+    X_arr = np.asarray(X, dtype=float)
+    Z_arr = np.asarray(Z, dtype=float)
+    if X_arr.ndim == 1:
+        X_arr = X_arr[:, None]
+    if X_arr.ndim != 2 or Z_arr.ndim != 1 or X_arr.shape[0] != Z_arr.shape[0]:
+        raise ValueError("Expected X shape (nsteps, nrays) and Z shape (nsteps,).")
+    if X_arr.shape[0] < 2:
+        return X_arr, Z_arr
+
+    z_scale = max(1.0, float(np.nanmax(np.abs(Z_arr))))
+    x_scale = max(1.0, float(np.nanmax(np.abs(X_arr))))
+    z_atol = 10.0 * np.finfo(float).eps * z_scale
+    x_atol = 10.0 * np.finfo(float).eps * x_scale
+
+    same_z = np.isclose(np.diff(Z_arr), 0.0, rtol=0.0, atol=z_atol)
+    same_x = np.all(
+        np.isclose(np.diff(X_arr, axis=0), 0.0, rtol=0.0, atol=x_atol),
+        axis=1,
+    )
+    break_after = np.flatnonzero(same_z & ~same_x)
+    if break_after.size == 0:
+        return X_arr, Z_arr
+
+    n_steps, n_rays = X_arr.shape
+    X_out = np.empty((n_steps + break_after.size, n_rays), dtype=float)
+    Z_out = np.empty((n_steps + break_after.size,), dtype=float)
+
+    out_idx = 0
+    break_mask = np.zeros((n_steps - 1,), dtype=bool)
+    break_mask[break_after] = True
+    for step_idx in range(n_steps - 1):
+        X_out[out_idx] = X_arr[step_idx]
+        Z_out[out_idx] = Z_arr[step_idx]
+        out_idx += 1
+        if break_mask[step_idx]:
+            X_out[out_idx] = np.nan
+            Z_out[out_idx] = np.nan
+            out_idx += 1
+
+    X_out[out_idx] = X_arr[-1]
+    Z_out[out_idx] = Z_arr[-1]
+    return X_out, Z_out
+
+
 # Functionalized: build X (positions) and Z (z positions) from simulation steps
 def _stack_ray_positions(
-    steps_seq: Sequence[Tuple[object, Ray]]
+    steps_seq: Sequence[Ray]
 ) -> Tuple[np.ndarray, np.ndarray]:
     xs: list[np.ndarray] = []
     zs: list[float] = []
