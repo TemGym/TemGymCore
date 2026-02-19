@@ -1,7 +1,7 @@
 {
   "model_type": "tem_condenser_cl3_only_fit",
   "schema_version": 1,
-  "exported_at_utc": "2026-02-18T08:35:12.995459+00:00",
+  "exported_at_utc": "2026-02-18T13:12:23.658277+00:00",
   "branch_mode": "low",
   "beam": {
     "voltage_V": 200000.0,
