@@ -88,3 +88,18 @@ try:
 except Exception:
     # Plotting has optional dependencies (matplotlib); ignore import errors at package import time
     pass
+
+from .components import NonLinearElectromagneticLens  # noqa: F401
+
+from .tem_model import (  # noqa: F401
+    DialCurve,
+    LensSystemGeometry,
+    LensModel,
+    LensSystem,
+    TEMModel,
+    export_tem_model_json,
+    load_tem_model_json,
+    solve_il_system,
+    build_illumination_system,
+    build_projection_system,
+)

@@ -369,6 +369,12 @@ def calculate_z2_and_M_from_z1_and_f(z1, f):
     return z2, M
 
 
+def calculate_M_and_f_from_z1_and_z2(z1, z2):
+    M = z2 / z1                 # negative if z1<0, z2>0
+    f = z1 * z2 / (z1 - z2)     # positive if z1<0, z2>0
+    return M, f
+
+
 def full_abcd_2lens(zs, f1, f2, symbolic=False):
     """
     Build the full 3x3 ABCD matrix for a two-lens system (propagations + lenses).

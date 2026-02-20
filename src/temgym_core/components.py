@@ -654,6 +654,26 @@ class ElectromagneticLens(GaussianActionComponent):
         )
 
 
+@jdc.pytree_dataclass
+class NonLinearElectromagneticLens(ElectromagneticLens):
+    """Electromagnetic lens with nonlinear focal-length model.
+
+    The lens power includes a quartic correction term:
+
+        1/f = Gc * I0**2 + alpha_nl * I0**4
+
+    When ``alpha_nl == 0`` this reduces to the standard
+    :class:`ElectromagneticLens` model.
+    """
+
+    alpha_nl: float = 0.0
+
+    @property
+    def focal_length(self) -> float:
+        power = self.Gc * self.I0**2 + self.alpha_nl * self.I0**4
+        return 1.0 / power
+
+
 @jdc.pytree_dataclass(kw_only=True)
 class ABCDTransfer(Component):
     A: jnp.ndarray
