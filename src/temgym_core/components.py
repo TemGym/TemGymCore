@@ -587,7 +587,7 @@ class RotatingLens(Component):
 
 
 @jdc.pytree_dataclass
-class ElectromagneticLens(GaussianActionComponent):
+class ElectromagneticLens(Component):
     z: float
     turns: float
     current: float
