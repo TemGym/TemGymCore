@@ -589,52 +589,109 @@ class RotatingLens(Component):
 @jdc.pytree_dataclass
 class ElectromagneticLens(GaussianActionComponent):
     z: float
-    I0: float
+    turns: float
+    current: float
     Gc: float  # Geometry constant
     Rc: float  # Rotation constant
+    Tc: float = 0.0  # Thickness constant
     x0: float = 0.0
     y0: float = 0.0
 
     @property
+    def excitation(self) -> float:
+        return self.turns * self.current
+
+    @property
+    def I0(self) -> float:
+        """Backward-compatible alias for ampere-turn excitation."""
+        return self.excitation
+
+    @property
     def focal_length(self) -> float:
-        return 1.0 / (self.Gc * self.I0**2)
+        denom = self.Gc * self.excitation**2
+        return jnp.where(denom == 0.0, jnp.inf, 1.0 / denom)
 
     @property
     def rotation_angle(self) -> float:
-        return self.Rc * self.I0
+        return self.Rc * self.excitation
+
+    @property
+    def thickness(self) -> float:
+        return jnp.maximum(self.Tc, 0.0) * jnp.abs(self.excitation)
 
     def phase_shift(self, xy: jnp.ndarray) -> float:
         x, y = xy[0] - self.x0, xy[1] - self.y0
         rho2 = x * x + y * y
         return -0.5 * rho2 / self.focal_length
 
-    def _call_ray(self, ray: Ray) -> Ray:
+    def _apply_thin_lens_ray(self, ray: Ray, focal_length: float) -> Ray:
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-        f = self.focal_length
 
-        new_dx = -x / f + dx
-        new_dy = -y / f + dy
-        pathlength = ray.pathlength - (x**2 + y**2) / (2.0 * f)
+        new_dx = -x / focal_length + dx
+        new_dy = -y / focal_length + dy
+        pathlength = ray.pathlength - (x**2 + y**2) / (2.0 * focal_length)
 
-        angle = self.rotation_angle
+        return ray.derive(
+            dx=new_dx,
+            dy=new_dy,
+            pathlength=pathlength,
+        )
+
+    def _apply_rotation_ray(self, ray: Ray, angle: float) -> Ray:
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
         cos_a = jnp.cos(angle)
         sin_a = jnp.sin(angle)
 
         rot_x = cos_a * x - sin_a * y
         rot_y = sin_a * x + cos_a * y
-        rot_dx = cos_a * new_dx - sin_a * new_dy
-        rot_dy = sin_a * new_dx + cos_a * new_dy
+        rot_dx = cos_a * dx - sin_a * dy
+        rot_dy = sin_a * dx + cos_a * dy
 
         return ray.derive(
             x=rot_x,
             y=rot_y,
             dx=rot_dx,
             dy=rot_dy,
-            pathlength=pathlength,
         )
 
+    def _call_ray(self, ray: Ray) -> Ray:
+        from .propagator import FreeSpaceParaxial
+
+        f = self.focal_length
+        D = self.thickness
+
+        def _thin(_):
+            return self._apply_thin_lens_ray(ray, f)
+
+        def _thick(_):
+            out = self._apply_thin_lens_ray(ray, 2.0 * f)
+            out = FreeSpaceParaxial()(out, D)
+            return self._apply_thin_lens_ray(out, 2.0 * f)
+
+        out = lax.cond(D > 0.0, _thick, _thin, operand=None)
+        return self._apply_rotation_ray(out, self.rotation_angle)
+
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
-        out = GaussianActionComponent._call_gaussian(self, ray)
+        from .gaussian import FreeSpacePropagator
+
+        f = self.focal_length
+        D = self.thickness
+
+        def _thin(_):
+            return GaussianActionComponent._call_gaussian(self, ray)
+
+        def _thick(_):
+            half_lens = Lens(
+                z=self.z,
+                focal_length=2.0 * f,
+                x0=self.x0,
+                y0=self.y0,
+            )
+            out = half_lens(ray)
+            out = FreeSpacePropagator()(out, D)
+            return half_lens(out)
+
+        out = lax.cond(D > 0.0, _thick, _thin, operand=None)
 
         angle = self.rotation_angle
         cos_a = jnp.cos(angle)
@@ -652,26 +709,6 @@ class ElectromagneticLens(GaussianActionComponent):
             dy=d_xy_rot[1],
             Q_inv=Q_rot,
         )
-
-
-@jdc.pytree_dataclass
-class NonLinearElectromagneticLens(ElectromagneticLens):
-    """Electromagnetic lens with nonlinear focal-length model.
-
-    The lens power includes a quartic correction term:
-
-        1/f = Gc * I0**2 + alpha_nl * I0**4
-
-    When ``alpha_nl == 0`` this reduces to the standard
-    :class:`ElectromagneticLens` model.
-    """
-
-    alpha_nl: float = 0.0
-
-    @property
-    def focal_length(self) -> float:
-        power = self.Gc * self.I0**2 + self.alpha_nl * self.I0**4
-        return 1.0 / power
 
 
 @jdc.pytree_dataclass(kw_only=True)
