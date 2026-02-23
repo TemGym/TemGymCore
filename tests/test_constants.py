@@ -9,7 +9,43 @@ from temgym_core.constants import (
     compute_I0_from_focal_length,
     compute_I0_from_rotation,
     compute_Kv_from_voltage,
+    effective_accelerating_potential,
+    relativistic_voltage_correction,
+    relativistic_voltage_factor,
+    voltage_scaling_ratio,
 )
+
+
+def test_relativistic_voltage_factor_alias_matches_correction():
+    voltage = 200e3
+    np.testing.assert_allclose(
+        relativistic_voltage_factor(voltage),
+        relativistic_voltage_correction(voltage),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_effective_accelerating_potential_definition():
+    voltage = 300e3
+    expected = voltage * relativistic_voltage_factor(voltage)
+    np.testing.assert_allclose(
+        effective_accelerating_potential(voltage),
+        expected,
+        rtol=1e-12,
+    )
+
+
+def test_voltage_scaling_ratio_is_unity_at_reference():
+    voltage = 120e3
+    ratio = voltage_scaling_ratio(voltage, voltage)
+    np.testing.assert_allclose(ratio, 1.0, rtol=0.0, atol=0.0)
+
+
+def test_voltage_scaling_ratio_decreases_with_higher_voltage():
+    reference = 100e3
+    high = 300e3
+    assert voltage_scaling_ratio(high, reference) < 1.0
 
 
 def test_compute_i0_gc_from_focal_rotation_round_trip():

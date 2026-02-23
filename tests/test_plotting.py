@@ -96,7 +96,7 @@ def test_plot_model_rejects_solution_bundle_that_is_not_two_rays():
 
 def test_plot_model_breaks_same_z_position_jumps():
     components = (
-        ElectromagneticLens(z=1.0, I0=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
+        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
         Plane(z=2.0),
     )
     rays = Ray(
