@@ -629,11 +629,12 @@ def test_electromagnetic_lens():
     """Test ElectromagneticLens matches Lens + Rotator composition."""
     # Setup electromagnetic lens parameters
     Rc = compute_Kv_from_voltage(200e3)  # 200 kV
-    I0 = 5000.0  # ampere-turns
+    turns = 100.0
+    current = 50.0  # turns * current = 5000 ampere-turns
     Gc = 5e-6    # 1/(AT²·m)
 
     # Create ElectromagneticLens
-    em_lens = ElectromagneticLens(z=0.0, I0=I0, Gc=Gc, Rc=Rc)
+    em_lens = ElectromagneticLens(z=0.0, turns=turns, current=current, Gc=Gc, Rc=Rc)
 
     # Create equivalent manual Lens + Rotator
     focal_length = em_lens.focal_length
@@ -667,27 +668,31 @@ def test_electromagnetic_lens():
 def test_electromagnetic_lens_properties():
     """Test ElectromagneticLens focal_length and rotation_angle properties."""
     Rc = 5.3e-4  # rad/AT
-    I0 = 5000.0  # AT
+    turns = 200.0
+    current = 25.0  # turns * current = 5000 AT
+    excitation = turns * current
     Gc = 5e-6    # 1/(AT²·m)
 
-    lens = ElectromagneticLens(z=0.0, I0=I0, Gc=Gc, Rc=Rc)
+    lens = ElectromagneticLens(z=0.0, turns=turns, current=current, Gc=Gc, Rc=Rc)
 
-    # Test focal length: f = 1/(Gc·I0²)
-    expected_f = 1.0 / (Gc * I0**2)
+    # Test focal length: f = 1/(Gc·(turns·current)²)
+    expected_f = 1.0 / (Gc * excitation**2)
     np.testing.assert_allclose(lens.focal_length, expected_f, rtol=1e-10)
 
-    # Test rotation angle: ψ = Rc·I0
-    expected_psi = Rc * I0
+    # Test rotation angle: ψ = Rc·(turns·current)
+    expected_psi = Rc * excitation
     np.testing.assert_allclose(lens.rotation_angle, expected_psi, rtol=1e-10)
+    np.testing.assert_allclose(lens.I0, excitation, rtol=1e-10)
 
 
 def test_electromagnetic_lens_zero_rotation():
     """Test ElectromagneticLens with zero rotation (Rc=0) behaves like pure Lens."""
-    I0 = 5000.0
+    turns = 100.0
+    current = 50.0
     Gc = 5e-6
     Rc = 0.0  # No rotation
 
-    em_lens = ElectromagneticLens(z=0.0, I0=I0, Gc=Gc, Rc=Rc)
+    em_lens = ElectromagneticLens(z=0.0, turns=turns, current=current, Gc=Gc, Rc=Rc)
     pure_lens = Lens(z=0.0, focal_length=em_lens.focal_length)
 
     test_ray = Ray(
@@ -709,3 +714,43 @@ def test_electromagnetic_lens_zero_rotation():
     np.testing.assert_allclose(ray_em.dx, ray_pure.dx, rtol=1e-10)
     np.testing.assert_allclose(ray_em.dy, ray_pure.dy, rtol=1e-10)
     np.testing.assert_allclose(ray_em.pathlength, ray_pure.pathlength, rtol=1e-10)
+
+
+def test_electromagnetic_lens_thick_advances_ray_when_tc_positive():
+    turns = 100.0
+    current = 50.0
+    Gc = 5e-6
+    Rc = 2.0e-4
+
+    lens_thin = ElectromagneticLens(
+        z=0.0,
+        turns=turns,
+        current=current,
+        Gc=Gc,
+        Rc=Rc,
+        Tc=0.0,
+    )
+    lens_with_tc = ElectromagneticLens(
+        z=0.0,
+        turns=turns,
+        current=current,
+        Gc=Gc,
+        Rc=Rc,
+        Tc=1.0e-3,
+    )
+
+    ray = Ray(
+        x=jnp.array(1e-3),
+        y=jnp.array(-0.5e-3),
+        dx=jnp.array(0.005),
+        dy=jnp.array(-0.002),
+        _one=jnp.array(1.0),
+        pathlength=jnp.array(0.0),
+        z=jnp.array(0.0),
+    )
+
+    out_thin = lens_thin(ray)
+    out_tc = lens_with_tc(ray)
+
+    assert float(out_tc.z) > float(out_thin.z)
+    assert float(out_tc.pathlength) > float(out_thin.pathlength)
