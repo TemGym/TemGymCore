@@ -3,6 +3,8 @@ import warnings
 from ase import units
 import jax.numpy as jnp
 
+_E_OVER_2M0C2 = units._e / (2.0 * units._me * units._c**2)
+
 
 def wavelength2energy(wavelength: float) -> float:
     """
@@ -94,6 +96,45 @@ def relativistic_mass_correction(energy: float) -> float:
     return 1 + e * energy / (m_e * c**2)
 
 
+def relativistic_voltage_factor(voltage: float) -> float:
+    """
+    Return the relativistic accelerating-voltage factor V*/V.
+
+    Notes
+    -----
+    V* / V = 1 + eV / (2 m0 c^2)
+    """
+    return 1.0 + _E_OVER_2M0C2 * voltage
+
+
+def effective_accelerating_potential(voltage: float) -> float:
+    """
+    Return the effective relativistic accelerating potential V* [V].
+
+    Notes
+    -----
+    V* = V * (V*/V)
+    """
+    return voltage * relativistic_voltage_factor(voltage)
+
+
+def voltage_scaling_ratio(voltage: float, reference_voltage: float) -> float:
+    """
+    Return V*_ref / V* for scaling voltage-dependent lens constants.
+    """
+    return (
+        effective_accelerating_potential(reference_voltage)
+        / effective_accelerating_potential(voltage)
+    )
+
+
+def relativistic_voltage_correction(voltage: float) -> float:
+    """
+    Backward-compatible alias of :func:`relativistic_voltage_factor`.
+    """
+    return relativistic_voltage_factor(voltage)
+
+
 def energy2sigma(energy: float) -> float:
     lam = energy2wavelength(energy)
     mass = relativistic_mass_correction(energy) * units._me
@@ -145,6 +186,13 @@ def compute_Rc_from_voltage(U_accel: float) -> float:
     K_rot = e * mu_0 / (2.0 * m_e * v_electron)
 
     return K_rot
+
+
+def compute_Kv_from_voltage(U_accel: float) -> float:
+    """
+    Backward-compatible alias of :func:`compute_Rc_from_voltage`.
+    """
+    return compute_Rc_from_voltage(U_accel)
 
 
 def compute_I0_Gc_from_focal_rotation(
