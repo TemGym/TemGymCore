@@ -86,20 +86,15 @@ try:
         legacy_beam_plot_params,
     )
 except Exception:
-    # Plotting has optional dependencies (matplotlib); ignore import errors at package import time
+    # Plotting has optional dependencies (matplotlib); ignore import errors at package import time.
     pass
 
-from .components import NonLinearElectromagneticLens  # noqa: F401
-
-from .tem_model import (  # noqa: F401
-    DialCurve,
-    LensSystemGeometry,
-    LensModel,
-    LensSystem,
-    TEMModel,
-    export_tem_model_json,
-    load_tem_model_json,
-    solve_il_system,
-    build_illumination_system,
-    build_projection_system,
-)
+try:
+    from .microscope_model import (  # noqa: F401
+        LensConfig,
+        OperatingMode,
+        MicroscopeModel,
+    )
+except Exception:
+    # Microscope model imports optional dependencies through components; keep package import robust.
+    pass
