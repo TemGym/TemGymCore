@@ -267,3 +267,63 @@ def compute_NI_Gc_from_lens_parameters(
     Gc = 1.0 / (focal_length * NI**2)
 
     return NI, Gc
+
+
+def compute_rotation_angle_Gc_from_NI_focal_length(
+    NI: float, focal_length: float, Rc: float
+) -> tuple[float, float]:
+    """
+    Compute rotation angle and geometry constant Gc from NI and focal length.
+
+    Given the excitation current (NI) and desired focal length, compute the
+    resulting image rotation angle and required geometry constant.
+
+    Parameters
+    ----------
+    NI : float
+        Ampere Turns (excitation current).
+    focal_length : float
+        Desired focal length [m].
+    Rc : float
+        Rotation constant [rad/AT], computed from voltage via
+        `compute_Kv_from_voltage()`.
+
+    Returns
+    -------
+    rotation_angle : float
+        Resulting image rotation angle [rad].
+    Gc : float
+        Required geometry constant [1/(AT²·m)].
+
+    Notes
+    -----
+    **Forward formulas (from Glaser bell model):**
+
+    - ψ = Rc·NI
+    - Gc = 1/(f·NI²)
+
+    This is the inverse operation of `compute_NI_Gc_from_lens_parameters()`.
+
+    Examples
+    --------
+    >>> from temgym_core.constants import compute_Kv_from_voltage
+    >>> from temgym_core.constants import compute_rotation_angle_Gc_from_NI_focal_length
+    >>>
+    >>> Rc = compute_Kv_from_voltage(200e3)  # 200 kV
+    >>> rotation_angle, Gc = compute_rotation_angle_Gc_from_NI_focal_length(
+    ...     NI=10.0,                # 10 AT
+    ...     focal_length=0.005,     # 5 mm
+    ...     Rc=Rc
+    ... )
+    >>> print(f"ψ = {rotation_angle:.4f} rad, Gc = {Gc:.2e} [1/(AT²·m)]")
+    """
+    if focal_length <= 0:
+        raise ValueError("focal_length must be > 0.")
+
+    # From ψ = Rc·NI
+    rotation_angle = Rc * NI
+
+    # From f = 1/(Gc·NI²), rearrange to Gc = 1/(f·NI²)
+    Gc = 1.0 / (focal_length * NI**2)
+
+    return rotation_angle, Gc
