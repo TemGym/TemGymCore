@@ -195,11 +195,11 @@ def compute_Kv_from_voltage(U_accel: float) -> float:
     return compute_Rc_from_voltage(U_accel)
 
 
-def compute_I0_Gc_from_focal_rotation(
+def compute_NI_Gc_from_lens_parameters(
     focal_length: float, rotation_angle: float, Rc: float
 ) -> tuple[float, float]:
     """
-    Compute excitation current I₀ and geometry constant Gc from target optics.
+    Compute excitation current NI and geometry constant Gc from target optics.
 
     Given desired focal length and image rotation, compute the electromagnetic
     lens parameters needed. This is the inverse of the Glaser model formulas.
@@ -216,8 +216,8 @@ def compute_I0_Gc_from_focal_rotation(
 
     Returns
     -------
-    I0 : float
-        Required excitation current [AT].
+    NI : float
+        Required Ampere Turns.
     Gc: float
         Required geometry constant [1/(AT²·m)].
 
@@ -225,154 +225,45 @@ def compute_I0_Gc_from_focal_rotation(
     -----
     **Inverse formulas:**
 
-    - I₀ = ψ / Rc
+    - NI = ψ / Rc
     - Gc = Rc² / (f·ψ²)
 
     Derived from the Glaser bell model:
 
-    - f = 1/(Gc·I₀²)
-    - ψ = Rc·I₀
+    - f = 1/(Gc·NI²)
+    - ψ = Rc·NI
 
     **Physical interpretation:**
 
-    I₀ is the controllable parameter (coil current × turns).
+    NI is the controllable parameter (coil current × turns).
     Gc encodes fixed geometry (bore radius, gap, pole pieces).
 
-    This function tells you what I₀ to set and what Gc the lens must have
+    This function tells you what NI to set and what Gc the lens must have
     to achieve the target focal length and rotation simultaneously.
 
     Examples
     --------
     >>> from temgym_core.constants import compute_Kv_from_voltage
-    >>> from temgym_core.constants import compute_I0_Gc_from_focal_rotation
+    >>> from temgym_core.constants import compute_NI_Gc_from_lens_parameters
     >>>
     >>> Rc= compute_Kv_from_voltage(200e3)  # 200 kV
-    >>> I0, Gc = compute_I0_Gc_from_focal_rotation(
+    >>> NI, Gc = compute_NI_Gc_from_lens_parameters(
     ...     focal_length=0.005,    # 5 mm
     ...     rotation_angle=1.0,     # 1 radian
     ...     Rc=Rc
     ... )
-    >>> print(f"I0 = {I0:.1f} AT, Gc= {Gc:.2e} [1/(AT²·m)]")
+    >>> print(f"NI = {NI:.1f} AT, Gc= {Gc:.2e} [1/(AT²·m)]")
     """
     if focal_length <= 0:
         raise ValueError("focal_length must be > 0.")
     if Rc == 0:
-        raise ValueError("Rc must be non-zero to compute I0 from rotation.")
+        raise ValueError("Rc must be non-zero to compute NI from rotation.")
 
-    # From ψ = Rc·I₀
-    I0 = rotation_angle / Rc
+    # From ψ = Rc·NI
+    NI = rotation_angle / Rc
 
-    # From f = 1/(Gc·I₀²), rearrange to Gc = 1/(f·I₀²)
+    # From f = 1/(Gc·NI²), rearrange to Gc = 1/(f·NI²)
     # Or equivalently: Gc = Rc²/(f·ψ²)
-    Gc = 1.0 / (focal_length * I0**2)
+    Gc = 1.0 / (focal_length * NI**2)
 
-    return I0, Gc
-
-
-def compute_I0_Cf_from_focal_rotation(
-    focal_length: float, rotation_angle: float, Rc: float
-) -> tuple[float, float]:
-    """
-    Backward-compatible alias for :func:`compute_I0_Gc_from_focal_rotation`.
-
-    Deprecated
-    ----------
-    Use ``compute_I0_Gc_from_focal_rotation`` and ``Gc/Rc`` naming instead of
-    ``Cf/Kv``.
-    """
-    warnings.warn(
-        "`compute_I0_Cf_from_focal_rotation` is deprecated; "
-        "use `compute_I0_Gc_from_focal_rotation`.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return compute_I0_Gc_from_focal_rotation(
-        focal_length=focal_length,
-        rotation_angle=rotation_angle,
-        Rc=Rc,
-    )
-
-
-def compute_I0_from_focal_length(focal_length: float, Gc: float) -> float:
-    """
-    Compute excitation current I₀ from target focal length and known Gc.
-
-    For a physical lens with fixed geometry constant Gc, compute the
-    excitation current needed to achieve a desired focal length.
-
-    Parameters
-    ----------
-    focal_length : float
-        Desired focal length [m].
-    Gc: float
-        Lens geometry constant [1/(AT²·m)], fixed by hardware.
-
-    Returns
-    -------
-    float
-        Required excitation current I₀ [AT].
-
-    Notes
-    -----
-    Formula: I₀ = 1/√(Gc·f)
-
-    Derived from: f = 1/(Gc·I₀²)
-
-    The resulting image rotation will be ψ = Rc·I₀ (not controllable
-    independently when Gc is fixed).
-
-    Examples
-    --------
-    >>> I0 = compute_I0_from_focal_length(
-    ...     focal_length=0.005,  # 5 mm
-    ...     Gc=5e-6              # 1/(AT²·m)
-    ... )
-    >>> print(f"Set I0 = {I0:.1f} AT")
-    """
-    if focal_length <= 0:
-        raise ValueError("focal_length must be > 0.")
-    if Gc <= 0:
-        raise ValueError("Gc must be > 0.")
-    return 1.0 / jnp.sqrt(Gc * focal_length)
-
-
-def compute_I0_from_rotation(rotation_angle: float, Rc: float) -> float:
-    """
-    Compute excitation current I₀ from target image rotation.
-
-    Compute the excitation current needed to achieve a desired image rotation.
-
-    Parameters
-    ----------
-    rotation_angle : float
-        Desired image rotation angle [rad].
-    Rc: float
-        Rotation constant [rad/AT], from `compute_Kv_from_voltage()`.
-
-    Returns
-    -------
-    float
-        Required excitation current I₀ [AT].
-
-    Notes
-    -----
-    Formula: I₀ = ψ/Rc
-
-    Derived from: ψ = Rc·I₀
-
-    The resulting focal length will be f = 1/(Gc·I₀²) (depends on
-    the fixed geometry constant Gc of the lens).
-
-    Examples
-    --------
-    >>> from temgym_core.constants import compute_Kv_from_voltage
-    >>> Rc= compute_Kv_from_voltage(200e3)
-    >>> I0 = compute_I0_from_rotation(
-    ...     rotation_angle=1.0,  # 1 radian
-    ...     Rc=Rc
-    ... )
-    >>> print(f"Set I0 = {I0:.1f} AT")
-    """
-    if Rc == 0:
-        raise ValueError("Rc must be non-zero.")
-    return rotation_angle / Rc
+    return NI, Gc
