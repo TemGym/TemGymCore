@@ -24,11 +24,14 @@ class OperatingMode:
     control_values: np.ndarray
     normalized_currents: np.ndarray
     full_scale_current: float
+    allow_signed_currents: bool = False
+    gc_scales: np.ndarray | None = None
 
     def __post_init__(self):
         control_values = np.asarray(self.control_values, dtype=float)
         normalized_currents = np.asarray(self.normalized_currents, dtype=float)
         full_scale_current = float(self.full_scale_current)
+        allow_signed_currents = bool(self.allow_signed_currents)
 
         if control_values.ndim != 1:
             raise ValueError("control_values must be a 1D array.")
@@ -43,15 +46,38 @@ class OperatingMode:
             raise ValueError(
                 "normalized_currents shape[0] must match len(control_values)."
             )
-        if np.any((normalized_currents < 0.0) | (normalized_currents > 1.0)):
-            raise ValueError("normalized_currents entries must be within [0, 1].")
+        if allow_signed_currents:
+            if np.any((normalized_currents < -1.0) | (normalized_currents > 1.0)):
+                raise ValueError(
+                    "normalized_currents entries must be within [-1, 1] when "
+                    "allow_signed_currents=True."
+                )
+        else:
+            if np.any((normalized_currents < 0.0) | (normalized_currents > 1.0)):
+                raise ValueError("normalized_currents entries must be within [0, 1].")
 
         if full_scale_current <= 0.0:
             raise ValueError("full_scale_current must be > 0.")
 
+        gc_scales = self.gc_scales
+        if gc_scales is not None:
+            gc_scales = np.asarray(gc_scales, dtype=float)
+            if gc_scales.ndim != 2:
+                raise ValueError("gc_scales must be a 2D array when provided.")
+            if gc_scales.shape != normalized_currents.shape:
+                raise ValueError(
+                    "gc_scales shape must match normalized_currents shape."
+                )
+            if np.any(~np.isfinite(gc_scales)):
+                raise ValueError("gc_scales entries must be finite.")
+            if np.any(gc_scales < 0.0):
+                raise ValueError("gc_scales entries must be >= 0.")
+
         self.control_values = control_values
         self.normalized_currents = normalized_currents
         self.full_scale_current = full_scale_current
+        self.allow_signed_currents = allow_signed_currents
+        self.gc_scales = gc_scales
 
     @property
     def n_lenses(self) -> int:
@@ -72,6 +98,20 @@ class OperatingMode:
         return self.full_scale_current * self.interpolate_normalized_currents(
             control_value
         )
+
+    def interpolate_gc_scales(self, control_value: float) -> np.ndarray:
+        if self.gc_scales is None:
+            return np.ones(self.n_lenses, dtype=float)
+
+        value = float(control_value)
+        out = np.empty(self.n_lenses, dtype=float)
+        for i in range(self.n_lenses):
+            out[i] = np.interp(
+                value,
+                self.control_values,
+                self.gc_scales[:, i],
+            )
+        return out
 
 
 @dataclass
@@ -127,6 +167,7 @@ class MicroscopeModel:
 
         mode = self.modes[mode_name]
         currents = mode.interpolate_currents(control_value)
+        gc_scale_mode = mode.interpolate_gc_scales(control_value)
 
         voltage = float(self.voltage)
         reference_voltage = float(self.reference_voltage)
@@ -147,7 +188,7 @@ class MicroscopeModel:
                     z=float(lens.z_position),
                     turns=float(lens.turns),
                     current=float(currents[i]),
-                    Gc=float(lens.Gc) * gc_scale,
+                    Gc=float(lens.Gc) * gc_scale * float(gc_scale_mode[i]),
                     Rc=rc_calibration * rc_voltage_base,
                     Tc=float(lens.Tc) * tc_scale,
                 )

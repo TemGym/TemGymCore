@@ -44,6 +44,54 @@ def test_operating_mode_validation():
             full_scale_current=1.0,
         )
 
+    with pytest.raises(ValueError):
+        OperatingMode(
+            control_values=np.array([10.0, 20.0]),
+            normalized_currents=np.array([[-0.1], [0.2]]),
+            full_scale_current=1.0,
+        )
+
+
+def test_operating_mode_signed_currents_validation():
+    mode = OperatingMode(
+        control_values=np.array([0.0, 1.0]),
+        normalized_currents=np.array([[-0.2, 0.1], [0.3, -0.5]]),
+        full_scale_current=2.0,
+        allow_signed_currents=True,
+    )
+    np.testing.assert_allclose(
+        mode.interpolate_normalized_currents(0.5),
+        [0.05, -0.2],
+        rtol=0.0,
+        atol=1e-12,
+    )
+
+    with pytest.raises(ValueError):
+        OperatingMode(
+            control_values=np.array([0.0, 1.0]),
+            normalized_currents=np.array([[-1.2], [0.0]]),
+            full_scale_current=1.0,
+            allow_signed_currents=True,
+        )
+
+
+def test_operating_mode_gc_scales_validation():
+    with pytest.raises(ValueError):
+        OperatingMode(
+            control_values=np.array([0.0, 1.0]),
+            normalized_currents=np.array([[0.1], [0.2]]),
+            full_scale_current=1.0,
+            gc_scales=np.array([1.0, 1.1]),
+        )
+
+    with pytest.raises(ValueError):
+        OperatingMode(
+            control_values=np.array([0.0, 1.0]),
+            normalized_currents=np.array([[0.1], [0.2]]),
+            full_scale_current=1.0,
+            gc_scales=np.array([[1.0], [-0.2]]),
+        )
+
 
 def test_microscope_model_build_components_voltage_scaling():
     v_ref = 100e3
@@ -122,3 +170,31 @@ def test_microscope_model_unknown_mode():
 
     with pytest.raises(KeyError):
         model.build_components("unknown", 0.5)
+
+
+def test_microscope_model_build_components_with_gc_scales():
+    v_ref = 100e3
+    voltage = 200e3
+    rc_ref_base = float(compute_Rc_from_voltage(v_ref))
+
+    mode = OperatingMode(
+        control_values=np.array([0.0, 1.0]),
+        normalized_currents=np.array([[0.5], [0.5]]),
+        full_scale_current=10.0,
+        gc_scales=np.array([[1.0], [3.0]]),
+    )
+
+    model = MicroscopeModel(
+        voltage=voltage,
+        reference_voltage=v_ref,
+        lenses=(LensConfig(name="L1", z_position=0.1, turns=100.0, Gc=5.0e-6, Rc=rc_ref_base),),
+        modes={"m": mode},
+    )
+
+    comp = model.build_components("m", 0.5)[0]
+    expected_gc = (
+        5.0e-6
+        * float(voltage_scaling_ratio(voltage, v_ref))
+        * 2.0  # interpolated between 1.0 and 3.0
+    )
+    np.testing.assert_allclose(float(comp.Gc), expected_gc, rtol=1e-12, atol=0.0)
