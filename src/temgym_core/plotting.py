@@ -127,6 +127,18 @@ def _detector_half_width_x(detector: Detector) -> float:
         return float(detector.pixel_size[0] * detector.shape[0] / 2.0)
 
 
+def _detector_half_width_y(detector: Detector) -> float:
+    # Detector is ShapeYX / ScaleYX, i.e. (y, x). Height in y uses index 0.
+    try:
+        return float(detector.pixel_size[0] * detector.shape[0] / 2.0)
+    except Exception:
+        return float(detector.pixel_size[1] * detector.shape[1] / 2.0)
+
+
+def _detector_radius(detector: Detector) -> float:
+    return float(np.hypot(_detector_half_width_x(detector), _detector_half_width_y(detector)))
+
+
 def _style_axes(ax: mpl.axes.Axes, p: PlotParams) -> None:
     ax.figure.patch.set_facecolor(p.figure_facecolor)
     ax.set_facecolor(p.axes_facecolor)
@@ -167,6 +179,73 @@ def _label_component(
     )
 
 
+def _half_plot_metric(rays: Ray) -> np.ndarray:
+    x0 = np.ravel(np.atleast_1d(np.asarray(rays.x, dtype=float)))
+    dx0 = np.ravel(np.atleast_1d(np.asarray(rays.dx, dtype=float)))
+    n = x0.size
+
+    if dx0.size not in (1, n):
+        raise ValueError(
+            "Cannot infer half-ray split: rays.dx must be scalar or match rays.x size."
+        )
+    if dx0.size == 1 and n > 1:
+        dx0 = np.broadcast_to(dx0, (n,))
+
+    x_scale = max(1.0, float(np.max(np.abs(x0))))
+    x_tol = 10.0 * np.finfo(float).eps * x_scale
+    if float(np.max(x0) - np.min(x0)) > x_tol:
+        return x0
+
+    dx_scale = max(1.0, float(np.max(np.abs(dx0))))
+    dx_tol = 10.0 * np.finfo(float).eps * dx_scale
+    if float(np.max(dx0) - np.min(dx0)) > dx_tol:
+        return dx0
+
+    # Final fallback: deterministic split by index order.
+    return np.arange(n, dtype=float) - 0.5 * (n - 1)
+
+
+def _subset_rays_by_half_sign(
+    rays: Ray,
+    ray_half_sign: int | None,
+) -> Ray:
+    if ray_half_sign is None:
+        return rays
+
+    sign = int(ray_half_sign)
+    if sign not in (-1, 1):
+        raise ValueError("ray_half_sign must be one of {None, -1, +1}.")
+
+    metric = _half_plot_metric(rays)
+    if metric.size <= 1:
+        return rays
+
+    metric_scale = max(1.0, float(np.max(np.abs(metric))))
+    metric_tol = 10.0 * np.finfo(float).eps * metric_scale
+
+    if sign > 0:
+        keep = metric >= -metric_tol
+    else:
+        keep = metric <= metric_tol
+
+    idx = np.flatnonzero(keep)
+    if idx.size == 0:
+        idx = np.asarray([int(np.argmax(sign * metric))], dtype=int)
+    return rays[idx]
+
+
+def _ray_side_sign_from_metric(rays: Ray) -> np.ndarray:
+    metric = np.ravel(np.atleast_1d(np.asarray(_half_plot_metric(rays), dtype=float)))
+    if metric.size == 0:
+        return metric
+    scale = max(1.0, float(np.max(np.abs(metric))))
+    tol = 10.0 * np.finfo(float).eps * scale
+    sign = np.zeros_like(metric)
+    sign[metric > tol] = 1.0
+    sign[metric < -tol] = -1.0
+    return sign
+
+
 def plot_model(
     components: Sequence[Component],
     *,
@@ -175,6 +254,10 @@ def plot_model(
     plot_params: PlotParams = legacy_beam_plot_params(),
     ax: mpl.axes.Axes | None = None,
     band_mode: str = "fill",  # "fill" (envelope fill) or "lines" (draw lines between rays)
+    ray_coordinate: str = "x",  # "x" or "r" (sqrt(x^2 + y^2))
+    ray_half_sign: int | None = None,  # None=all rays, +1=positive half, -1=negative half
+    r_side_by_sign: bool = False,
+    break_same_z_jumps: bool = True,
     yscale: str = "linear",   # "linear", "log", or "symlog"
     y_linthresh: float = 1e-6,  # linthresh for symlog
     include_input_rays: bool = True,
@@ -199,6 +282,24 @@ def plot_model(
     band_mode : {"fill", "lines"}, default "fill"
         "fill": fill between the two edge rays (envelope).
         "lines": draw horizontal line segments between adjacent rays at each z.
+    ray_coordinate : {"x", "r"}, default "x"
+        Horizontal coordinate used for plotting rays.
+        "x" uses x position; "r" uses radial magnitude sqrt(x^2 + y^2),
+        which is invariant under pure x/y rotations.
+    ray_half_sign : {None, -1, +1}, default None
+        Optionally plot only one half of the input `rays` bundle.
+        The split is inferred from the initial bundle sign (x if spread exists,
+        otherwise dx). Use +1 for the non-negative half and -1 for the
+        non-positive half. `solution_rays` are not filtered.
+    r_side_by_sign : bool, default False
+        If True and `ray_coordinate="r"`, apply a per-ray sign inferred from
+        the input bundle (x if spread exists, otherwise dx) and plot signed
+        radius (±sqrt(x^2 + y^2)). This places rays on left/right without
+        duplicating mirrored copies.
+    break_same_z_jumps : bool, default True
+        If True, split polylines where successive samples have the same z but
+        different x (avoids horizontal jump segments at component planes). Set
+        False to keep those same-z jumps visually connected.
     yscale : {"linear", "log", "symlog"}, default "linear"
         Set y-axis (z) scaling. "log" requires all z>0; otherwise falls back to "symlog".
     y_linthresh : float, default 1e-6
@@ -214,13 +315,20 @@ def plot_model(
     p = plot_params
     if rays is None:
         raise ValueError("plot_model requires `rays` to be provided.")
+    coord_mode = str(ray_coordinate).lower().strip()
+    if coord_mode not in ("x", "r"):
+        raise ValueError("ray_coordinate must be one of {'x', 'r'}.")
+    side_sign_in_r = bool(r_side_by_sign and coord_mode == "r")
+    two_sided_r = bool(side_sign_in_r)
+    rays_for_plot = _subset_rays_by_half_sign(rays, ray_half_sign)
+    radial_sign = _ray_side_sign_from_metric(rays_for_plot) if side_sign_in_r else None
 
     # Accumulate rays after each step (including propagations)
-    steps = tuple(run_iter_vmapped(rays, components))
+    steps = tuple(run_iter_vmapped(rays_for_plot, components))
     if include_input_rays:
-        steps = (rays,) + steps
+        steps = (rays_for_plot,) + steps
 
-    X, Z = _stack_ray_positions(steps)
+    X, Z = _stack_ray_positions(steps, ray_coordinate=coord_mode, radial_sign=radial_sign)
 
     # Optional solution-ray overlay (waist/divergence basis)
     X_solution = None
@@ -229,7 +337,12 @@ def plot_model(
         solution_steps = tuple(run_iter_vmapped(solution_rays, components))
         if include_input_rays:
             solution_steps = (solution_rays,) + solution_steps
-        X_solution, Z_solution = _stack_ray_positions(solution_steps)
+        solution_radial_sign = _ray_side_sign_from_metric(solution_rays) if side_sign_in_r else None
+        X_solution, Z_solution = _stack_ray_positions(
+            solution_steps,
+            ray_coordinate=coord_mode,
+            radial_sign=solution_radial_sign,
+        )
         if X_solution.size > 0 and X_solution.shape[1] != 2:
             raise ValueError(
                 "`solution_rays` must contain exactly 2 rays "
@@ -250,10 +363,11 @@ def plot_model(
     detector_range_x = 0.0
     for c in components:
         if isinstance(c, Detector):
-            # Width in x direction
+            # Detector horizontal range in current plotting coordinate.
+            detector_extent = _detector_half_width_x(c) if coord_mode == "x" else _detector_radius(c)
             detector_range_x = max(
                 detector_range_x,
-                _detector_half_width_x(c),
+                detector_extent,
             )
 
     if p.fixed_xmax is None:
@@ -318,7 +432,10 @@ def plot_model(
     if scale == "log":
         yticks = [t for t in yticks if t > 0]
     ax.set_yticks(yticks)
-    ax.set_xlim([-x_max_plot, x_max_plot])
+    if coord_mode == "r" and not two_sided_r:
+        ax.set_xlim([0.0, x_max_plot])
+    else:
+        ax.set_xlim([-x_max_plot, x_max_plot])
     ax.set_ylim([max_z, min_z])  # invert z-axis (optical drawings convention)
 
     if p.show_side_guides and component_x > 0:
@@ -334,13 +451,26 @@ def plot_model(
             )
 
     # Rays
-    _ = plot_ray_bundle(ax, X, Z, p, band_mode=band_mode)
+    _ = plot_ray_bundle(
+        ax,
+        X,
+        Z,
+        p,
+        band_mode=band_mode,
+        break_same_z_jumps=break_same_z_jumps,
+    )
     if X_solution is not None and X_solution.size > 0:
-        _ = plot_solution_rays(ax, X_solution, Z_solution, p)
+        _ = plot_solution_rays(
+            ax,
+            X_solution,
+            Z_solution,
+            p,
+            break_same_z_jumps=break_same_z_jumps,
+        )
 
     # Components
     aspect = p.figsize[1] / p.figsize[0]
-    left_x = -component_x
+    left_x = 0.0 if (coord_mode == "r" and not two_sided_r) else -component_x
     right_x = component_x
 
     def _draw_deflector(z_pos: float) -> None:
@@ -385,8 +515,15 @@ def plot_model(
             )
         elif isinstance(c, Detector):
             _label_component(ax, label_x, c.z, name, p)
-            det_rx = _detector_half_width_x(c)
-            ax.plot([-det_rx, det_rx], [c.z, c.z], color="dimgrey", zorder=1000, linewidth=5)
+            if coord_mode == "r":
+                det_rx = _detector_radius(c)
+                if two_sided_r:
+                    ax.plot([-det_rx, det_rx], [c.z, c.z], color="dimgrey", zorder=1000, linewidth=5)
+                else:
+                    ax.plot([0.0, det_rx], [c.z, c.z], color="dimgrey", zorder=1000, linewidth=5)
+            else:
+                det_rx = _detector_half_width_x(c)
+                ax.plot([-det_rx, det_rx], [c.z, c.z], color="dimgrey", zorder=1000, linewidth=5)
         elif isinstance(c, (DeflectionBiprism, PhaseBiprism)):
             ax.add_patch(plt.Circle((0, c.z), p.biprism_radius, edgecolor="k", facecolor="w", zorder=1000))
         else:
@@ -404,6 +541,7 @@ def plot_ray_bundle(
     p: PlotParams,
     *,
     band_mode: str = "fill",
+    break_same_z_jumps: bool = True,
 ):
     """
     Plot a ray bundle and optional band/envelope.
@@ -420,10 +558,16 @@ def plot_ray_bundle(
         Plot styling parameters.
     band_mode : {"fill", "lines"}
         "fill": fill between edge rays; "lines": horizontal segments between rays.
+    break_same_z_jumps : bool, default True
+        If True, insert NaN separators where equal-z samples would otherwise
+        draw horizontal jump segments.
     """
     nrays = X.shape[1] if X.ndim == 2 else 1
     mode = str(band_mode).lower().strip()
-    X_plot, Z_plot = _break_same_z_jumps(X, Z)
+    if break_same_z_jumps:
+        X_plot, Z_plot = _break_same_z_jumps(X, Z)
+    else:
+        X_plot, Z_plot = _coerce_plot_arrays(X, Z)
 
     # Draw rays (optionally as "solid beam" with faint interior lines)
     ray_lines = []
@@ -520,6 +664,8 @@ def plot_solution_rays(
     X_solution: np.ndarray,
     Z_solution: np.ndarray,
     p: PlotParams,
+    *,
+    break_same_z_jumps: bool = True,
 ):
     """Plot the two solution rays (waist and divergence)."""
     if X_solution.ndim != 2 or X_solution.shape[1] != 2:
@@ -527,7 +673,10 @@ def plot_solution_rays(
             "Expected `X_solution` shape (nsteps, 2) for "
             "(waist ray, divergence ray)."
         )
-    X_plot, Z_plot = _break_same_z_jumps(X_solution, Z_solution)
+    if break_same_z_jumps:
+        X_plot, Z_plot = _break_same_z_jumps(X_solution, Z_solution)
+    else:
+        X_plot, Z_plot = _coerce_plot_arrays(X_solution, Z_solution)
 
     waist_line = ax.plot(
         X_plot[:, 0],
@@ -553,17 +702,25 @@ def plot_solution_rays(
     }
 
 
-def _break_same_z_jumps(
+def _coerce_plot_arrays(
     X: np.ndarray,
     Z: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Insert NaN separators where equal-z samples would draw x jumps."""
     X_arr = np.asarray(X, dtype=float)
     Z_arr = np.asarray(Z, dtype=float)
     if X_arr.ndim == 1:
         X_arr = X_arr[:, None]
     if X_arr.ndim != 2 or Z_arr.ndim != 1 or X_arr.shape[0] != Z_arr.shape[0]:
         raise ValueError("Expected X shape (nsteps, nrays) and Z shape (nsteps,).")
+    return X_arr, Z_arr
+
+
+def _break_same_z_jumps(
+    X: np.ndarray,
+    Z: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Insert NaN separators where equal-z samples would draw x jumps."""
+    X_arr, Z_arr = _coerce_plot_arrays(X, Z)
     if X_arr.shape[0] < 2:
         return X_arr, Z_arr
 
@@ -604,12 +761,43 @@ def _break_same_z_jumps(
 
 # Functionalized: build X (positions) and Z (z positions) from simulation steps
 def _stack_ray_positions(
-    steps_seq: Sequence[Ray]
+    steps_seq: Sequence[Ray],
+    *,
+    ray_coordinate: str = "x",
+    radial_sign: np.ndarray | None = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    coord_mode = str(ray_coordinate).lower().strip()
+    if coord_mode not in ("x", "r"):
+        raise ValueError("ray_coordinate must be one of {'x', 'r'}.")
+    if radial_sign is not None and coord_mode != "r":
+        raise ValueError("`radial_sign` is only valid when ray_coordinate='r'.")
+
+    sign_arr: np.ndarray | None = None
+    if radial_sign is not None:
+        sign_arr = np.ravel(np.atleast_1d(np.asarray(radial_sign, dtype=float)))
+
     xs: list[np.ndarray] = []
     zs: list[float] = []
     for r in steps_seq:
-        x = np.atleast_1d(np.asarray(r.x))
+        x_arr = np.asarray(r.x, dtype=float)
+        if coord_mode == "r":
+            y_arr = np.asarray(r.y, dtype=float)
+            x_b, y_b = np.broadcast_arrays(x_arr, y_arr)
+            rmag = np.sqrt(x_b * x_b + y_b * y_b)
+            if sign_arr is not None:
+                sign_use = sign_arr
+                r_flat = np.ravel(np.atleast_1d(rmag))
+                if sign_use.size not in (1, r_flat.size):
+                    raise ValueError(
+                        "radial_sign size must be scalar or match rays per step."
+                    )
+                if sign_use.size == 1 and r_flat.size > 1:
+                    sign_use = np.broadcast_to(sign_use, (r_flat.size,))
+                x = r_flat * sign_use
+            else:
+                x = np.atleast_1d(rmag)
+        else:
+            x = np.atleast_1d(x_arr)
         z_arr = np.asarray(r.z)
         z_val = float(np.mean(z_arr))  # z identical across bundle; use scalar mean
         xs.append(x)
