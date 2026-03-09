@@ -82,6 +82,7 @@ class PixelsYX(NamedTuple):
 try:
     from .plotting import (  # noqa: F401
         plot_model,
+        plot_model_plotly,
         PlotParams,
         legacy_beam_plot_params,
     )
