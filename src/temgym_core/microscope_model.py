@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from typing import Mapping
 
 import numpy as np
@@ -121,6 +122,7 @@ class MicroscopeModel:
     modes: Mapping[str, OperatingMode]
     reference_voltage: float | None = None
     tc_voltage_exponent: float = 0.0
+    auxiliary: dict[str, Any] | None = None
 
     def __post_init__(self):
         voltage = float(self.voltage)
@@ -146,6 +148,11 @@ class MicroscopeModel:
         self.modes = dict(self.modes)
         if len(self.modes) == 0:
             raise ValueError("modes must not be empty.")
+
+        if self.auxiliary is None:
+            self.auxiliary = {}
+        else:
+            self.auxiliary = dict(self.auxiliary)
 
         n_lenses = len(self.lenses)
         for mode_name, mode in self.modes.items():
@@ -195,3 +202,79 @@ class MicroscopeModel:
             )
 
         return tuple(components)
+
+    def to_npz(self, filepath: str) -> None:
+        import json
+
+        data = {}
+
+        metadata = {
+            "voltage": float(self.voltage),
+            "reference_voltage": float(self.reference_voltage),
+            "tc_voltage_exponent": float(self.tc_voltage_exponent),
+            "auxiliary": self.auxiliary,
+            "lenses": [
+                {
+                    "name": l.name,
+                    "z_position": l.z_position,
+                    "turns": l.turns,
+                    "Gc": l.Gc,
+                    "Rc": l.Rc,
+                    "Tc": l.Tc,
+                }
+                for l in self.lenses
+            ],
+            "modes": list(self.modes.keys()),
+        }
+        data["metadata.json"] = np.array([json.dumps(metadata)])
+
+        for mode_name, mode in self.modes.items():
+            mode_meta = {
+                "full_scale_current": float(mode.full_scale_current),
+                "allow_signed_currents": bool(mode.allow_signed_currents),
+                "has_gc_scales": mode.gc_scales is not None,
+            }
+            data[f"mode_{mode_name}_meta.json"] = np.array([json.dumps(mode_meta)])
+            data[f"mode_{mode_name}_control_values"] = mode.control_values
+            data[f"mode_{mode_name}_normalized_currents"] = mode.normalized_currents
+            if mode.gc_scales is not None:
+                data[f"mode_{mode_name}_gc_scales"] = mode.gc_scales
+
+        np.savez(filepath, **data)
+
+    @classmethod
+    def from_npz(cls, filepath: str) -> MicroscopeModel:
+        import json
+
+        with np.load(filepath) as f:
+            meta = json.loads(str(f["metadata.json"][0]))
+
+            lenses = tuple(LensConfig(**lc) for lc in meta["lenses"])
+
+            modes = {}
+            for mode_name in meta["modes"]:
+                mode_meta = json.loads(str(f[f"mode_{mode_name}_meta.json"][0]))
+                control_values = f[f"mode_{mode_name}_control_values"]
+                normalized_currents = f[f"mode_{mode_name}_normalized_currents"]
+                gc_scales = (
+                    f[f"mode_{mode_name}_gc_scales"]
+                    if mode_meta["has_gc_scales"]
+                    else None
+                )
+
+                modes[mode_name] = OperatingMode(
+                    control_values=control_values,
+                    normalized_currents=normalized_currents,
+                    full_scale_current=mode_meta["full_scale_current"],
+                    allow_signed_currents=mode_meta["allow_signed_currents"],
+                    gc_scales=gc_scales,
+                )
+
+            return cls(
+                voltage=meta["voltage"],
+                lenses=lenses,
+                modes=modes,
+                reference_voltage=meta["reference_voltage"],
+                tc_voltage_exponent=meta["tc_voltage_exponent"],
+                auxiliary=meta.get("auxiliary", {}),
+            )

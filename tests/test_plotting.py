@@ -7,7 +7,7 @@ import pytest
 
 from temgym_core.constants import energy2wavelength
 from temgym_core.components import ElectromagneticLens, Plane
-from temgym_core.plotting import plot_model, PlotParams
+from temgym_core.plotting import plot_model, PlotParams, _stack_ray_positions, _compute_cumulative_rotation
 from temgym_core.source import make_waist_divergence_rays
 from temgym_core.ray import Ray
 
@@ -239,12 +239,165 @@ def test_plot_model_r_coordinate_is_rotation_invariant():
         plt.close(fig_r)
 
 
+def test_plot_model_x_rot_removes_rotation_jump():
+    """x_rot mode should eliminate same-z jumps caused by EM lens rotation."""
+    components = (
+        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
+        Plane(z=2.0),
+    )
+    rays = Ray(
+        x=np.asarray([1e-6], dtype=float),
+        y=np.asarray([0.0], dtype=float),
+        dx=np.asarray([0.0], dtype=float),
+        dy=np.asarray([0.0], dtype=float),
+        z=np.asarray([0.0], dtype=float),
+        pathlength=np.asarray([0.0], dtype=float),
+    )
+
+    fig_x, ax_x = plot_model(
+        components,
+        rays=rays,
+        include_input_rays=True,
+        ray_coordinate="x",
+        break_same_z_jumps=True,
+    )
+    fig_rot, ax_rot = plot_model(
+        components,
+        rays=rays,
+        include_input_rays=True,
+        ray_coordinate="x_rot",
+        break_same_z_jumps=True,
+    )
+
+    try:
+        nan_lines_x = [
+            line for line in ax_x.lines
+            if np.any(np.isnan(np.asarray(line.get_xdata(), dtype=float)))
+        ]
+        nan_lines_rot = [
+            line for line in ax_rot.lines
+            if np.any(np.isnan(np.asarray(line.get_xdata(), dtype=float)))
+        ]
+        # In lab-frame x the rotation introduces a same-z jump;
+        # in x_rot that jump vanishes.
+        assert nan_lines_x
+        assert not nan_lines_rot
+    finally:
+        plt.close(fig_x)
+        plt.close(fig_rot)
+
+
+def test_plot_model_y_mode_extracts_y_coordinate():
+    """y mode should plot lab-frame y position."""
+    components = (Plane(z=1.0),)
+    rays = Ray(
+        x=np.asarray([0.0], dtype=float),
+        y=np.asarray([5e-4], dtype=float),
+        dx=np.asarray([0.0], dtype=float),
+        dy=np.asarray([0.0], dtype=float),
+        z=np.asarray([0.0], dtype=float),
+        pathlength=np.asarray([0.0], dtype=float),
+    )
+    params = PlotParams(solid_beam=False, show_side_guides=False)
+
+    fig, ax = plot_model(
+        components,
+        rays=rays,
+        include_input_rays=True,
+        ray_coordinate="y",
+        break_same_z_jumps=False,
+        plot_params=params,
+    )
+
+    try:
+        # Single ray -> single polyline; check it carries the y value.
+        assert len(ax.lines) >= 1
+        x_data = np.asarray(ax.lines[0].get_xdata(), dtype=float)
+        np.testing.assert_allclose(x_data, 5e-4, atol=1e-12)
+    finally:
+        plt.close(fig)
+
+
+def test_compute_cumulative_rotation_matches_em_lenses():
+    em1 = ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=0.5)
+    em2 = ElectromagneticLens(z=2.0, turns=1.0, current=2.0, Gc=1.0, Rc=0.3)
+    components = (em1, Plane(z=1.5), em2)
+
+    angles = _compute_cumulative_rotation(components, include_input_rays=True)
+
+    # include_input_rays adds 1 entry; then 2 per component = 7 total
+    assert angles.shape == (7,)
+    # Input ray: 0
+    assert angles[0] == 0.0
+    # After propagation to em1: 0
+    assert angles[1] == 0.0
+    # After em1 applied: Rc * excitation = 0.5 * 1 = 0.5
+    np.testing.assert_allclose(angles[2], 0.5)
+    # After propagation to Plane: still 0.5
+    np.testing.assert_allclose(angles[3], 0.5)
+    # After Plane applied: still 0.5
+    np.testing.assert_allclose(angles[4], 0.5)
+    # After propagation to em2: still 0.5
+    np.testing.assert_allclose(angles[5], 0.5)
+    # After em2 applied: 0.5 + 0.3*2 = 1.1
+    np.testing.assert_allclose(angles[6], 1.1)
+
+
+def test_plot_model_x_corot_alias_still_works():
+    """Legacy alias x_corot should produce identical results to x_rot."""
+    components = (
+        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
+        Plane(z=2.0),
+    )
+    rays = Ray(
+        x=np.asarray([1e-6], dtype=float),
+        y=np.asarray([0.0], dtype=float),
+        dx=np.asarray([0.0], dtype=float),
+        dy=np.asarray([0.0], dtype=float),
+        z=np.asarray([0.0], dtype=float),
+        pathlength=np.asarray([0.0], dtype=float),
+    )
+
+    fig_rot, ax_rot = plot_model(
+        components,
+        rays=rays,
+        include_input_rays=True,
+        ray_coordinate="x_rot",
+        break_same_z_jumps=False,
+    )
+    fig_alias, ax_alias = plot_model(
+        components,
+        rays=rays,
+        include_input_rays=True,
+        ray_coordinate="x_corot",
+        break_same_z_jumps=False,
+    )
+
+    try:
+        assert len(ax_rot.lines) == len(ax_alias.lines)
+        for l_rot, l_alias in zip(ax_rot.lines, ax_alias.lines):
+            np.testing.assert_allclose(
+                np.asarray(l_rot.get_xdata(), dtype=float),
+                np.asarray(l_alias.get_xdata(), dtype=float),
+            )
+    finally:
+        plt.close(fig_rot)
+        plt.close(fig_alias)
+
+
 def test_plot_model_rejects_invalid_ray_coordinate():
     components = (Plane(z=1.0),)
     rays = _single_center_ray()
 
     with pytest.raises(ValueError, match="ray_coordinate"):
         plot_model(components, rays=rays, ray_coordinate="bad-mode")
+
+
+def test_stack_ray_positions_rejects_radial_sign_with_non_r_mode():
+    rays = _single_center_ray()
+
+    with pytest.raises(ValueError, match="radial_sign"):
+        _stack_ray_positions((rays,), ray_coordinate="x_rot", radial_sign=np.asarray([1.0]))
 
 
 def test_plot_model_ray_half_sign_selects_positive_or_negative_half():
