@@ -10,7 +10,7 @@ def evaluate_gaussians_gpu_kernel(
     r_centre: jnp.ndarray,      # (N,2) float64
     dr: jnp.ndarray,            # (N,2) float64
     amplitude: jnp.ndarray,     # (N,) complex128
-    pathlength: jnp.ndarray,    # (N,) float64  <-- NEW
+    pathlength: jnp.ndarray,    # (N,) float64
     Q_inv: jnp.ndarray,         # (N,2,2) complex128
     k: jnp.ndarray,             # (N,) float64
     r2: jnp.ndarray,            # (P,2) float64
@@ -19,194 +19,121 @@ def evaluate_gaussians_gpu_kernel(
     tile_beams: int = 16,
 ):
     """
-    Computes sum_b amplitude_b * exp( i * k_b * (pathlength_b
-                + delta·dr_b + 0.5 * delta^T Q_inv_b delta) )
-    where delta = (r - r_b).
+    Evaluate sum_b amp_b * exp(i*k_b*(path_b + d·dr_b + 0.5*d^T Q_inv_b d))
+    where d = r2 - r_centre_b, using a tiled Pallas/Triton kernel.
+
+    All per-beam quantities are packed into a single (N, 12) array on the host
+    with k folded into every phase coefficient, so the inner kernel loop
+    contains no per-beam k multiplications.
     """
+    N, P = r_centre.shape[0], r2.shape[0]
+    f = jnp.float64
 
-    # Shapes
-    N = r_centre.shape[0]
-    P = r2.shape[0]
+    # Symmetrize Q_inv: after this Qxy == Qyx
+    Q = jnp.asarray(Q_inv, jnp.complex128)
+    Q = 0.5 * (Q + jnp.swapaxes(Q, -1, -2))
 
-    # Dtypes
-    r_dtype = jnp.float64
-    c_dtype = jnp.complex128
+    kf = jnp.asarray(k, f)
+    k_half = 0.5 * kf
 
-    # --- Host copies ---
-    r2_f = jnp.asarray(r2, r_dtype)
-    r_centref = jnp.asarray(r_centre, r_dtype)
-    drf = jnp.asarray(dr, r_dtype)
-    Qc = jnp.asarray(Q_inv, c_dtype)
-    Qc = 0.5 * (Qc + jnp.swapaxes(Qc, -1, -2))  # symmetrize
+    # Fold pathlength into amplitude: amp * exp(i*k*path)
+    amp = jnp.asarray(amplitude, jnp.complex128) * jnp.exp(
+        1j * kf * jnp.asarray(pathlength, f)
+    )
 
-    kf = jnp.asarray(k, r_dtype)
-    path = jnp.asarray(pathlength, r_dtype)
+    # Pack all per-beam scalars into (N, 12), pre-multiplying k into every
+    # phase coefficient. After symmetrization the cross-term is 2*Qxy;
+    # combined with the 0.5 prefactor: 0.5*k*2*Qxy = k*Qxy.
+    rc = jnp.asarray(r_centre, f)
+    drf = jnp.asarray(dr, f)
+    beams = jnp.column_stack([
+        rc[:, 0],                           # 0  mx
+        rc[:, 1],                           # 1  my
+        kf * drf[:, 0],                     # 2  k·drx
+        kf * drf[:, 1],                     # 3  k·dry
+        k_half * jnp.real(Q[:, 0, 0]),      # 4  ½k·Re(Qxx)
+        k_half * jnp.imag(Q[:, 0, 0]),      # 5  ½k·Im(Qxx)
+        kf * jnp.real(Q[:, 0, 1]),          # 6  k·Re(Qxy)  (= ½k·2Re(Qxy))
+        kf * jnp.imag(Q[:, 0, 1]),          # 7  k·Im(Qxy)
+        k_half * jnp.real(Q[:, 1, 1]),      # 8  ½k·Re(Qyy)
+        k_half * jnp.imag(Q[:, 1, 1]),      # 9  ½k·Im(Qyy)
+        jnp.real(amp),                      # 10 Re(amp)
+        jnp.imag(amp),                      # 11 Im(amp)
+    ])
 
-    amp = jnp.asarray(amplitude, c_dtype)
-    amp_r = jnp.real(amp)
-    amp_i = jnp.imag(amp)
+    # Column indices
+    MX, MY = 0, 1
+    KDX, KDY = 2, 3
+    QR_XX, QI_XX, QR_XY, QI_XY, QR_YY, QI_YY = 4, 5, 6, 7, 8, 9
+    AR, AI = 10, 11
 
-    # Extract Q_inv real/imag
-    def split_re_im(x):
-        return jnp.real(x).astype(r_dtype), jnp.imag(x).astype(r_dtype)
+    # Tiling & padding
+    T_P, T_B = int(tile_pixels), int(tile_beams)
+    grid_n = -(-P // T_P)
+    n_btiles = -(-N // T_B)
 
-    Qxxr, Qxxi = split_re_im(Qc[:, 0, 0])
-    Qxyr, Qxyi = split_re_im(Qc[:, 0, 1])
-    Qyxr, Qyxi = split_re_im(Qc[:, 1, 0])
-    Qyyr, Qyyi = split_re_im(Qc[:, 1, 1])
+    def _pad(x, n):
+        d = n - x.shape[0]
+        return jnp.pad(x, ((0, d),) + ((0, 0),) * (x.ndim - 1)) if d > 0 else x
 
-    # Extract slopes
-    drx = drf[:, 0]
-    dry = drf[:, 1]
+    det = _pad(jnp.asarray(r2, f), grid_n * T_P)
+    beams = _pad(beams, n_btiles * T_B)
 
-    # Tiling parameters
-    T_PIX = int(tile_pixels)
-    T_BEAMS = int(tile_beams)
-
-    # Pad detector/beams to tile multiples so the kernel never performs OOB
-    # ref indexing; this keeps the kernel API-compatible across Pallas changes.
-    grid_n = (P + T_PIX - 1) // T_PIX
-    P_pad = grid_n * T_PIX
-
-    num_beam_tiles = (N + T_BEAMS - 1) // T_BEAMS
-    N_pad = num_beam_tiles * T_BEAMS
-
-    def _pad_rows(x, target_rows: int):
-        pad_rows = target_rows - x.shape[0]
-        if pad_rows <= 0:
-            return x
-        pad_width = ((0, pad_rows),) + ((0, 0),) * (x.ndim - 1)
-        return jnp.pad(x, pad_width, mode="constant")
-
-    r2_f = _pad_rows(r2_f, P_pad)
-
-    r_centref = _pad_rows(r_centref, N_pad)
-    drx = _pad_rows(drx, N_pad)
-    dry = _pad_rows(dry, N_pad)
-    Qxxr = _pad_rows(Qxxr, N_pad)
-    Qxxi = _pad_rows(Qxxi, N_pad)
-    Qxyr = _pad_rows(Qxyr, N_pad)
-    Qxyi = _pad_rows(Qxyi, N_pad)
-    Qyxr = _pad_rows(Qyxr, N_pad)
-    Qyxi = _pad_rows(Qyxi, N_pad)
-    Qyyr = _pad_rows(Qyyr, N_pad)
-    Qyyi = _pad_rows(Qyyi, N_pad)
-    amp_r = _pad_rows(amp_r, N_pad)
-    amp_i = _pad_rows(amp_i, N_pad)
-    path = _pad_rows(path, N_pad)
-    kf = _pad_rows(kf, N_pad)
-
-    # Output buffers
     out_shape = (
-        jax.ShapeDtypeStruct((P_pad,), r_dtype),
-        jax.ShapeDtypeStruct((P_pad,), r_dtype),
+        jax.ShapeDtypeStruct((grid_n * T_P,), f),
+        jax.ShapeDtypeStruct((grid_n * T_P,), f),
     )
 
-    # --- Triton kernel ---
-    def kernel(r2_ref, r_m_ref,
-               drx_ref, dry_ref,
-               Qxxr_ref, Qxxi_ref, Qxyr_ref, Qxyi_ref,
-               Qyxr_ref, Qyxi_ref, Qyyr_ref, Qyyi_ref,
-               amp_r_ref, amp_i_ref,
-               path_ref, k_ref,
-               out_re_ref, out_im_ref):
-
+    # ---- Pallas kernel ----
+    def kernel(det_ref, beams_ref, out_re_ref, out_im_ref):
         pid = pl.program_id(axis=0)
-        pix_idx = pid * T_PIX + jnp.arange(T_PIX, dtype=jnp.int32)
+        p = pid * T_P + jnp.arange(T_P, dtype=jnp.int32)
+        x, y = det_ref[p, 0], det_ref[p, 1]
 
-        # Detector points (all in-bounds due padding)
-        x = r2_ref[pix_idx, 0]
-        y = r2_ref[pix_idx, 1]
+        def body(t, acc):
+            re, im = acc
+            b = t * T_B + jnp.arange(T_B, dtype=jnp.int32)
 
-        acc_re = jnp.zeros((T_PIX,), r_dtype)
-        acc_im = jnp.zeros((T_PIX,), r_dtype)
+            dx = x[:, None] - beams_ref[b, MX][None, :]
+            dy = y[:, None] - beams_ref[b, MY][None, :]
+            dx2, dy2, dxdy = dx * dx, dy * dy, dx * dy
 
-        def body_fun(t, acc):
-            acc_re, acc_im = acc
-            b_idx = t * T_BEAMS + jnp.arange(T_BEAMS, dtype=jnp.int32)
+            # Phase — k already folded into all coefficients on host
+            phase = (dx   * beams_ref[b, KDX][None, :]
+                   + dy   * beams_ref[b, KDY][None, :]
+                   + dx2  * beams_ref[b, QR_XX][None, :]
+                   + dxdy * beams_ref[b, QR_XY][None, :]
+                   + dy2  * beams_ref[b, QR_YY][None, :])
 
-            # Beam data (all in-bounds due padding)
-            mx = r_m_ref[b_idx, 0]
-            my = r_m_ref[b_idx, 1]
+            # Gaussian envelope (imaginary part of quadratic form)
+            atten = jnp.exp(-(dx2  * beams_ref[b, QI_XX][None, :]
+                            + dxdy * beams_ref[b, QI_XY][None, :]
+                            + dy2  * beams_ref[b, QI_YY][None, :]))
 
-            drx_b = drx_ref[b_idx]
-            dry_b = dry_ref[b_idx]
+            s, c = jnp.sin(phase), jnp.cos(phase)
+            ar = beams_ref[b, AR][None, :]
+            ai = beams_ref[b, AI][None, :]
 
-            Qxx_r = Qxxr_ref[b_idx]
-            Qxx_i = Qxxi_ref[b_idx]
-            Qxy_r = Qxyr_ref[b_idx]
-            Qxy_i = Qxyi_ref[b_idx]
-            Qyx_r = Qyxr_ref[b_idx]
-            Qyx_i = Qyxi_ref[b_idx]
-            Qyy_r = Qyyr_ref[b_idx]
-            Qyy_i = Qyyi_ref[b_idx]
+            re = re + jnp.sum(atten * (ar * c - ai * s), axis=1)
+            im = im + jnp.sum(atten * (ar * s + ai * c), axis=1)
+            return re, im
 
-            ar_b = amp_r_ref[b_idx]
-            ai_b = amp_i_ref[b_idx]
+        re, im = lax.fori_loop(
+            0, n_btiles, body,
+            (jnp.zeros((T_P,), f), jnp.zeros((T_P,), f)),
+        )
+        out_re_ref[p] = re
+        out_im_ref[p] = im
 
-            path_b = path_ref[b_idx]
-            k_b = k_ref[b_idx]
-
-            # deltas
-            dx = x[:, None] - mx[None, :]
-            dy = y[:, None] - my[None, :]
-
-            # linear term
-            linear = dx * drx_b[None, :] + dy * dry_b[None, :]
-
-            # quadratic
-            cross_r = (Qxy_r + Qyx_r)[None, :] * dx * dy
-            cross_i = (Qxy_i + Qyx_i)[None, :] * dx * dy
-
-            quad_r = dx**2 * Qxx_r[None, :] + cross_r + dy**2 * Qyy_r[None, :]
-            quad_i = dx**2 * Qxx_i[None, :] + cross_i + dy**2 * Qyy_i[None, :]
-
-            # Total action: S = pathlength + linear + 0.5 * quad
-            S_real = path_b[None, :] + linear + 0.5 * quad_r
-            S_imag = 0.5 * quad_i
-
-            phase = k_b[None, :] * S_real
-            atten = jnp.exp(-k_b[None, :] * S_imag)
-
-            # cos/sin
-            s = jnp.sin(phase)
-            c = jnp.cos(phase)
-
-            # amplitude multiplication
-            real_tb = atten * (ar_b[None, :] * c - ai_b[None, :] * s)
-            imag_tb = atten * (ar_b[None, :] * s + ai_b[None, :] * c)
-
-            acc_re = acc_re + jnp.sum(real_tb, axis=1)
-            acc_im = acc_im + jnp.sum(imag_tb, axis=1)
-
-            return acc_re, acc_im
-
-        acc_re, acc_im = lax.fori_loop(0, num_beam_tiles, body_fun, (acc_re, acc_im))
-
-        out_re_ref[pix_idx] = acc_re
-        out_im_ref[pix_idx] = acc_im
-
-    # --- launch ---
-
-    has_gpu_backend = any(
-        d.platform in ("gpu", "cuda", "rocm") for d in jax.devices()
-    )
-    pallas_kwargs = dict(out_shape=out_shape, grid=(grid_n,))
-    if has_gpu_backend:
-        pallas_kwargs["backend"] = "triton"
+    # ---- Launch ----
+    has_gpu = any(d.platform in ("gpu", "cuda", "rocm") for d in jax.devices())
+    kw = dict(out_shape=out_shape, grid=(grid_n,))
+    if has_gpu:
+        kw["backend"] = "triton"
     else:
-        pallas_kwargs["interpret"] = True
+        kw["interpret"] = True
 
-    out_re, out_im = pl.pallas_call(
-        kernel, **pallas_kwargs
-    )(
-        r2_f, r_centref,
-        drx, dry,
-        Qxxr, Qxxi, Qxyr, Qxyi,
-        Qyxr, Qyxi, Qyyr, Qyyi,
-        amp_r, amp_i,
-        path, kf,
-    )
+    out_re, out_im = pl.pallas_call(kernel, **kw)(det, beams)
 
     return out_re[:P] + 1j * out_im[:P]
 
