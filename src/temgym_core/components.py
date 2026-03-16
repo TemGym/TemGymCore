@@ -144,7 +144,7 @@ class Lens(GaussianActionComponent):
         return ray.derive(dx=new_dx, dy=new_dy, pathlength=pathlength)
 
     def phase_shift(self, xy: jnp.ndarray):
-        x, y = xy[0] - self.x0, xy[1] - self.y0
+        x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
         rho2 = x * x + y * y
         return -0.5 * rho2 / self.focal_length
 
@@ -174,8 +174,8 @@ class KrivanekLens(Lens):
         return ray.derive(dx=aber_dx, dy=aber_dy, pathlength=pathlength)
 
     def phase_shift(self, xy: jnp.ndarray):
-        x = xy[0] - self.x0
-        y = xy[1] - self.y0
+        x = xy[..., 0] - self.x0
+        y = xy[..., 1] - self.y0
         f = self.focal_length
         rho2 = x * x + y * y
 
@@ -416,15 +416,31 @@ class Deflector(Component):
         return ray.derive(
             dx=dx + self.def_x * ray._one,
             dy=dy + self.def_y * ray._one,
-            pathlength=ray.pathlength + dx * x + dy * y,
+            pathlength=ray.pathlength + self.def_x * x + self.def_y * y,
         )
 
     def _call_gaussian(self, ray: GaussianBeam):
+        """Direct slope modification for deflector with implicit action.
+        
+        A deflector applies a transverse momentum kick: dx += def_x, dy += def_y
+        The pathlength change arises from the phase shift: def_x * x + def_y * y
+        
+        For Gaussian beams, we apply this directly without using taylor_expand,
+        as the implicit action (linear phase) can cause numerical issues.
+        When def_x or def_y are non-zero (tilted), the action derivatives
+        should be handled explicitly via the phase_shift method.
+        """
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        new_dx = dx + self.def_x * ray._one
+        new_dy = dy + self.def_y * ray._one
+        
+        # For a pure slope change with no amplitude loss,
+        # the Q_inv (inverse waist parameter) is unchanged
+        # but pathlength picks up the deflection-induced phase
         return ray.derive(
-            dx=dx + self.def_x * ray._one,
-            dy=dy + self.def_y * ray._one,
-            pathlength=ray.pathlength + dx * x + dy * y,
+            dx=new_dx,
+            dy=new_dy,
+            pathlength=ray.pathlength + self.def_x * x + self.def_y * y,
         )
 
 
@@ -439,13 +455,11 @@ class DoubleDeflector(Component):
     z: float
     spacing: float
 
-    # User-facing optical commands
     shift_x: float = 0.0
     shift_y: float = 0.0
     tilt_x: float = 0.0
     tilt_y: float = 0.0
 
-    # Calibration ratios for the lower deflector
     shift_balance_x: float = 1.0
     shift_balance_y: float = 1.0
     tilt_balance_x: float = 1.0
@@ -479,9 +493,14 @@ class DoubleDeflector(Component):
 
     @staticmethod
     def _apply_kick(ray: Ray | GaussianBeam, def_x, def_y):
+        """Apply a deflection kick to a ray or beam.
+        
+        A transverse kick (def_x, def_y) imparts phase shift: def_x * x + def_y * y
+        """
         return ray.derive(
             dx=ray.dx + def_x * ray._one,
             dy=ray.dy + def_y * ray._one,
+            pathlength=ray.pathlength + def_x * ray.x + def_y * ray.y,
         )
 
     def _call_ray(self, ray: Ray):
@@ -626,7 +645,7 @@ class ElectromagneticLens(Component):
         return jnp.maximum(self.Tc, 0.0) * jnp.abs(self.excitation)
 
     def phase_shift(self, xy: jnp.ndarray) -> float:
-        x, y = xy[0] - self.x0, xy[1] - self.y0
+        x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
         rho2 = x * x + y * y
         return -0.5 * rho2 / self.focal_length
 
@@ -799,15 +818,15 @@ class SigmoidAperture(GaussianActionComponent):
     z: float = 0.0
 
     def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "SigmoidAperture is only implemented for gaussian beams."
-        )
+        # Rays carry no amplitude in this model, so aperture transmission
+        # cannot attenuate them; treat as geometric pass-through.
+        return ray
 
     def phase_shift(self, xy):
         return 0.0
 
     def log_transmission(self, xy):
-        x, y = xy[0] - self.x0, xy[1] - self.y0
+        x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
         rho = jnp.sqrt(x * x + y * y + self.eps * self.eps) - self.eps
         w = jnp.maximum(jnp.abs(self.edge_width), self.eps)
         s = jnn.sigmoid(self.sharpness * (rho - self.radius) / w)
@@ -834,7 +853,7 @@ class PhaseBiprism(GaussianActionComponent):
         )
 
     def _uv(self, xy: jnp.ndarray):
-        x, y = xy[0], xy[1]
+        x, y = xy[..., 0], xy[..., 1]
         xr, yr = x - self.x0, y - self.y0
         c, s = jnp.cos(self.theta), jnp.sin(self.theta)
         u = c * xr + s * yr
@@ -981,8 +1000,8 @@ class MagneticPhaseSample(GaussianActionComponent):
         )
 
     def _local_coords(self, xy):
-        x = xy[0] - self.x0
-        y = xy[1] - self.y0
+        x = xy[..., 0] - self.x0
+        y = xy[..., 1] - self.y0
         c = jnp.cos(self.theta)
         s = jnp.sin(self.theta)
         u = c * x + s * y
@@ -1042,8 +1061,8 @@ class RandomPhaseSample(GaussianActionComponent):
         )
 
     def _local_coords(self, xy):
-        x = xy[0] - self.x0
-        y = xy[1] - self.y0
+        x = xy[..., 0] - self.x0
+        y = xy[..., 1] - self.y0
         c = jnp.cos(self.theta)
         s = jnp.sin(self.theta)
         u = c * x + s * y
@@ -1126,7 +1145,7 @@ class InterpolatedSample2D(GaussianActionComponent):
         return cls(z=z, interpolator=interpolator, method=method)
 
     def evaluate_complex(self, xy):
-        return self.interpolator(xy[0], xy[1])
+        return self.interpolator(xy[..., 0], xy[..., 1])
 
     def phase_shift(self, xy):
         z = self.evaluate_complex(xy)
@@ -1184,7 +1203,7 @@ class AtomicPotential(Component):
         return 0.0
 
     def phase_shift(self, xy: jnp.ndarray, z, sigma, k: float) -> complex:
-        x, y = xy[0], xy[1]
+        x, y = xy[..., 0], xy[..., 1]
         r = jnp.sqrt(
             (x - self.atom_xyz[0]) ** 2
             + (y - self.atom_xyz[1]) ** 2
