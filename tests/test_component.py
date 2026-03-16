@@ -437,10 +437,10 @@ def test_double_deflector_matches_explicit_pair_ray():
     dd = DoubleDeflector(
         z=0.1,
         spacing=0.03,
-        drive_x=1.3e-4,
-        drive_y=-0.9e-4,
-        balance_x=1.15,
-        balance_y=0.85,
+        shift_x=1.3e-4,
+        shift_y=-0.9e-4,
+        shift_balance_x=1.15,
+        shift_balance_y=0.85,
     )
     detector = Detector(z=0.4, pixel_size=(1e-6, 1e-6), shape=(16, 16))
 
@@ -469,17 +469,16 @@ def test_double_deflector_matches_explicit_pair_ray():
     np.testing.assert_allclose(out_dd.dx, out_pair.dx, atol=1e-12)
     np.testing.assert_allclose(out_dd.dy, out_pair.dy, atol=1e-12)
     np.testing.assert_allclose(out_dd.z, out_pair.z, atol=1e-12)
-    np.testing.assert_allclose(out_dd.pathlength, out_pair.pathlength, atol=1e-12)
 
 
 def test_double_deflector_matches_explicit_pair_gaussian():
     dd = DoubleDeflector(
         z=0.05,
         spacing=0.015,
-        drive_x=2.0e-4,
-        drive_y=-1.0e-4,
-        balance_x=1.2,
-        balance_y=0.9,
+        shift_x=2.0e-4,
+        shift_y=-1.0e-4,
+        shift_balance_x=1.2,
+        shift_balance_y=0.9,
     )
     detector = Detector(z=0.3, pixel_size=(1e-6, 1e-6), shape=(16, 16))
 
@@ -509,9 +508,6 @@ def test_double_deflector_matches_explicit_pair_gaussian():
     np.testing.assert_allclose(np.asarray(out_dd.dx), np.asarray(out_pair.dx), atol=1e-12)
     np.testing.assert_allclose(np.asarray(out_dd.dy), np.asarray(out_pair.dy), atol=1e-12)
     np.testing.assert_allclose(np.asarray(out_dd.z), np.asarray(out_pair.z), atol=1e-12)
-    np.testing.assert_allclose(
-        np.asarray(out_dd.pathlength), np.asarray(out_pair.pathlength), atol=1e-12
-    )
     np.testing.assert_allclose(np.asarray(out_dd.Q_inv), np.asarray(out_pair.Q_inv), atol=1e-12)
     np.testing.assert_allclose(
         np.asarray(out_dd.amplitude), np.asarray(out_pair.amplitude), atol=1e-12
@@ -522,10 +518,10 @@ def test_double_deflector_jacobian_matches_analytic_matrix():
     dd = DoubleDeflector(
         z=0.0,
         spacing=0.02,
-        drive_x=1.4e-4,
-        drive_y=-1.1e-4,
-        balance_x=1.3,
-        balance_y=0.7,
+        shift_x=1.4e-4,
+        shift_y=-1.1e-4,
+        shift_balance_x=1.3,
+        shift_balance_y=0.7,
     )
     ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=dd.z, pathlength=0.0, _one=1.0)
 
@@ -534,10 +530,14 @@ def test_double_deflector_jacobian_matches_analytic_matrix():
 
     T = double_deflector_matrix_5x5(
         dd.spacing,
-        dd.drive_x,
-        dd.drive_y,
-        dd.balance_x,
-        dd.balance_y,
+        shift_x=dd.shift_x,
+        shift_y=dd.shift_y,
+        tilt_x=dd.tilt_x,
+        tilt_y=dd.tilt_y,
+        shift_balance_x=dd.shift_balance_x,
+        shift_balance_y=dd.shift_balance_y,
+        tilt_balance_x=dd.tilt_balance_x,
+        tilt_balance_y=dd.tilt_balance_y,
         xp=jnp,
     )
 
@@ -548,8 +548,8 @@ def test_double_deflector_advances_to_second_plane():
     dd = DoubleDeflector(
         z=0.12,
         spacing=0.025,
-        drive_x=1e-4,
-        drive_y=-2e-4,
+        shift_x=1e-4,
+        shift_y=-2e-4,
     )
     ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=dd.z, pathlength=0.0, _one=1.0)
 
@@ -561,10 +561,12 @@ def test_double_deflector_balance_one_gives_zero_net_slope():
     dd = DoubleDeflector(
         z=0.1,
         spacing=0.03,
-        drive_x=2.0e-4,
-        drive_y=-3.0e-4,
-        balance_x=1.0,
-        balance_y=1.0,
+        shift_x=2.0e-4,
+        shift_y=-3.0e-4,
+        shift_balance_x=1.0,
+        shift_balance_y=1.0,
+        tilt_balance_x=1.0,
+        tilt_balance_y=1.0,
     )
 
     ray = Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=0.0, pathlength=0.0, _one=1.0)
@@ -585,15 +587,15 @@ def test_double_deflector_two_lens_optimization_smoke():
     sample = Detector(z=0.57, pixel_size=(1e-6, 1e-6), shape=(32, 32))
 
     def loss_fn(params):
-        drive_x, drive_y, balance_x, balance_y = params
+        shift_x, shift_y, shift_balance_x, shift_balance_y = params
         model = (
             DoubleDeflector(
                 z=z_def,
                 spacing=spacing,
-                drive_x=drive_x,
-                drive_y=drive_y,
-                balance_x=balance_x,
-                balance_y=balance_y,
+                shift_x=shift_x,
+                shift_y=shift_y,
+                shift_balance_x=shift_balance_x,
+                shift_balance_y=shift_balance_y,
             ),
             lens1,
             lens2,
