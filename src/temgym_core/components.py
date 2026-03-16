@@ -432,22 +432,24 @@ class Deflector(Component):
 class DoubleDeflector(Component):
     """Two deflector kicks separated by an internal free-space spacing.
 
-    Notes
-    -----
-    `z` is the first deflector plane. The output ray is advanced to
-    `z + spacing` (second deflector plane).
-    `spacing` is expected to be non-negative.
-    For the usual model ordering, subsequent components should satisfy
-    `component.z >= z + spacing`.
-    `balance_x = balance_y = 1` gives free-space parallel-shift mode.
+    User-facing commands (shift/tilt) are combined with hardware calibration
+    ratios to produce the two physical kicks in each axis.
     """
 
     z: float
     spacing: float
-    drive_x: float
-    drive_y: float
-    balance_x: float = 1.0
-    balance_y: float = 1.0
+
+    # User-facing optical commands
+    shift_x: float = 0.0
+    shift_y: float = 0.0
+    tilt_x: float = 0.0
+    tilt_y: float = 0.0
+
+    # Calibration ratios for the lower deflector
+    shift_balance_x: float = 1.0
+    shift_balance_y: float = 1.0
+    tilt_balance_x: float = 1.0
+    tilt_balance_y: float = 1.0
 
     @property
     def z_second(self) -> float:
@@ -455,27 +457,31 @@ class DoubleDeflector(Component):
 
     @property
     def def1_x(self):
-        return self.drive_x
+        return self.shift_x + self.tilt_x
 
     @property
     def def1_y(self):
-        return self.drive_y
+        return self.shift_y + self.tilt_y
 
     @property
     def def2_x(self):
-        return -self.balance_x * self.drive_x
+        return (
+            -self.shift_balance_x * self.shift_x
+            -self.tilt_balance_x * self.tilt_x
+        )
 
     @property
     def def2_y(self):
-        return -self.balance_y * self.drive_y
+        return (
+            -self.shift_balance_y * self.shift_y
+            -self.tilt_balance_y * self.tilt_y
+        )
 
     @staticmethod
     def _apply_kick(ray: Ray | GaussianBeam, def_x, def_y):
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
         return ray.derive(
-            dx=dx + def_x * ray._one,
-            dy=dy + def_y * ray._one,
-            pathlength=ray.pathlength + dx * x + dy * y,
+            dx=ray.dx + def_x * ray._one,
+            dy=ray.dy + def_y * ray._one,
         )
 
     def _call_ray(self, ray: Ray):
