@@ -81,8 +81,8 @@ class Ray(HasParamsMixin):
 
     @property
     def r_xy(self):
-        x = jnp.asarray(self.x)
-        y = jnp.asarray(self.y)
+        x = jnp.asarray(self.x, dtype=jnp.float64)
+        y = jnp.asarray(self.y, dtype=jnp.float64)
 
         # Broadcast (supports scalars, (1,), and (N,))
         xb, yb = jnp.broadcast_arrays(x, y)
@@ -102,8 +102,8 @@ class Ray(HasParamsMixin):
 
     @property
     def d_xy(self):
-        dx = jnp.asarray(self.dx)
-        dy = jnp.asarray(self.dy)
+        dx = jnp.asarray(self.dx, dtype=jnp.float64)
+        dy = jnp.asarray(self.dy, dtype=jnp.float64)
 
         # Broadcast (handles scalars, (1,), and vectorized (N,)).
         dxb, dyb = jnp.broadcast_arrays(dx, dy)
