@@ -18,6 +18,8 @@ from temgym_core.components import (
     Lens,
     ElectromagneticLens,
     Rotator,
+    InterpolatedSample2D,
+    sample_interpolant,
 )
 from temgym_core.gaussian import make_gaussian
 from temgym_core.ray import Ray
@@ -31,6 +33,36 @@ from temgym_core.transfer_matrices import (
 )
 from temgym_core.constants import compute_Kv_from_voltage
 jax.config.update("jax_enable_x64", True)
+
+
+def test_sample_interpolant_returns_component():
+    x_coords = np.array([-1.0, 0.0, 1.0])
+    y_coords = np.array([-1.0, 0.0, 1.0])
+    sample = np.ones((3, 3), dtype=np.complex128)
+
+    comp = sample_interpolant(sample, x_coords, y_coords, z=0.25)
+
+    assert isinstance(comp, InterpolatedSample2D)
+    assert comp.z == pytest.approx(0.25)
+
+
+def test_sample_interpolant_phase_and_log_transmission_on_grid_point():
+    x_coords = np.array([-1.0, 0.0, 1.0])
+    y_coords = np.array([-1.0, 0.0, 1.0])
+    phase = np.pi / 4
+    amp = 0.5
+    sample = np.ones((3, 3), dtype=np.complex128)
+    sample[1, 1] = amp * np.exp(1j * phase)
+
+    comp = sample_interpolant(sample, x_coords, y_coords)
+    xy = jnp.array([0.0, 0.0])
+
+    np.testing.assert_allclose(np.asarray(comp.phase_shift(xy)), phase, atol=1e-9)
+    np.testing.assert_allclose(
+        np.asarray(comp.log_transmission(xy)),
+        np.log(amp),
+        atol=1e-9,
+    )
 
 
 @jdc.pytree_dataclass
