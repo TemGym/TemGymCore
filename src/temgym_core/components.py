@@ -150,6 +150,34 @@ class Lens(GaussianActionComponent):
 
 
 @jdc.pytree_dataclass
+class Stigmator(GaussianActionComponent):
+    """Anisotropic thin lens with independent focal lengths in x and y."""
+
+    z: float
+    focal_length_x: float
+    focal_length_y: float
+    x0: float = 0.0
+    y0: float = 0.0
+
+    def _call_ray(self, ray: Ray):
+        fx = self.focal_length_x
+        fy = self.focal_length_y
+        x = ray.x - self.x0 * ray._one
+        y = ray.y - self.y0 * ray._one
+        dx, dy = ray.dx, ray.dy
+
+        new_dx = -x / fx + dx
+        new_dy = -y / fy + dy
+        pathlength = ray.pathlength - (x**2) / (2 * fx) - (y**2) / (2 * fy)
+        return ray.derive(dx=new_dx, dy=new_dy, pathlength=pathlength)
+
+    def phase_shift(self, xy: jnp.ndarray):
+        x = xy[..., 0] - self.x0
+        y = xy[..., 1] - self.y0
+        return -0.5 * (x * x / self.focal_length_x + y * y / self.focal_length_y)
+
+
+@jdc.pytree_dataclass
 class KrivanekLens(Lens):
     coeffs: Dict = dataclasses.field(default_factory=dict)
     axis_eps: float = 1e-24
@@ -1158,6 +1186,30 @@ class InterpolatedSample2D(GaussianActionComponent):
         return jnp.where(amp < 1e-15, 0.0, jnp.log(amp_clamped))
 
 
+def sample_interpolant(
+    sample,
+    x_coords,
+    y_coords,
+    *,
+    z: float = 0.0,
+    method: str = "cubic",
+    extrap: float = 1.0,
+) -> InterpolatedSample2D:
+    """Create an interpolated sample component from a complex sample array.
+
+    This is a convenience wrapper around ``InterpolatedSample2D.from_array``
+    for notebook and pipeline code that expects a ``sample_interpolant`` API.
+    """
+    return InterpolatedSample2D.from_array(
+        sample=sample,
+        x_coords=x_coords,
+        y_coords=y_coords,
+        extrap=extrap,
+        z=z,
+        method=method,
+    )
+
+
 @jdc.pytree_dataclass(kw_only=True)
 class InterpolatedFields3D(Component):
     interpolator: Interpolator3D
@@ -1274,6 +1326,7 @@ __all__ = [
     "DescanError",
     "Plane",
     "Lens",
+    "Stigmator",
     "KrivanekLens",
     "AberratedLensKrivanek",
     "SeidelLens",
@@ -1302,6 +1355,7 @@ __all__ = [
     "MagneticPhaseSample",
     "RandomPhaseSample",
     "InterpolatedSample2D",
+    "sample_interpolant",
     "InterpolatedFields3D",
     "AtomicPotential",
     "FourierTransform",
