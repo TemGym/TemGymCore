@@ -4,7 +4,11 @@ from jax.experimental import pallas as pl
 from jax import lax
 from temgym_core.grid import Grid
 from jax._src.lax.control_flow.loops import _batch_and_remainder
-
+import numpy as np
+import math
+import cupy as cp
+from numba import cuda
+import numba 
 
 def evaluate_gaussians_gpu_kernel(
     r_centre: jnp.ndarray,      # (N,2) float64
@@ -159,6 +163,114 @@ def evaluate_gaussians_gpu_kernel_wrapper(
 evaluate_gaussians_gpu_kernel = jax.jit(
     evaluate_gaussians_gpu_kernel, static_argnames=["tile_pixels", "tile_beams"]
 )
+
+
+# Block dims are compile-time constants so cuda.shared.array can use them
+_OPT_TPB_BEAM = 32
+_OPT_TPB_PIX  = 128
+
+
+@cuda.jit(cache=True, fastmath=True, lineinfo=True)
+def _beam_field_cuda_opt(x_det, y_det, rays, out_r, out_i):
+    pix_idx, beam_block_idx = cuda.grid(2)
+    # loc_beam_block = cuda.threadIdx.y  -> always zero
+    # loc_pix  = cuda.threadIdx.x  # fast idx
+
+    # for accuracy, keep these f64
+    acc_r = np.float64(0.0)
+    acc_i = np.float64(0.0)
+
+    for loc_beam in range(_OPT_TPB_BEAM):
+        beam_idx  = beam_block_idx * _OPT_TPB_BEAM + loc_beam
+        if beam_idx < rays['r'].shape[0] and pix_idx < x_det.size:
+            ray = rays[beam_idx]
+            # x_det, y_det -> load coalescing on fast index
+            dx = x_det[pix_idx] - ray['r'][0]
+            dy = y_det[pix_idx] - ray['r'][1]
+
+            linear = dx * ray['dr'][0] + dy * ray['dr'][1]
+
+            quad_r = (
+                ray['Qi_r'][0] * dx * dx
+                + ray['Qi_r'][1] * dx * dy
+                + ray['Qi_r'][2] * dy * dy
+            )
+            quad_i = (
+                ray['Qi_i'][0] * dx * dx
+                + ray['Qi_i'][1] * dx * dy
+                + ray['Qi_i'][2] * dy * dy
+            )
+
+            s_real = ray['pl'] + linear + 0.5 * quad_r
+            s_imag = 0.5 * quad_i
+
+            atten = math.exp(-ray['k'] * s_imag)
+            phase = ray['k'] * s_real
+            c = math.cos(phase)
+            s = math.sin(phase)
+
+            ar = ray['amp'].real
+            ai = ray['amp'].imag
+
+            acc_r += atten * (ar * c - ai * s)
+            acc_i += atten * (ar * s + ai * c)
+
+    cuda.syncthreads()
+
+    # One thread per pixel reduces the beam dimension → one global atomic per block per pixel
+    if pix_idx < x_det.size:
+        cuda.atomic.add(out_r, pix_idx, acc_r)
+        cuda.atomic.add(out_i, pix_idx, acc_i)
+
+
+rays_type = np.dtype([
+    ('Qi_r', np.float64, (3,)),  # packed: (0,0), (0,1)+(1,0), (1,1)
+    ('Qi_i', np.float64, (3,)),
+    ('amp', np.complex128),
+    ('pl', np.float64),
+    ('r', np.float64, (2,)),
+    ('dr', np.float64, (2,)),
+    ('k', np.float64),
+    ('PADDING', np.float64),
+])
+
+def evaluate_gaussians_cuda_gpu_kernel_wrapper_opt(gaussian_ray, grid):
+    r, dr, amp, pl, Q_inv, k = _prepare_gaussian_params(gaussian_ray)
+
+    x_det = np.ascontiguousarray(grid.coords[:, 0], dtype=np.float64)
+    y_det = np.ascontiguousarray(grid.coords[:, 1], dtype=np.float64)
+
+    n_beams = r.shape[0]
+    n_pix   = x_det.size
+
+    Qi = np.asarray(Q_inv, dtype=np.complex128)
+
+    d_x    = cuda.to_device(x_det)
+    d_y    = cuda.to_device(y_det)
+
+    rays = np.zeros(dtype=rays_type, shape=(n_beams,))
+    rays['Qi_r'] = np.array([Qi.real[:, 0, 0], Qi.real[:, 0, 1] + Qi.real[:, 1, 0], Qi.real[:, 1, 1]]).T
+    rays['Qi_i'] = np.array([Qi.imag[:, 0, 0], Qi.imag[:, 0, 1] + Qi.imag[:, 1, 0], Qi.imag[:, 1, 1]]).T
+    rays['r'] = r
+    rays['dr'] = dr
+    rays['amp'] = amp
+    rays['pl'] = pl
+    rays['k'] = k
+
+    d_rays = cuda.to_device(rays)
+
+    d_out_r = cp.zeros(n_pix, dtype=np.float64)
+    d_out_i = cp.zeros(n_pix, dtype=np.float64)
+
+    blocks = (math.ceil(n_pix / _OPT_TPB_PIX), math.ceil(n_beams / _OPT_TPB_BEAM),)
+    _beam_field_cuda_opt[blocks, (_OPT_TPB_PIX, 1)](
+        d_x, d_y, d_rays, d_out_r, d_out_i
+    )
+    res = (d_out_r.get() + 1j * d_out_i.get()).reshape(grid.shape)
+
+    return res
+
+
 
 
 def ensure_batch(x, sample_shape=(), dtype=None):
