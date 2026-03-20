@@ -65,6 +65,23 @@ def test_sample_interpolant_phase_and_log_transmission_on_grid_point():
     )
 
 
+def test_sample_interpolant_ray_passthrough_for_solver_paths():
+    x_coords = np.array([-1.0, 0.0, 1.0])
+    y_coords = np.array([-1.0, 0.0, 1.0])
+    sample = np.ones((3, 3), dtype=np.complex128)
+
+    comp = sample_interpolant(sample, x_coords, y_coords, z=0.25)
+    ray_in = Ray(x=1.2e-6, y=-2.4e-6, dx=3.1e-4, dy=-1.7e-4, z=0.25, pathlength=0.0)
+
+    ray_out = run_to_end(ray_in, [comp])
+
+    assert ray_out.x == pytest.approx(ray_in.x)
+    assert ray_out.y == pytest.approx(ray_in.y)
+    assert ray_out.dx == pytest.approx(ray_in.dx)
+    assert ray_out.dy == pytest.approx(ray_in.dy)
+    assert ray_out.z == pytest.approx(ray_in.z)
+
+
 @jdc.pytree_dataclass
 # A component that should give a singular jacobian used for testing
 class SingularComponent(Component):
