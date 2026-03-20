@@ -56,8 +56,55 @@ class Component(HasParamsMixin):
         )
 
 
+def _min_eigval_2x2(M: jnp.ndarray) -> jnp.ndarray:
+    """Minimum eigenvalue of a real symmetric 2×2 matrix."""
+    tr = M[0, 0] + M[1, 1]
+    det = M[0, 0] * M[1, 1] - M[0, 1] * M[1, 0]
+    disc = jnp.maximum(tr * tr - 4.0 * det, 0.0)
+    return 0.5 * (tr - jnp.sqrt(disc))
+
+
+def _regularize_L2k(
+    L2k: jnp.ndarray,
+    ImQ: jnp.ndarray,
+    min_frac: float = 0.1,
+) -> jnp.ndarray:
+    """Ensure ``ImQ - L2k`` stays positive definite.
+
+    If the minimum eigenvalue of ``ImQ - L2k`` would drop below
+    ``min_frac * min_eigval(ImQ)``, a diagonal shift is subtracted
+    from *L2k* to bring it back within bounds.
+    """
+    M = ImQ - L2k
+    min_eig_M = _min_eigval_2x2(M)
+    min_eig_Q = _min_eigval_2x2(ImQ)
+    required = min_frac * min_eig_Q
+    shift = jnp.maximum(required - min_eig_M, 0.0)
+    return L2k - shift * jnp.eye(2, dtype=L2k.dtype)
+
+
 class GaussianActionComponent(Component):
-    """Mixin for components defined by an action (phase + log-transmission)."""
+    """Mixin for components defined by an action (phase + log-transmission).
+
+    Phase and log-transmission are Taylor-expanded *separately* to second
+    order, then combined analytically into complex action coefficients:
+
+        dS = phi - i * L / k
+
+    This captures all physical effects of the transmission profile:
+
+    * **Zeroth order** – amplitude scaling at the beam centre.
+    * **First order** – sub-picometer beam-centre shift toward higher
+      transmission.
+    * **Second order** – beam-width modification from the curvature of
+      the absorption profile (narrowing near absorbing edges).
+
+    Separating the expansions avoids numerical issues that arise when
+    autodiff is applied to non-smooth formulations of ``log_transmission``
+    (e.g. ``abs`` → ``log``).  A safety regularisation on Im(Q') prevents
+    degenerate cases where the Hessian of log-transmission would make the
+    Gaussian envelope non-decaying.
+    """
 
     def phase_shift(self, xy: jnp.ndarray):
         return 0.0
@@ -72,10 +119,53 @@ class GaussianActionComponent(Component):
 
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
         xy_ref = ray.r_xy
-        dS0, dS1, dS2 = taylor_expand(self.complex_action, xy_ref, ray.k)
+        k = ray.k
+
+        # --- Phase Taylor expansion (real-valued, always stable) ---
+        phase_fn = self.phase_shift
+
+        def _phase_scalar(xy):
+            return jnp.real(phase_fn(xy))
+
+        phi0 = _phase_scalar(xy_ref)
+        phi1 = jax.grad(_phase_scalar)(xy_ref)
+        phi2 = jax.hessian(_phase_scalar)(xy_ref)
+
+        # --- Log-transmission Taylor expansion (real-valued, floored) ---
+        log_t_fn = self.log_transmission
+
+        def _logt_scalar(xy):
+            return jnp.real(jnp.logaddexp(log_t_fn(xy), -50.0))
+
+        L0 = _logt_scalar(xy_ref)
+        L1 = jax.grad(_logt_scalar)(xy_ref)
+        L2 = jax.hessian(_logt_scalar)(xy_ref)
+
+        # --- Adaptive scaling of higher-order log-transmission terms ---
+        # When the implied beam shift from the amplitude gradient exceeds
+        # the beam width, the quadratic approximation of log-transmission
+        # breaks down.  Smoothly suppress L1 and L2 via s = 1/(1+r) so
+        # the method gracefully degrades to pointwise-only transmission.
+        ImQ = jnp.imag(ray.Q_inv)
+        dx_est = jnp.linalg.solve(ImQ, L1) / k
+        ratio = jnp.dot(L1, dx_est)          # L1^T Im(Q)^{-1} L1 / k  (≥ 0)
+        scale = 1.0 / (1.0 + ratio)
+        L1_eff = L1 * scale
+        L2_eff = L2 * scale
+
+        # --- Regularise L2/k to keep Im(Q') positive definite ---
+        L2k = L2_eff / k
+        L2k = _regularize_L2k(L2k, ImQ)
+
+        # --- Combine into complex action Taylor coefficients ---
+        dS0 = phi0 - 1j * (L0 / k)
+        dS1 = phi1 - 1j * (L1_eff / k)
+        dS2 = phi2 - 1j * L2k
+
         r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
             ray, dS0=dS0, dS1=dS1, dS2=dS2
         )
+
         return ray.derive(
             x=r_xy[0],
             y=r_xy[1],
@@ -1157,9 +1247,8 @@ class InterpolatedSample2D(GaussianActionComponent):
     z: float = 0.0
 
     def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "InterpolatedSample2D is only implemented for gaussian beams."
-        )
+        # Allow geometric-ray pipelines (e.g. model solving) to pass through.
+        return ray
 
     @classmethod
     def from_array(cls, sample, x_coords, y_coords, extrap=1.0, z=0.0, method="cubic"):
@@ -1181,9 +1270,10 @@ class InterpolatedSample2D(GaussianActionComponent):
 
     def log_transmission(self, xy):
         z = self.evaluate_complex(xy)
-        amp = jnp.abs(z)
-        amp_clamped = jnp.maximum(amp, 1e-15)
-        return jnp.where(amp < 1e-15, 0.0, jnp.log(amp_clamped))
+        # Smooth formulation: avoids jnp.abs/where/maximum which produce
+        # non-smooth gradients and Hessians under JAX autodiff.
+        amp_sq = jnp.real(z) ** 2 + jnp.imag(z) ** 2
+        return 0.5 * jnp.log(amp_sq + 1e-30)
 
 
 def sample_interpolant(
