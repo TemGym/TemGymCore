@@ -1,37 +1,16 @@
-# Microscope operating-condition configuration
-#
-# Design choices in this schema:
-# 1) Lens optics and geometry are unified in one object per lens.
-# 2) Lens positions are absolute z coordinates in metres.
-# 3) Modes contain only control value + per-lens current values.
-
 [beam]
+# The source is represents a virtual source where the beam appears to come 
+# from at the top of the column. 
 voltage_kV = 200
 virtual_source_diameter_nm = 10.0
 source_half_angle_mrad = 0.05
+z_source_m = 0.0
 
 [microscope]
-# Global component order along +z (source -> detector).
+# Global component order along +z (first component after source -> detector).
 # This includes active and passive components.
 
 [microscope.components]
-order = [
-	"CL1",
-	"CL3",
-	"C_aperture",
-	"CondenserDeflector",
-	"C_mini",
-	"Obj_prefield",
-	"Obj_post",
-	"IL1",
-	"IL2",
-	"IL3",
-	"PL1",
-]
-
-lenses = ["CL1", "CL3", "C_mini", "Obj_prefield", "Obj_post", "IL1", "IL2", "IL3", "PL1"]
-deflectors = ["CondenserDeflector"]
-apertures = ["C_aperture"]
 
 # Each lens object contains both geometry (absolute z) and optics.
 # Gc uses: 1/f = Gc * (N*I)^2
@@ -45,6 +24,10 @@ Gc = 8.0e-6
 z_m = 0.2400000000000000
 turns = 3600
 Gc = 4.0e-6
+
+[apertures.C_aperture]
+z_m = 0.2500000000000000
+radii_m = [10e-6, 20e-6, 30e-6, 50e-6, 80e-6, 100e-6, 150e-6] # um
 
 [lenses.C_mini]
 z_m = 0.3000000000000000
@@ -81,21 +64,7 @@ z_m = 0.5033000000000000
 turns = 2000
 Gc = 8.0e-6
 
-[deflectors]
 
-[deflectors.CondenserDeflector]
-kind = "DoubleDeflector"
-# Matches microscope_model.ipynb baseline placement: between aperture and C_mini.
-z_m = 0.2725
-spacing_m = 0.005
-
-[apertures.C_aperture]
-z_m = 0.2500000000000000
-
-# Operating curves use a table layout:
-# - headers[0] is the control variable name.
-# - headers[1:] are lens names.
-# - each row in values must match the header length.
 
 [modes.illumination.parallel]
 headers = ["spotsize", "CL1", "CL3", "C_mini"]
@@ -107,11 +76,22 @@ values = [
 ]
 
 [modes.imaging.magnification]
-headers = ["mag", "IL1", "IL2", "IL3", "PL1"]
+headers = ["mag", "Obj_prefield", "Obj_post", "IL1", "IL2", "IL3", "PL1"]
 values = [
-	[30000.0, 2.0182612425665782, 1.1152531692561523, 2.157354966894023, -3.1163341383007155],
-	[50000.0, 1.8733878426795976, 1.1172463542299804, 2.3726718817071464, -3.1163341383007155],
-	[100000.0, 1.6890527669891737, 1.132680430574358, 2.633740418941965, -3.1163341383007155],
-	[300000.0, 1.4670711840360526, 1.2098206259415554, 2.8895725978326907, -3.1163341383007155],
-	[600000.0, 1.3802055205727835, 1.3359680849416935, 2.8937236341991714, -3.1163341383007155],
+	[30000.0, 0.0, 0.0, 2.0182612425665782, 1.1152531692561523, 2.157354966894023, -3.1163341383007155],
+	[50000.0, 0.0, 0.0, 1.8733878426795976, 1.1172463542299804, 2.3726718817071464, -3.1163341383007155],
+	[100000.0, 0.0, 0.0, 1.6890527669891737, 1.132680430574358, 2.633740418941965, -3.1163341383007155],
+	[300000.0, 0.0, 0.0, 1.4670711840360526, 1.2098206259415554, 2.8895725978326907, -3.1163341383007155],
+	[600000.0, 0.0, 0.0, 1.3802055205727835, 1.3359680849416935, 2.8937236341991714, -3.1163341383007155],
 ]
+
+[modes.imaging.diffraction]
+headers = ["camera_length", "Obj_prefield", "Obj_post", "IL1", "IL2", "IL3", "PL1"]
+values = [
+	[10.0, 0.0, 0.0, 2.0182612425665782, 1.1152531692561523, 2.157354966894023, -3.1163341383007155],
+	[20.0, 0.0, 0.0, 1.8733878426795976, 1.1172463542299804, 2.3726718817071464, -3.1163341383007155],
+	[30.0, 0.0, 0.0, 1.6890527669891737, 1.132680430574358, 2.633740418941965, -3.1163341383007155],
+	[40.0, 0.0, 0.0, 1.4670711840360526, 1.2098206259415554, 2.8895725978326907, -3.1163341383007155],
+	[50.0, 0.0, 0.0, 1.3802055205727835, 1.3359680849416935, 2.8937236341991714, -3.1163341383007155],
+]
+
