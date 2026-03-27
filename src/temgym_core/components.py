@@ -751,8 +751,9 @@ class ElectromagneticLens(Component):
 
     @property
     def focal_length(self) -> float:
-        denom = self.Gc * self.excitation**2
-        return jnp.where(denom == 0.0, jnp.inf, 1.0 / denom)
+        # Keep this in JAX space so zero-denominator cases resolve to +inf.
+        denom = jnp.asarray(self.Gc) * jnp.asarray(self.excitation) ** 2
+        return jnp.where(denom == 0.0, jnp.inf, jnp.reciprocal(denom))
 
     @property
     def rotation_angle(self) -> float:
