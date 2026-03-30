@@ -270,6 +270,7 @@ def _normalize_ray_coordinate_mode(ray_coordinate: str) -> str:
 def _compute_cumulative_rotation(
     components: Sequence[Component],
     *,
+    voltage: float = 200e3,
     include_input_rays: bool = True,
 ) -> np.ndarray:
     """Compute the cumulative Larmor rotation angle at each ray step.
@@ -293,7 +294,7 @@ def _compute_cumulative_rotation(
         angles.append(cum)
         # Component application step
         if isinstance(c, _EMLens):
-            cum += float(c.rotation_angle)
+            cum += float(c.rotation_angle(voltage))
         angles.append(cum)
 
     return np.asarray(angles, dtype=float)
@@ -382,8 +383,9 @@ def plot_model(
     radial_sign = _ray_side_sign_from_metric(rays_for_plot) if side_sign_in_r else None
 
     # Compute cumulative rotation from EM lenses for _rot modes
+    _voltage = float(rays.voltage) if hasattr(rays.voltage, '__float__') else 200e3
     cum_rotation = (
-        _compute_cumulative_rotation(components, include_input_rays=include_input_rays)
+        _compute_cumulative_rotation(components, voltage=_voltage, include_input_rays=include_input_rays)
         if coord_mode in ("x_rot", "y_rot")
         else None
     )
@@ -966,8 +968,9 @@ def plot_model_plotly(
     rays_for_plot = _subset_rays_by_half_sign(rays, ray_half_sign)
     radial_sign = _ray_side_sign_from_metric(rays_for_plot) if side_sign_in_r else None
 
+    _voltage = float(rays.voltage) if hasattr(rays.voltage, '__float__') else 200e3
     cum_rotation = (
-        _compute_cumulative_rotation(components, include_input_rays=include_input_rays)
+        _compute_cumulative_rotation(components, voltage=_voltage, include_input_rays=include_input_rays)
         if coord_mode in ("x_rot", "y_rot")
         else None
     )
