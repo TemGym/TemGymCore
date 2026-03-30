@@ -7,7 +7,7 @@ from typing import Mapping
 import numpy as np
 
 from .components import ElectromagneticLens
-from .constants import compute_Rc_from_voltage, voltage_scaling_ratio
+from .constants import compute_Rc_from_voltage, effective_accelerating_potential, voltage_scaling_ratio
 
 
 @dataclass(frozen=True)
@@ -16,7 +16,6 @@ class LensConfig:
     z_position: float
     turns: float
     Gc: float
-    Rc: float
     Tc: float = 0.0
 
 
@@ -179,24 +178,23 @@ class MicroscopeModel:
         voltage = float(self.voltage)
         reference_voltage = float(self.reference_voltage)
 
-        gc_scale = float(voltage_scaling_ratio(voltage, reference_voltage))
-        tc_scale = gc_scale ** float(self.tc_voltage_exponent)
-
-        rc_ref_base = float(compute_Rc_from_voltage(reference_voltage))
-        rc_voltage_base = float(compute_Rc_from_voltage(voltage))
-        if rc_ref_base == 0.0:
-            raise ValueError("reference_voltage produced Rc=0; cannot calibrate Rc.")
+        # Convert TOML Gc (calibrated at reference voltage) to pure geometry Gc.
+        # TOML stores Gc_toml such that f = 1/(Gc_toml * NI^2) at reference voltage,
+        # so Gc_geom = Gc_toml * V*_ref.
+        V_star_ref = float(effective_accelerating_potential(reference_voltage))
+        tc_scale = float(voltage_scaling_ratio(voltage, reference_voltage)) ** float(
+            self.tc_voltage_exponent
+        )
 
         components: list[ElectromagneticLens] = []
         for i, lens in enumerate(self.lenses):
-            rc_calibration = float(lens.Rc) / rc_ref_base
+            Gc_geom = float(lens.Gc) * V_star_ref * float(gc_scale_mode[i])
             components.append(
                 ElectromagneticLens(
                     z=float(lens.z_position),
                     turns=float(lens.turns),
                     current=float(currents[i]),
-                    Gc=float(lens.Gc) * gc_scale * float(gc_scale_mode[i]),
-                    Rc=rc_calibration * rc_voltage_base,
+                    Gc=Gc_geom,
                     Tc=float(lens.Tc) * tc_scale,
                 )
             )
@@ -219,7 +217,6 @@ class MicroscopeModel:
                     "z_position": l.z_position,
                     "turns": l.turns,
                     "Gc": l.Gc,
-                    "Rc": l.Rc,
                     "Tc": l.Tc,
                 }
                 for l in self.lenses
