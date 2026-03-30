@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from temgym_core.constants import energy2wavelength
+from temgym_core.constants import energy2wavelength, compute_Rc_from_voltage
 from temgym_core.components import ElectromagneticLens, Plane
 from temgym_core.plotting import plot_model, PlotParams, _stack_ray_positions, _compute_cumulative_rotation
 from temgym_core.source import make_waist_divergence_rays
@@ -100,7 +100,7 @@ def test_plot_model_rejects_solution_bundle_that_is_not_two_rays():
 
 def test_plot_model_breaks_same_z_position_jumps():
     components = (
-        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
+        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0),
         Plane(z=2.0),
     )
     rays = Ray(
@@ -146,7 +146,7 @@ def test_plot_model_breaks_same_z_position_jumps():
 
 def test_plot_model_can_keep_same_z_position_jumps_connected():
     components = (
-        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
+        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0),
         Plane(z=2.0),
     )
     rays = Ray(
@@ -192,7 +192,7 @@ def test_plot_model_can_keep_same_z_position_jumps_connected():
 
 def test_plot_model_r_coordinate_is_rotation_invariant():
     components = (
-        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
+        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0),
         Plane(z=2.0),
     )
     rays = Ray(
@@ -242,7 +242,7 @@ def test_plot_model_r_coordinate_is_rotation_invariant():
 def test_plot_model_x_rot_removes_rotation_jump():
     """x_rot mode should eliminate same-z jumps caused by EM lens rotation."""
     components = (
-        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
+        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0),
         Plane(z=2.0),
     )
     rays = Ray(
@@ -319,11 +319,13 @@ def test_plot_model_y_mode_extracts_y_coordinate():
 
 
 def test_compute_cumulative_rotation_matches_em_lenses():
-    em1 = ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=0.5)
-    em2 = ElectromagneticLens(z=2.0, turns=1.0, current=2.0, Gc=1.0, Rc=0.3)
+    em1 = ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0)
+    em2 = ElectromagneticLens(z=2.0, turns=1.0, current=2.0, Gc=1.0)
     components = (em1, Plane(z=1.5), em2)
 
-    angles = _compute_cumulative_rotation(components, include_input_rays=True)
+    angles = _compute_cumulative_rotation(components, voltage=200e3, include_input_rays=True)
+
+    Rc_val = float(compute_Rc_from_voltage(200e3))  # default voltage
 
     # include_input_rays adds 1 entry; then 2 per component = 7 total
     assert angles.shape == (7,)
@@ -331,22 +333,22 @@ def test_compute_cumulative_rotation_matches_em_lenses():
     assert angles[0] == 0.0
     # After propagation to em1: 0
     assert angles[1] == 0.0
-    # After em1 applied: Rc * excitation = 0.5 * 1 = 0.5
-    np.testing.assert_allclose(angles[2], 0.5)
-    # After propagation to Plane: still 0.5
-    np.testing.assert_allclose(angles[3], 0.5)
-    # After Plane applied: still 0.5
-    np.testing.assert_allclose(angles[4], 0.5)
-    # After propagation to em2: still 0.5
-    np.testing.assert_allclose(angles[5], 0.5)
-    # After em2 applied: 0.5 + 0.3*2 = 1.1
-    np.testing.assert_allclose(angles[6], 1.1)
+    # After em1 applied: Rc(V) * excitation = Rc_val * 1
+    np.testing.assert_allclose(angles[2], Rc_val)
+    # After propagation to Plane: still Rc_val
+    np.testing.assert_allclose(angles[3], Rc_val)
+    # After Plane applied: still Rc_val
+    np.testing.assert_allclose(angles[4], Rc_val)
+    # After propagation to em2: still Rc_val
+    np.testing.assert_allclose(angles[5], Rc_val)
+    # After em2 applied: Rc_val + Rc_val * 2 = 3 * Rc_val
+    np.testing.assert_allclose(angles[6], 3 * Rc_val)
 
 
 def test_plot_model_x_corot_alias_still_works():
     """Legacy alias x_corot should produce identical results to x_rot."""
     components = (
-        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0, Rc=float(np.pi / 2.0)),
+        ElectromagneticLens(z=1.0, turns=1.0, current=1.0, Gc=1.0),
         Plane(z=2.0),
     )
     rays = Ray(
