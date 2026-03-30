@@ -31,7 +31,7 @@ from temgym_core.transfer_matrices import (
     biprism_matrix_5x5,
     double_deflector_matrix_5x5,
 )
-from temgym_core.constants import compute_Kv_from_voltage
+from temgym_core.constants import compute_Kv_from_voltage, effective_accelerating_potential
 jax.config.update("jax_enable_x64", True)
 
 
@@ -679,17 +679,22 @@ def test_double_deflector_two_lens_optimization_smoke():
 def test_electromagnetic_lens():
     """Test ElectromagneticLens matches Lens + Rotator composition."""
     # Setup electromagnetic lens parameters
-    Rc = compute_Kv_from_voltage(200e3)  # 200 kV
+    voltage = 200e3
+    Rc = compute_Kv_from_voltage(voltage)  # 200 kV
     turns = 100.0
     current = 50.0  # turns * current = 5000 ampere-turns
-    Gc = 5e-6    # 1/(AT²·m)
+    # Pure geometry Gc: old Gc_toml * V*(voltage)
+    V_star = float(effective_accelerating_potential(voltage))
+    Gc_geom = 5e-6 * V_star
 
     # Create ElectromagneticLens
-    em_lens = ElectromagneticLens(z=0.0, turns=turns, current=current, Gc=Gc, Rc=Rc)
+    em_lens = ElectromagneticLens(
+        z=0.0, turns=turns, current=current, Gc=Gc_geom,
+    )
 
     # Create equivalent manual Lens + Rotator
-    focal_length = em_lens.focal_length
-    rotation_rad = em_lens.rotation_angle
+    focal_length = em_lens.focal_length(voltage)
+    rotation_rad = em_lens.rotation_angle(voltage)
     manual_lens = Lens(z=0.0, focal_length=focal_length)
     rotator = Rotator(z=0.0, angle=np.rad2deg(rotation_rad))
 
@@ -701,7 +706,8 @@ def test_electromagnetic_lens():
         dy=jnp.array(-0.005),
         _one=jnp.array(1.0),
         pathlength=jnp.array(0.0),
-        z=jnp.array(0.0)
+        z=jnp.array(0.0),
+        voltage=jnp.array(voltage),
     )
 
     # Apply transformations
@@ -717,34 +723,41 @@ def test_electromagnetic_lens():
 
 
 def test_electromagnetic_lens_properties():
-    """Test ElectromagneticLens focal_length and rotation_angle properties."""
-    Rc = 5.3e-4  # rad/AT
+    """Test ElectromagneticLens focal_length and rotation_angle methods."""
+    voltage = 200e3
+    Rc = compute_Kv_from_voltage(voltage)
     turns = 200.0
     current = 25.0  # turns * current = 5000 AT
     excitation = turns * current
-    Gc = 5e-6    # 1/(AT²·m)
+    V_star = float(effective_accelerating_potential(voltage))
+    Gc_geom = 5e-6 * V_star
 
-    lens = ElectromagneticLens(z=0.0, turns=turns, current=current, Gc=Gc, Rc=Rc)
+    lens = ElectromagneticLens(
+        z=0.0, turns=turns, current=current, Gc=Gc_geom,
+    )
 
-    # Test focal length: f = 1/(Gc·(turns·current)²)
-    expected_f = 1.0 / (Gc * excitation**2)
-    np.testing.assert_allclose(lens.focal_length, expected_f, rtol=1e-10)
+    # Test focal length: f = V* / (Gc * NI^2)
+    expected_f = V_star / (Gc_geom * excitation**2)
+    np.testing.assert_allclose(lens.focal_length(voltage), expected_f, rtol=1e-10)
+    # Also test focal_length_at convenience method
+    np.testing.assert_allclose(lens.focal_length_at(voltage), expected_f, rtol=1e-10)
 
-    # Test rotation angle: ψ = Rc·(turns·current)
+    # Test rotation angle: ψ = Rc(V) * NI
     expected_psi = Rc * excitation
-    np.testing.assert_allclose(lens.rotation_angle, expected_psi, rtol=1e-10)
+    np.testing.assert_allclose(lens.rotation_angle(voltage), expected_psi, rtol=1e-10)
     np.testing.assert_allclose(lens.I0, excitation, rtol=1e-10)
 
 
 def test_electromagnetic_lens_zero_rotation():
-    """Test ElectromagneticLens with zero rotation (Rc=0) behaves like pure Lens."""
-    turns = 100.0
-    current = 50.0
-    Gc = 5e-6
-    Rc = 0.0  # No rotation
+    """Test ElectromagneticLens with zero excitation has no effect (identity)."""
+    voltage = 200e3
+    V_star = float(effective_accelerating_potential(voltage))
+    Gc_geom = 5e-6 * V_star
 
-    em_lens = ElectromagneticLens(z=0.0, turns=turns, current=current, Gc=Gc, Rc=Rc)
-    pure_lens = Lens(z=0.0, focal_length=em_lens.focal_length)
+    # Zero current ⇒ zero excitation ⇒ no rotation, infinite focal length
+    em_lens = ElectromagneticLens(
+        z=0.0, turns=100.0, current=0.0, Gc=Gc_geom,
+    )
 
     test_ray = Ray(
         x=jnp.array(1e-3),
@@ -753,40 +766,38 @@ def test_electromagnetic_lens_zero_rotation():
         dy=jnp.array(-0.005),
         _one=jnp.array(1.0),
         pathlength=jnp.array(0.0),
-        z=jnp.array(0.0)
+        z=jnp.array(0.0),
+        voltage=jnp.array(voltage),
     )
 
     ray_em = em_lens(test_ray)
-    ray_pure = pure_lens(test_ray)
 
-    # Should match exactly when no rotation
-    np.testing.assert_allclose(ray_em.x, ray_pure.x, rtol=1e-10)
-    np.testing.assert_allclose(ray_em.y, ray_pure.y, rtol=1e-10)
-    np.testing.assert_allclose(ray_em.dx, ray_pure.dx, rtol=1e-10)
-    np.testing.assert_allclose(ray_em.dy, ray_pure.dy, rtol=1e-10)
-    np.testing.assert_allclose(ray_em.pathlength, ray_pure.pathlength, rtol=1e-10)
+    # With zero excitation the lens is identity
+    np.testing.assert_allclose(ray_em.x, test_ray.x, rtol=1e-10)
+    np.testing.assert_allclose(ray_em.y, test_ray.y, rtol=1e-10)
+    np.testing.assert_allclose(ray_em.dx, test_ray.dx, rtol=1e-10)
+    np.testing.assert_allclose(ray_em.dy, test_ray.dy, rtol=1e-10)
 
 
 def test_electromagnetic_lens_thick_advances_ray_when_tc_positive():
+    voltage = 200e3
     turns = 100.0
     current = 50.0
-    Gc = 5e-6
-    Rc = 2.0e-4
+    V_star = float(effective_accelerating_potential(voltage))
+    Gc_geom = 5e-6 * V_star
 
     lens_thin = ElectromagneticLens(
         z=0.0,
         turns=turns,
         current=current,
-        Gc=Gc,
-        Rc=Rc,
+        Gc=Gc_geom,
         Tc=0.0,
     )
     lens_with_tc = ElectromagneticLens(
         z=0.0,
         turns=turns,
         current=current,
-        Gc=Gc,
-        Rc=Rc,
+        Gc=Gc_geom,
         Tc=1.0e-3,
     )
 
@@ -798,6 +809,7 @@ def test_electromagnetic_lens_thick_advances_ray_when_tc_positive():
         _one=jnp.array(1.0),
         pathlength=jnp.array(0.0),
         z=jnp.array(0.0),
+        voltage=jnp.array(voltage),
     )
 
     out_thin = lens_thin(ray)
@@ -805,3 +817,72 @@ def test_electromagnetic_lens_thick_advances_ray_when_tc_positive():
 
     assert float(out_tc.z) > float(out_thin.z)
     assert float(out_tc.pathlength) > float(out_thin.pathlength)
+
+
+def test_electromagnetic_lens_ht_wobble_gaussian():
+    """Gaussian beam at different voltage sees adjusted focal length and rotation."""
+    from temgym_core.constants import compute_Rc_from_voltage
+
+    voltage_nom = 200e3
+    voltage_wobble = 210e3
+    V_star_nom = float(effective_accelerating_potential(voltage_nom))
+    V_star_wob = float(effective_accelerating_potential(voltage_wobble))
+
+    turns = 100.0
+    current = 50.0
+    Gc_geom = 5e-6 * V_star_nom  # pure geometry constant
+
+    lens = ElectromagneticLens(
+        z=0.0, turns=turns, current=current, Gc=Gc_geom,
+    )
+
+    # Focal length at nominal voltage
+    NI = turns * current
+    f_nom = V_star_nom / (Gc_geom * NI**2)
+    np.testing.assert_allclose(lens.focal_length(voltage_nom), f_nom, rtol=1e-10)
+
+    # Create Gaussian beams at nominal and wobbled voltages
+    beam_nom = make_gaussian(voltage=voltage_nom, x=1e-4, dx=0.001, z=0.0)
+    beam_wob = make_gaussian(voltage=voltage_wobble, x=1e-4, dx=0.001, z=0.0)
+
+    out_nom = lens(beam_nom)
+    out_wob = lens(beam_wob)
+
+    # Verify focal length ratio matches V* ratio
+    f_wob = V_star_wob / (Gc_geom * NI**2)
+    np.testing.assert_allclose(f_wob / f_nom, V_star_wob / V_star_nom, rtol=1e-10)
+
+    # Verify outputs differ: wobbled voltage changes both focal length and rotation
+    assert not np.allclose(float(out_nom.dx), float(out_wob.dx), atol=1e-12)
+    assert not np.allclose(float(out_nom.dy), float(out_wob.dy), atol=1e-12)
+
+    # Verify rotation is applied at nominal voltage
+    psi_nom = compute_Rc_from_voltage(voltage_nom) * NI
+    psi_wob = compute_Rc_from_voltage(voltage_wobble) * NI
+    assert not np.isclose(float(psi_nom), float(psi_wob), rtol=1e-6)
+
+
+def test_electromagnetic_lens_rotation_responds_to_voltage():
+    """Rotation angle depends on voltage via compute_Rc_from_voltage."""
+    from temgym_core.constants import compute_Rc_from_voltage
+
+    voltage_a = 200e3
+    voltage_b = 300e3
+    turns = 100.0
+    current = 10.0
+    NI = turns * current
+    V_star_a = float(effective_accelerating_potential(voltage_a))
+    Gc_geom = 1e-5 * V_star_a
+
+    lens = ElectromagneticLens(
+        z=0.0, turns=turns, current=current, Gc=Gc_geom,
+    )
+
+    Rc_a = float(compute_Rc_from_voltage(voltage_a))
+    Rc_b = float(compute_Rc_from_voltage(voltage_b))
+
+    np.testing.assert_allclose(lens.rotation_angle(voltage_a), Rc_a * NI, rtol=1e-10)
+    np.testing.assert_allclose(lens.rotation_angle(voltage_b), Rc_b * NI, rtol=1e-10)
+
+    # Higher voltage -> faster electrons -> smaller Rc -> smaller rotation
+    assert float(lens.rotation_angle(voltage_b)) < float(lens.rotation_angle(voltage_a))

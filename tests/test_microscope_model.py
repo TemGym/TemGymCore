@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from temgym_core.constants import compute_Rc_from_voltage, voltage_scaling_ratio
+from temgym_core.constants import compute_Rc_from_voltage, effective_accelerating_potential, voltage_scaling_ratio
 from temgym_core.microscope_model import LensConfig, MicroscopeModel, OperatingMode
 
 
@@ -96,15 +96,14 @@ def test_operating_mode_gc_scales_validation():
 def test_microscope_model_build_components_voltage_scaling():
     v_ref = 100e3
     voltage = 200e3
-    rc_ref_base = float(compute_Rc_from_voltage(v_ref))
-    rc_lens_ref = 1.5 * rc_ref_base
+    V_star_ref = float(effective_accelerating_potential(v_ref))
 
     model = MicroscopeModel(
         voltage=voltage,
         reference_voltage=v_ref,
         lenses=(
-            LensConfig(name="L1", z_position=0.1, turns=200.0, Gc=6.0e-6, Rc=rc_lens_ref, Tc=1.0e-4),
-            LensConfig(name="L2", z_position=0.2, turns=100.0, Gc=8.0e-6, Rc=0.5 * rc_lens_ref, Tc=2.0e-4),
+            LensConfig(name="L1", z_position=0.1, turns=200.0, Gc=6.0e-6, Tc=1.0e-4),
+            LensConfig(name="L2", z_position=0.2, turns=100.0, Gc=8.0e-6, Tc=2.0e-4),
         ),
         modes={
             "mag": OperatingMode(
@@ -121,13 +120,9 @@ def test_microscope_model_build_components_voltage_scaling():
     np.testing.assert_allclose(float(components[0].current), 4.0, rtol=0.0, atol=1e-12)
     np.testing.assert_allclose(float(components[1].current), 6.0, rtol=0.0, atol=1e-12)
 
-    gc_scale = float(voltage_scaling_ratio(voltage, v_ref))
-    np.testing.assert_allclose(float(components[0].Gc), 6.0e-6 * gc_scale, rtol=1e-12)
-    np.testing.assert_allclose(float(components[1].Gc), 8.0e-6 * gc_scale, rtol=1e-12)
-
-    rc_voltage_base = float(compute_Rc_from_voltage(voltage))
-    np.testing.assert_allclose(float(components[0].Rc), 1.5 * rc_voltage_base, rtol=1e-12)
-    np.testing.assert_allclose(float(components[1].Rc), 0.75 * rc_voltage_base, rtol=1e-12)
+    # Gc is now pure geometry: Gc_geom = Gc_toml * V*_ref
+    np.testing.assert_allclose(float(components[0].Gc), 6.0e-6 * V_star_ref, rtol=1e-12)
+    np.testing.assert_allclose(float(components[1].Gc), 8.0e-6 * V_star_ref, rtol=1e-12)
 
     # tc_voltage_exponent defaults to 0, so Tc remains unchanged.
     np.testing.assert_allclose(float(components[0].Tc), 1.0e-4, rtol=0.0, atol=0.0)
@@ -140,7 +135,7 @@ def test_microscope_model_tc_voltage_exponent():
         reference_voltage=100e3,
         tc_voltage_exponent=1.0,
         lenses=(
-            LensConfig(name="L1", z_position=0.1, turns=1.0, Gc=1.0e-6, Rc=1.0e-6, Tc=2.0e-4),
+            LensConfig(name="L1", z_position=0.1, turns=1.0, Gc=1.0e-6, Tc=2.0e-4),
         ),
         modes={
             "mode": OperatingMode(
@@ -158,7 +153,7 @@ def test_microscope_model_tc_voltage_exponent():
 def test_microscope_model_unknown_mode():
     model = MicroscopeModel(
         voltage=200e3,
-        lenses=(LensConfig(name="L1", z_position=0.1, turns=1.0, Gc=1.0, Rc=1.0),),
+        lenses=(LensConfig(name="L1", z_position=0.1, turns=1.0, Gc=1.0),),
         modes={
             "known": OperatingMode(
                 control_values=np.array([0.0, 1.0]),
@@ -175,7 +170,7 @@ def test_microscope_model_unknown_mode():
 def test_microscope_model_build_components_with_gc_scales():
     v_ref = 100e3
     voltage = 200e3
-    rc_ref_base = float(compute_Rc_from_voltage(v_ref))
+    V_star_ref = float(effective_accelerating_potential(v_ref))
 
     mode = OperatingMode(
         control_values=np.array([0.0, 1.0]),
@@ -187,14 +182,14 @@ def test_microscope_model_build_components_with_gc_scales():
     model = MicroscopeModel(
         voltage=voltage,
         reference_voltage=v_ref,
-        lenses=(LensConfig(name="L1", z_position=0.1, turns=100.0, Gc=5.0e-6, Rc=rc_ref_base),),
+        lenses=(LensConfig(name="L1", z_position=0.1, turns=100.0, Gc=5.0e-6),),
         modes={"m": mode},
     )
 
     comp = model.build_components("m", 0.5)[0]
     expected_gc = (
         5.0e-6
-        * float(voltage_scaling_ratio(voltage, v_ref))
+        * V_star_ref
         * 2.0  # interpolated between 1.0 and 3.0
     )
     np.testing.assert_allclose(float(comp.Gc), expected_gc, rtol=1e-12, atol=0.0)
