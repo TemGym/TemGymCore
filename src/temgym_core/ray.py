@@ -22,6 +22,8 @@ class Ray(HasParamsMixin):
         Axial position(s), metres.
     pathlength : float or jnp.ndarray
         Accumulated distance, metres.
+    voltage : float or jnp.ndarray
+        Accelerating voltage in volts.
     _one : float, default 1.0
         Homogeneous coordinate carrier; do not modify.
 
@@ -33,7 +35,7 @@ class Ray(HasParamsMixin):
     Examples
     --------
     >>> Ray.origin()
-    Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=0.0, pathlength=0.0)
+    Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=0.0, pathlength=0.0, voltage=200000.0)
     """
     x: float
     y: float
@@ -41,6 +43,7 @@ class Ray(HasParamsMixin):
     dy: float
     z: float
     pathlength: float
+    voltage: float = 200e3
     _one: float = 1.0
 
     @property
@@ -54,7 +57,7 @@ class Ray(HasParamsMixin):
         Returns
         -------
         ray : Ray
-            Ray(x=0, y=0, dx=0, dy=0, z=0, pathlength=0).
+            Ray(x=0, y=0, dx=0, dy=0, z=0, pathlength=0, voltage=200e3).
         """
         return cls(*((0.0,) * 6))
 
@@ -170,7 +173,8 @@ class Ray(HasParamsMixin):
         dx: float | None = None,
         dy: float | None = None,
         z: float | None = None,
-        pathlength: float | None = None
+        pathlength: float | None = None,
+        voltage: float | None = None,
     ) -> 'Ray':
         """Return a modified copy of the ray with selected fields changed.
 
@@ -184,6 +188,8 @@ class Ray(HasParamsMixin):
             New axial position in metres.
         pathlength : float or None, default None
             New pathlength in metres.
+        voltage : float or None, default None
+            New accelerating voltage in volts.
 
         Returns
         -------
@@ -201,5 +207,6 @@ class Ray(HasParamsMixin):
             dy=dy if dy is not None else self.dy,
             z=z if z is not None else self.z,
             pathlength=pathlength if pathlength is not None else self.pathlength,
+            voltage=voltage if voltage is not None else self.voltage,
             _one=self._one,
         )
