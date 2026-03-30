@@ -63,6 +63,14 @@ def load_microscope_config(path: str | Path) -> dict:
     if missing_deflectors:
         raise ValueError(f"Deflector definitions missing for: {missing_deflectors}")
 
+    _DEFLECTOR_REQUIRED_KEYS = {"z_m", "spacing_m", "turns", "Dc"}
+    for name, spec in tables["deflectors"].items():
+        missing_keys = _DEFLECTOR_REQUIRED_KEYS - set(spec.keys())
+        if missing_keys:
+            raise ValueError(
+                f"Deflector '{name}' is missing required keys: {sorted(missing_keys)}"
+            )
+
     missing_apertures = [name for name in aperture_names if name not in tables["apertures"]]
     if missing_apertures:
         raise ValueError(f"Aperture definitions missing for: {missing_apertures}")

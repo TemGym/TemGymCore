@@ -29,6 +29,20 @@ Gc = 4.0e-6
 z_m = 0.2500000000000000
 radii_m = [10e-6, 20e-6, 30e-6, 50e-6, 80e-6, 100e-6, 150e-6] # um
 
+# Condenser double-deflector (beam shift / tilt between CL3 and C_mini).
+# z_m is the upper (1st) deflector; the lower (2nd) sits at z_m + spacing_m.
+# Dc is the deflection constant: alpha = Dc * N * I / sqrt(V*) [rad].
+# Balance ratios solved by condenser_deflector_design notebook.
+[deflectors.CL12_deflector]
+z_m = 0.2900000000000000
+spacing_m = 0.005
+turns = 1
+Dc = 1.0
+shift_balance_x = -1.0
+shift_balance_y = -1.0
+tilt_balance_x = 1.0
+tilt_balance_y = 1.0
+
 [lenses.C_mini]
 z_m = 0.3000000000000000
 turns = 2000
@@ -64,7 +78,10 @@ z_m = 0.7214299424866523
 turns = 2000
 Gc = 8.0e-6
 
-
+[detector]
+z_m = 0.80
+pixel_size_m = 15e-6
+shape = [2048, 2048]
 
 [modes.illumination.parallel]
 headers = ["spotsize", "CL1", "CL3", "C_mini"]

@@ -327,3 +327,32 @@ def compute_rotation_angle_Gc_from_NI_focal_length(
     Gc = 1.0 / (focal_length * NI**2)
 
     return rotation_angle, Gc
+
+
+def deflection_from_excitation(Dc: float, NI: float, voltage: float) -> float:
+    """
+    Compute deflection angle from deflection constant and excitation.
+
+    Parameters
+    ----------
+    Dc : float
+        Deflection constant (geometry) [rad·V^{1/2}/AT].
+    NI : float
+        Excitation in ampere-turns [AT].
+    voltage : float
+        Accelerating voltage [V].
+
+    Returns
+    -------
+    float
+        Deflection angle [rad].
+
+    Notes
+    -----
+    Formula: alpha = Dc * NI / sqrt(V*)
+
+    Analogous to the lens formula f = V* / (Gc * NI^2), but linear
+    in excitation rather than quadratic.
+    """
+    V_star = effective_accelerating_potential(voltage)
+    return Dc * NI / V_star ** 0.5
