@@ -26,6 +26,7 @@ from .aberrations import (
     W_krivanek,
     grad_W_krivanek,
 )
+from .constants import compute_Rc_from_voltage, effective_accelerating_potential
 from .grid import Grid
 from .potential import potential_smoothed
 from .ray import Ray
@@ -734,8 +735,7 @@ class ElectromagneticLens(Component):
     z: float
     turns: float
     current: float
-    Gc: float  # Geometry constant
-    Rc: float  # Rotation constant
+    Gc: float  # Pure geometry constant [1/(AT²·V·m)]
     Tc: float = 0.0  # Thickness constant
     x0: float = 0.0
     y0: float = 0.0
@@ -749,24 +749,26 @@ class ElectromagneticLens(Component):
         """Backward-compatible alias for ampere-turn excitation."""
         return self.excitation
 
-    @property
-    def focal_length(self) -> float:
-        # Keep this in JAX space so zero-denominator cases resolve to +inf.
+    def focal_length(self, voltage: float) -> float:
+        V_star = effective_accelerating_potential(voltage)
         denom = jnp.asarray(self.Gc) * jnp.asarray(self.excitation) ** 2
-        return jnp.where(denom == 0.0, jnp.inf, jnp.reciprocal(denom))
+        return jnp.where(denom == 0.0, jnp.inf, V_star / denom)
 
-    @property
-    def rotation_angle(self) -> float:
-        return self.Rc * self.excitation
+    def focal_length_at(self, voltage: float) -> float:
+        """Convenience alias for focal_length(voltage)."""
+        return self.focal_length(voltage)
+
+    def rotation_angle(self, voltage: float) -> float:
+        return compute_Rc_from_voltage(voltage) * self.excitation
 
     @property
     def thickness(self) -> float:
         return jnp.maximum(self.Tc, 0.0) * jnp.abs(self.excitation)
 
-    def phase_shift(self, xy: jnp.ndarray) -> float:
+    def phase_shift(self, xy: jnp.ndarray, voltage: float) -> float:
         x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
         rho2 = x * x + y * y
-        return -0.5 * rho2 / self.focal_length
+        return -0.5 * rho2 / self.focal_length(voltage)
 
     def _apply_thin_lens_ray(self, ray: Ray, focal_length: float) -> Ray:
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
@@ -801,7 +803,8 @@ class ElectromagneticLens(Component):
     def _call_ray(self, ray: Ray) -> Ray:
         from .propagator import FreeSpaceParaxial
 
-        f = self.focal_length
+        voltage = ray.voltage
+        f = self.focal_length(voltage)
         D = self.thickness
 
         def _thin(_):
@@ -813,16 +816,23 @@ class ElectromagneticLens(Component):
             return self._apply_thin_lens_ray(out, 2.0 * f)
 
         out = lax.cond(D > 0.0, _thick, _thin, operand=None)
-        return self._apply_rotation_ray(out, self.rotation_angle)
+        return self._apply_rotation_ray(out, self.rotation_angle(voltage))
 
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
         from .gaussian import FreeSpacePropagator
 
-        f = self.focal_length
+        voltage = ray.voltage
+        f = self.focal_length(voltage)
         D = self.thickness
 
         def _thin(_):
-            return GaussianActionComponent._call_gaussian(self, ray)
+            thin_lens = Lens(
+                z=self.z,
+                focal_length=f,
+                x0=self.x0,
+                y0=self.y0,
+            )
+            return thin_lens(ray)
 
         def _thick(_):
             half_lens = Lens(
@@ -837,7 +847,7 @@ class ElectromagneticLens(Component):
 
         out = lax.cond(D > 0.0, _thick, _thin, operand=None)
 
-        angle = self.rotation_angle
+        angle = self.rotation_angle(voltage)
         cos_a = jnp.cos(angle)
         sin_a = jnp.sin(angle)
         R = jnp.array([[cos_a, -sin_a], [sin_a, cos_a]], dtype=jnp.float64)
