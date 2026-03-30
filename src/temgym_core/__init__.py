@@ -92,6 +92,7 @@ except Exception:
 
 try:
     from .microscope_model import (  # noqa: F401
+        DeflectorConfig,
         LensConfig,
         OperatingMode,
         MicroscopeModel,

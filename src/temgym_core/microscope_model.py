@@ -6,7 +6,7 @@ from typing import Mapping
 
 import numpy as np
 
-from .components import ElectromagneticLens
+from .components import DoubleDeflector, ElectromagneticLens
 from .constants import compute_Rc_from_voltage, effective_accelerating_potential, voltage_scaling_ratio
 
 
@@ -17,6 +17,38 @@ class LensConfig:
     turns: float
     Gc: float
     Tc: float = 0.0
+
+
+@dataclass(frozen=True)
+class DeflectorConfig:
+    """Static description of a double-deflector pair.
+
+    Parameters
+    ----------
+    name : str
+        Unique identifier (matches the TOML key).
+    z_position : float
+        Z-position of the upper (1st) deflector [m].
+    spacing : float
+        Gap between the two deflectors [m].
+    turns : float
+        Coil turns per deflector.
+    Dc : float
+        Deflection constant (geometry): alpha = Dc * NI / sqrt(V*) [rad].
+    shift_balance_x, shift_balance_y : float
+        Hardware calibration ratio for shift (2nd/1st kick). Default 1.0.
+    tilt_balance_x, tilt_balance_y : float
+        Hardware calibration ratio for tilt. Default 1.0.
+    """
+    name: str
+    z_position: float
+    spacing: float
+    turns: float
+    Dc: float
+    shift_balance_x: float = 1.0
+    shift_balance_y: float = 1.0
+    tilt_balance_x: float = 1.0
+    tilt_balance_y: float = 1.0
 
 
 @dataclass
@@ -114,11 +146,69 @@ class OperatingMode:
         return out
 
 
+def _mode_from_toml_table(
+    table: dict,
+    lens_names: list[str],
+    default_currents: dict[str, float] | None = None,
+) -> OperatingMode:
+    """Parse a TOML mode table into an :class:`OperatingMode`.
+
+    Parameters
+    ----------
+    table : dict
+        Must contain ``"headers"`` (list of str) and ``"values"``
+        (list of lists of float).  The first header is the control
+        variable (e.g. ``"spotsize"``); the remaining headers are
+        lens names whose currents are given in the value columns.
+    lens_names : list[str]
+        Ordered list of *all* lens names in the model.  Lenses not
+        mentioned in *headers* receive *default_currents* or zero.
+    default_currents : dict, optional
+        ``{lens_name: current}`` applied to lenses absent from the
+        table headers (e.g. ``{"Obj_prefield": 1.0}``).
+    """
+    headers = list(table["headers"])
+    values = np.asarray(table["values"], dtype=float)
+
+    if len(headers) < 2 or values.ndim != 2 or values.shape[1] != len(headers):
+        raise ValueError(
+            "Invalid mode table: need >= 2 headers and matching value columns."
+        )
+
+    controls = values[:, 0]
+
+    lens_index = {name: i for i, name in enumerate(lens_names)}
+    currents = np.zeros((values.shape[0], len(lens_names)), dtype=float)
+
+    if default_currents is not None:
+        for name, current in default_currents.items():
+            if name in lens_index:
+                currents[:, lens_index[name]] = float(current)
+
+    for col, name in enumerate(headers[1:], start=1):
+        if name not in lens_index:
+            continue
+        currents[:, lens_index[name]] = values[:, col]
+
+    max_abs = float(np.max(np.abs(currents))) if currents.size else 1.0
+    full_scale = max(1.0, max_abs)
+    normalized = currents / full_scale
+    allow_signed = bool(np.any(currents < 0.0))
+
+    return OperatingMode(
+        control_values=controls,
+        normalized_currents=normalized,
+        full_scale_current=full_scale,
+        allow_signed_currents=allow_signed,
+    )
+
+
 @dataclass
 class MicroscopeModel:
     voltage: float
     lenses: tuple[LensConfig, ...]
     modes: Mapping[str, OperatingMode]
+    deflectors: tuple[DeflectorConfig, ...] = ()
     reference_voltage: float | None = None
     tc_voltage_exponent: float = 0.0
     auxiliary: dict[str, Any] | None = None
@@ -144,6 +234,11 @@ class MicroscopeModel:
         if len(set(lens_names)) != len(lens_names):
             raise ValueError("Lens names must be unique.")
 
+        self.deflectors = tuple(self.deflectors)
+        deflector_names = [d.name for d in self.deflectors]
+        if len(set(deflector_names)) != len(deflector_names):
+            raise ValueError("Deflector names must be unique.")
+
         self.modes = dict(self.modes)
         if len(self.modes) == 0:
             raise ValueError("modes must not be empty.")
@@ -164,7 +259,27 @@ class MicroscopeModel:
         self,
         mode_name: str,
         control_value: float,
-    ) -> tuple[ElectromagneticLens, ...]:
+        deflector_drives: Mapping[str, tuple[float, float, float, float]] | None = None,
+    ) -> tuple[ElectromagneticLens | DoubleDeflector, ...]:
+        """Build lens and deflector component instances for a given mode.
+
+        Parameters
+        ----------
+        mode_name : str
+            Name of the operating mode (must be a key in ``self.modes``).
+        control_value : float
+            Control parameter for the mode (e.g. magnification, spot size).
+        deflector_drives : dict, optional
+            Mapping of deflector name to ``(shift_x, shift_y, tilt_x, tilt_y)``
+            drive currents [A].  Deflection angle is computed as
+            ``Dc * turns * I_drive / sqrt(V*)``.  Deflectors not listed here
+            are included with zero drive.
+
+        Returns
+        -------
+        tuple
+            Components (lenses and deflectors) sorted by z-position.
+        """
         if mode_name not in self.modes:
             available = ", ".join(sorted(self.modes.keys()))
             raise KeyError(
@@ -186,7 +301,7 @@ class MicroscopeModel:
             self.tc_voltage_exponent
         )
 
-        components: list[ElectromagneticLens] = []
+        components: list[ElectromagneticLens | DoubleDeflector] = []
         for i, lens in enumerate(self.lenses):
             Gc_geom = float(lens.Gc) * V_star_ref * float(gc_scale_mode[i])
             components.append(
@@ -199,6 +314,32 @@ class MicroscopeModel:
                 )
             )
 
+        # Build deflectors with voltage-scaled angular kicks.
+        # alpha = Dc * turns * I_drive / sqrt(V*)
+        if deflector_drives is None:
+            deflector_drives = {}
+        V_star = float(effective_accelerating_potential(voltage))
+        sqrt_V_star = float(V_star ** 0.5)
+
+        for defl in self.deflectors:
+            drives = deflector_drives.get(defl.name, (0.0, 0.0, 0.0, 0.0))
+            scale = float(defl.Dc) * float(defl.turns) / sqrt_V_star
+            components.append(
+                DoubleDeflector(
+                    z=float(defl.z_position),
+                    spacing=float(defl.spacing),
+                    shift_x=scale * float(drives[0]),
+                    shift_y=scale * float(drives[1]),
+                    tilt_x=scale * float(drives[2]),
+                    tilt_y=scale * float(drives[3]),
+                    shift_balance_x=float(defl.shift_balance_x),
+                    shift_balance_y=float(defl.shift_balance_y),
+                    tilt_balance_x=float(defl.tilt_balance_x),
+                    tilt_balance_y=float(defl.tilt_balance_y),
+                )
+            )
+
+        components.sort(key=lambda c: float(c.z))
         return tuple(components)
 
     def to_npz(self, filepath: str) -> None:
@@ -220,6 +361,20 @@ class MicroscopeModel:
                     "Tc": l.Tc,
                 }
                 for l in self.lenses
+            ],
+            "deflectors": [
+                {
+                    "name": d.name,
+                    "z_position": d.z_position,
+                    "spacing": d.spacing,
+                    "turns": d.turns,
+                    "Dc": d.Dc,
+                    "shift_balance_x": d.shift_balance_x,
+                    "shift_balance_y": d.shift_balance_y,
+                    "tilt_balance_x": d.tilt_balance_x,
+                    "tilt_balance_y": d.tilt_balance_y,
+                }
+                for d in self.deflectors
             ],
             "modes": list(self.modes.keys()),
         }
@@ -247,6 +402,9 @@ class MicroscopeModel:
             meta = json.loads(str(f["metadata.json"][0]))
 
             lenses = tuple(LensConfig(**lc) for lc in meta["lenses"])
+            deflectors = tuple(
+                DeflectorConfig(**dc) for dc in meta.get("deflectors", [])
+            )
 
             modes = {}
             for mode_name in meta["modes"]:
@@ -271,7 +429,159 @@ class MicroscopeModel:
                 voltage=meta["voltage"],
                 lenses=lenses,
                 modes=modes,
+                deflectors=deflectors,
                 reference_voltage=meta["reference_voltage"],
                 tc_voltage_exponent=meta["tc_voltage_exponent"],
                 auxiliary=meta.get("auxiliary", {}),
             )
+
+    @classmethod
+    def from_toml(
+        cls,
+        path: str,
+        *,
+        mode_names: Mapping[str, str] | None = None,
+        mode_defaults: Mapping[str, dict[str, float]] | None = None,
+        reference_voltage: float | None = None,
+        tc_voltage_exponent: float = 0.0,
+    ) -> MicroscopeModel:
+        """Load a :class:`MicroscopeModel` from a TOML file.
+
+        Parameters
+        ----------
+        path : str
+            Path to the TOML configuration file.
+        mode_names : dict, optional
+            Rename modes from their dotted TOML path to a short name,
+            e.g. ``{"illumination.parallel": "spot"}``.  Modes not
+            listed keep their leaf name (e.g. ``"parallel"``).
+        mode_defaults : dict, optional
+            Per-mode default currents for lenses absent from the table
+            headers.  Keyed by *final* mode name (after renaming).
+            E.g. ``{"spot": {"Obj_prefield": 1.0}}``.
+        reference_voltage : float, optional
+            Reference voltage [V] for Gc calibration.  Defaults to the
+            beam voltage read from the TOML.
+        tc_voltage_exponent : float
+            Tc voltage-scaling exponent (default 0).
+        """
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        with open(path, "rb") as fh:
+            cfg = tomllib.load(fh)
+
+        # -- Beam / voltage ---------------------------------------------------
+        beam = cfg["beam"]
+        voltage = float(beam["voltage_kV"]) * 1e3
+        if reference_voltage is None:
+            reference_voltage = voltage
+
+        # -- Lenses -----------------------------------------------------------
+        lenses_cfg = cfg.get("lenses", {})
+        lens_names = list(lenses_cfg.keys())
+        lenses = tuple(
+            LensConfig(
+                name=name,
+                z_position=float(spec["z_m"]),
+                turns=float(spec["turns"]),
+                Gc=float(spec["Gc"]),
+                Tc=float(spec.get("Tc", 0.0)),
+            )
+            for name, spec in lenses_cfg.items()
+        )
+
+        # -- Deflectors -------------------------------------------------------
+        deflectors_cfg = cfg.get("deflectors", {})
+        deflectors = tuple(
+            DeflectorConfig(
+                name=name,
+                z_position=float(spec["z_m"]),
+                spacing=float(spec["spacing_m"]),
+                turns=float(spec["turns"]),
+                Dc=float(spec["Dc"]),
+                shift_balance_x=float(spec.get("shift_balance_x", 1.0)),
+                shift_balance_y=float(spec.get("shift_balance_y", 1.0)),
+                tilt_balance_x=float(spec.get("tilt_balance_x", 1.0)),
+                tilt_balance_y=float(spec.get("tilt_balance_y", 1.0)),
+            )
+            for name, spec in deflectors_cfg.items()
+        )
+
+        # -- Modes ------------------------------------------------------------
+        # Flatten nested tables: modes.illumination.parallel -> "illumination.parallel"
+        raw_modes = cfg.get("modes", {})
+        flat_modes: dict[str, dict] = {}
+        for group_name, group in raw_modes.items():
+            if isinstance(group, dict) and "headers" in group:
+                flat_modes[group_name] = group
+            else:
+                for sub_name, table in group.items():
+                    flat_modes[f"{group_name}.{sub_name}"] = table
+
+        if not flat_modes:
+            raise ValueError("No mode tables found in TOML [modes] section.")
+
+        # Determine final mode names.
+        if mode_names is None:
+            leaves = [key.rsplit(".", 1)[-1] for key in flat_modes]
+            if len(set(leaves)) == len(leaves):
+                name_map = {k: k.rsplit(".", 1)[-1] for k in flat_modes}
+            else:
+                name_map = {k: k for k in flat_modes}
+        else:
+            name_map = dict(mode_names)
+            for key in flat_modes:
+                if key not in name_map:
+                    name_map[key] = key.rsplit(".", 1)[-1]
+
+        if mode_defaults is None:
+            mode_defaults = {}
+
+        modes: dict[str, OperatingMode] = {}
+        for toml_key, table in flat_modes.items():
+            final_name = name_map[toml_key]
+            defaults = mode_defaults.get(final_name)
+            modes[final_name] = _mode_from_toml_table(
+                table, lens_names, defaults,
+            )
+
+        # -- Auxiliary (source, apertures, detector, beam params) --------------
+        auxiliary: dict[str, Any] = {}
+
+        if "z_source_m" in beam:
+            auxiliary["z_source"] = float(beam["z_source_m"])
+
+        for key in ("virtual_source_diameter_nm", "source_half_angle_mrad"):
+            if key in beam:
+                auxiliary[key] = float(beam[key])
+
+        apertures_cfg = cfg.get("apertures", {})
+        if apertures_cfg:
+            auxiliary["apertures"] = {
+                name: {
+                    "z": float(spec["z_m"]),
+                    "radii": [float(r) for r in spec.get("radii_m", [])],
+                }
+                for name, spec in apertures_cfg.items()
+            }
+
+        detector_cfg = cfg.get("detector", {})
+        if detector_cfg:
+            auxiliary["detector"] = {
+                "z": float(detector_cfg["z_m"]),
+                "pixel_size": float(detector_cfg["pixel_size_m"]),
+                "shape": list(detector_cfg["shape"]),
+            }
+
+        return cls(
+            voltage=voltage,
+            lenses=lenses,
+            modes=modes,
+            deflectors=deflectors,
+            reference_voltage=reference_voltage,
+            tc_voltage_exponent=tc_voltage_exponent,
+            auxiliary=auxiliary,
+        )
