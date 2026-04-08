@@ -281,6 +281,61 @@ def circular_input_wave(
     return beam
 
 
+def point_source_wave(
+    n: int,
+    half_angle: float,
+    waist: float,
+    voltage: float,
+    *,
+    z0: float = 0.0,
+    x0: float = 0.0,
+    y0: float = 0.0,
+    wavelength_unit: str = "m",
+) -> GaussianBeam:
+    """Point source emitting *n* Gaussians uniformly spread in angle.
+
+    All sub-beams share the same spatial position ``(x0, y0, z0)`` and
+    waist, but their slopes are distributed on a Fibonacci spiral in
+    angle space filling a cone of ``half_angle`` [rad].
+
+    Parameters
+    ----------
+    n : int
+        Number of Gaussian sub-beams.
+    half_angle : float
+        Semi-convergence angle [rad].
+    waist : float
+        RMS Gaussian waist [m] (same for x and y).
+    voltage : float
+        Accelerating voltage [V].
+    z0, x0, y0 : float
+        Source position [m].
+    wavelength_unit : str
+        Length unit for wavelength (default ``"m"``).
+    """
+    dx, dy = fibonacci_spiral(n, half_angle)
+    dx = jnp.asarray(dx)
+    dy = jnp.asarray(dy)
+
+    ones = jnp.ones_like(dx)
+
+    return make_gaussian(
+        x=ones * x0,
+        y=ones * y0,
+        dx=dx,
+        dy=dy,
+        amp=ones / n,
+        phase=jnp.zeros_like(dx),
+        waist_x=ones * waist,
+        waist_y=ones * waist,
+        rcurv_x=ones * jnp.inf,
+        rcurv_y=ones * jnp.inf,
+        z=ones * z0,
+        voltage=ones * voltage,
+        wavelength_unit=wavelength_unit,
+    )
+
+
 def square_input_wave(
     aperture_length: float,
     waist: float,

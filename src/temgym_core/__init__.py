@@ -83,6 +83,7 @@ try:
     from .plotting import (  # noqa: F401
         plot_model,
         plot_model_plotly,
+        plot_abcd_profile,
         PlotParams,
         legacy_beam_plot_params,
     )
