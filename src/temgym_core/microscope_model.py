@@ -257,18 +257,23 @@ class MicroscopeModel:
 
     def build_components(
         self,
-        mode_name: str,
-        control_value: float,
+        mode_name: str | Mapping[str, float],
+        control_value: float | None = None,
         deflector_drives: Mapping[str, tuple[float, float, float, float]] | None = None,
     ) -> tuple[ElectromagneticLens | DoubleDeflector, ...]:
         """Build lens and deflector component instances for a given mode.
 
         Parameters
         ----------
-        mode_name : str
-            Name of the operating mode (must be a key in ``self.modes``).
-        control_value : float
-            Control parameter for the mode (e.g. magnification, spot size).
+        mode_name : str or dict
+            Either a single mode name (must also supply *control_value*),
+            or a mapping ``{mode_name: control_value}`` to combine
+            several modes.  When multiple modes are given, currents are
+            combined per-lens by taking the value with the largest
+            absolute magnitude (modes typically cover disjoint lens
+            subsets so at most one is non-zero per lens).
+        control_value : float, optional
+            Control parameter when *mode_name* is a single string.
         deflector_drives : dict, optional
             Mapping of deflector name to ``(shift_x, shift_y, tilt_x, tilt_y)``
             drive currents [A].  Deflection angle is computed as
@@ -280,15 +285,34 @@ class MicroscopeModel:
         tuple
             Components (lenses and deflectors) sorted by z-position.
         """
-        if mode_name not in self.modes:
-            available = ", ".join(sorted(self.modes.keys()))
-            raise KeyError(
-                f"Unknown mode '{mode_name}'. Available modes: {available}."
-            )
+        # Normalise to a dict of {mode_name: control_value}.
+        if isinstance(mode_name, str):
+            if control_value is None:
+                raise TypeError(
+                    "control_value is required when mode_name is a string."
+                )
+            mode_map: Mapping[str, float] = {mode_name: control_value}
+        else:
+            mode_map = mode_name
 
-        mode = self.modes[mode_name]
-        currents = mode.interpolate_currents(control_value)
-        gc_scale_mode = mode.interpolate_gc_scales(control_value)
+        n_lenses = len(self.lenses)
+        combined_currents = np.zeros(n_lenses, dtype=float)
+        combined_gc_scales = np.ones(n_lenses, dtype=float)
+
+        for m_name, c_value in mode_map.items():
+            if m_name not in self.modes:
+                available = ", ".join(sorted(self.modes.keys()))
+                raise KeyError(
+                    f"Unknown mode '{m_name}'. Available modes: {available}."
+                )
+            mode = self.modes[m_name]
+            currents = mode.interpolate_currents(float(c_value))
+            gc_scales = mode.interpolate_gc_scales(float(c_value))
+
+            for i in range(n_lenses):
+                if abs(currents[i]) > abs(combined_currents[i]):
+                    combined_currents[i] = currents[i]
+                    combined_gc_scales[i] = gc_scales[i]
 
         voltage = float(self.voltage)
         reference_voltage = float(self.reference_voltage)
@@ -303,12 +327,12 @@ class MicroscopeModel:
 
         components: list[ElectromagneticLens | DoubleDeflector] = []
         for i, lens in enumerate(self.lenses):
-            Gc_geom = float(lens.Gc) * V_star_ref * float(gc_scale_mode[i])
+            Gc_geom = float(lens.Gc) * V_star_ref * float(combined_gc_scales[i])
             components.append(
                 ElectromagneticLens(
                     z=float(lens.z_position),
                     turns=float(lens.turns),
-                    current=float(currents[i]),
+                    current=float(combined_currents[i]),
                     Gc=Gc_geom,
                     Tc=float(lens.Tc) * tc_scale,
                 )
@@ -562,15 +586,30 @@ class MicroscopeModel:
         if apertures_cfg:
             auxiliary["apertures"] = {
                 name: {
+                    "name": spec.get("name", name),
                     "z": float(spec["z_m"]),
                     "radii": [float(r) for r in spec.get("radii_m", [])],
                 }
                 for name, spec in apertures_cfg.items()
             }
 
+        sample_cfg = cfg.get("sample", {})
+        if sample_cfg:
+            auxiliary["sample"] = {
+                "name": str(sample_cfg.get("name", "Sample")),
+                "z": float(sample_cfg["z_m"]),
+                "type": str(sample_cfg.get("type", "random_phase")),
+                "strength": float(sample_cfg.get("strength", 1.0)),
+                "width": float(sample_cfg.get("width_m", 100e-9)),
+                "height": float(sample_cfg.get("height_m", 100e-9)),
+                "correlation_length": float(sample_cfg.get("correlation_length_m", 2e-9)),
+                "edge_sharpness": float(sample_cfg.get("edge_sharpness", 5e6)),
+            }
+
         detector_cfg = cfg.get("detector", {})
         if detector_cfg:
             auxiliary["detector"] = {
+                "name": str(detector_cfg.get("name", "Detector")),
                 "z": float(detector_cfg["z_m"]),
                 "pixel_size": float(detector_cfg["pixel_size_m"]),
                 "shape": list(detector_cfg["shape"]),

@@ -1197,3 +1197,149 @@ def plot_model_plotly(
     fig.update_xaxes(title_text=coord_mode)
     fig.update_yaxes(title_text="z [m]")
     return fig
+
+
+def _rotation_matrix_5x5(theta):
+    """Build a 5×5 rotation matrix for angle *theta* (radians).
+
+    Rotates (x, y) and (dx, dy) simultaneously::
+
+        [[c, -s, 0, 0, 0],
+         [s,  c, 0, 0, 0],
+         [0,  0, c,-s, 0],
+         [0,  0, s, c, 0],
+         [0,  0, 0, 0, 1]]
+    """
+    c, s = np.cos(theta), np.sin(theta)
+    R = np.eye(5)
+    R[0, 0] = c;  R[0, 1] = -s
+    R[1, 0] = s;  R[1, 1] = c
+    R[2, 2] = c;  R[2, 3] = -s
+    R[3, 2] = s;  R[3, 3] = c
+    return R
+
+
+def plot_abcd_profile(
+    z,
+    cumulative,
+    labels=None,
+    axis="x",
+    elements=("A", "B", "C", "D"),
+    rotation=None,
+    reference=None,
+    axes=None,
+    **fig_kw,
+):
+    """Plot ABCD transfer-matrix elements as a function of z.
+
+    Parameters
+    ----------
+    z : array-like, shape (N,)
+        z-positions along the column (from :func:`solve_model_with_z`).
+    cumulative : array-like, shape (N, 5, 5)
+        Cumulative ABCD matrices at each step.
+    labels : list of str, optional
+        Step labels from :func:`solve_model_with_z`.  Steps whose label
+        is *not* ``'drift'`` are drawn as vertical component markers.
+    axis : {'x', 'y'}
+        Transverse axis to plot.  ``'x'`` uses matrix indices (0, 2);
+        ``'y'`` uses (1, 3).
+    elements : tuple of str
+        Which of ``('A', 'B', 'C', 'D')`` to include as sub-plots.
+    rotation : array-like, shape (N,), optional
+        Cumulative Larmor rotation angles (radians) at each step,
+        as returned by :func:`solve_model_with_z`.  When provided the
+        inverse rotation is applied to each cumulative matrix before
+        extracting ABCD elements (co-rotating frame).
+    reference : int or str, optional
+        Reference plane for the transfer matrices.  If an *int*, it is
+        the index into the step arrays.  If a *str*, it is matched
+        against *labels* (uses the last match).  The ABCD elements are
+        then computed relative to this plane:
+        ``M_ref_to_k = M_cumulative[k] @ inv(M_cumulative[ref])``.
+        Useful for checking imaging conditions (e.g. B = 0 from the
+        sample to the detector).
+    axes : array of Axes, optional
+        Pre-existing matplotlib axes (one per element).  Created if *None*.
+    **fig_kw
+        Forwarded to :func:`matplotlib.pyplot.subplots`.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    axes : numpy.ndarray of matplotlib.axes.Axes
+    """
+    z = np.asarray(z)
+    cumulative = np.asarray(cumulative)
+
+    # Apply inverse Larmor rotation (co-rotating frame)
+    if rotation is not None:
+        rotation = np.asarray(rotation)
+        cumulative = np.stack([
+            _rotation_matrix_5x5(-theta) @ M
+            for theta, M in zip(rotation, cumulative)
+        ])
+
+    # Re-reference cumulative matrices to a chosen plane
+    if reference is not None:
+        if isinstance(reference, str):
+            # Find the last label match
+            ref_idx = None
+            if labels is not None:
+                for i, lbl in enumerate(labels):
+                    if lbl == reference:
+                        ref_idx = i
+            if ref_idx is None:
+                raise ValueError(
+                    f"reference label {reference!r} not found in labels"
+                )
+        else:
+            ref_idx = int(reference)
+        M_ref_inv = np.linalg.inv(cumulative[ref_idx])
+        cumulative = np.stack([M @ M_ref_inv for M in cumulative])
+
+    pos_idx, slope_idx = (0, 2) if axis == "x" else (1, 3)
+    element_map = {
+        "A": (pos_idx, pos_idx),
+        "B": (pos_idx, slope_idx),
+        "C": (slope_idx, pos_idx),
+        "D": (slope_idx, slope_idx),
+    }
+
+    n_panels = len(elements)
+    if axes is None:
+        fig_kw.setdefault("figsize", (10, 2.5 * n_panels))
+        fig, axes = plt.subplots(n_panels, 1, sharex=True, **fig_kw)
+        if n_panels == 1:
+            axes = np.array([axes])
+    else:
+        axes = np.atleast_1d(axes)
+        fig = axes.flat[0].figure
+
+    # Identify component (non-drift) positions for vertical markers
+    comp_z, comp_names = [], []
+    if labels is not None:
+        for zi, lbl in zip(z, labels):
+            if lbl != "drift":
+                comp_z.append(float(zi))
+                comp_names.append(lbl)
+
+    for ax, elem in zip(axes.flat, elements):
+        r, c = element_map[elem]
+        ax.plot(z, cumulative[:, r, c], linewidth=1.5)
+        ax.set_ylabel(f"{elem}  ({axis})")
+        ax.axhline(0, color="k", linewidth=0.5, linestyle="--")
+        for cz in comp_z:
+            ax.axvline(cz, color="grey", linewidth=0.5, linestyle=":")
+
+    axes.flat[-1].set_xlabel("z (m)")
+
+    # Component-name ticks along the top of the first panel
+    if comp_z:
+        ax_top = axes.flat[0].twiny()
+        ax_top.set_xlim(axes.flat[0].get_xlim())
+        ax_top.set_xticks(comp_z)
+        ax_top.set_xticklabels(comp_names, rotation=45, ha="left", fontsize=8)
+
+    fig.tight_layout()
+    return fig, axes

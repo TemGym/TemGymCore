@@ -268,6 +268,82 @@ def solve_model(
     return jnp.array(model_ray_jacobians)  # ABCD matrices at each component
 
 
+def solve_model_with_z(
+    ray: Ray,
+    model: Sequence[Union[Component, Source]],
+    propagator: Any | None = None,
+    names: Sequence[str] | None = None,
+):
+    """Compute cumulative 5×5 ABCD matrices and z-positions along the model.
+
+    Each element in *model* produces two steps: a free-space drift to the
+    element's z followed by the element interaction itself.
+
+    Parameters
+    ----------
+    ray : Ray
+        Input scalar ray.
+    model : sequence of Component or Source
+        Model elements ordered along increasing z.
+    propagator : optional
+        Propagation model between elements.  If *None*, auto-selected
+        from the ray representation.
+    names : sequence of str, optional
+        Human-readable name for each element in *model*.  If *None*,
+        ``type(c).__name__`` is used.
+
+    Returns
+    -------
+    z : jnp.ndarray, shape (N,)
+        z-position after each step (*N* = 2 × ``len(model)`` + 1).
+    cumulative : jnp.ndarray, shape (N, 5, 5)
+        Cumulative ABCD matrix from the input plane through step *k*.
+    labels : list of str
+        ``'drift'`` for propagation steps, otherwise the component name.
+    rotation : jnp.ndarray, shape (N,)
+        Cumulative Larmor rotation angle (radians) at each step.
+    """
+    from .components import ElectromagneticLens as _EMLens
+
+    if propagator is None:
+        propagator = _default_propagator_for_ray(ray)
+    if names is None:
+        names = [type(c).__name__ for c in model]
+
+    # Start with the identity at the source position
+    z_list: list[float] = [float(ray.z)]
+    cumulative: list[jnp.ndarray] = [jnp.eye(5)]
+    labels: list[str] = ["source"]
+    rotation: list[float] = [0.0]
+    cum_angle = 0.0
+
+    for comp, name in zip(model, names):
+        if isinstance(comp, (Source, Component)):
+            distance = comp.z - ray.z
+            propagator_d = propagator.with_distance(distance)
+            jac, ray = jacobian_and_value(propagator_d)(ray)
+            mat = custom_jacobian_matrix(jac) @ cumulative[-1]
+            cumulative.append(mat)
+            z_list.append(float(ray.z))
+            labels.append("drift")
+            rotation.append(cum_angle)
+        jac, ray = jacobian_and_value(comp)(ray)
+        mat = custom_jacobian_matrix(jac) @ cumulative[-1]
+        cumulative.append(mat)
+        z_list.append(float(ray.z))
+        labels.append(name)
+        if isinstance(comp, _EMLens):
+            cum_angle += float(comp.rotation_angle(ray.voltage))
+        rotation.append(cum_angle)
+
+    return (
+        jnp.array(z_list),
+        jnp.stack(cumulative),
+        labels,
+        jnp.array(rotation),
+    )
+
+
 def run_with_grads(
     input_ray: Ray,
     model: Sequence[Union[Component, Source]],
