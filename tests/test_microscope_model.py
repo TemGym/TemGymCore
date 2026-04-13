@@ -257,6 +257,37 @@ def test_build_components_no_deflectors_backward_compat():
     assert len(components) == 1
     from temgym_core.components import ElectromagneticLens
     assert isinstance(components[0], ElectromagneticLens)
+    assert components[0].stigmator_strength_x == pytest.approx(0.0)
+    assert components[0].stigmator_strength_y == pytest.approx(0.0)
+
+
+def test_build_components_lens_stigmator_strengths_passthrough():
+    model = MicroscopeModel(
+        voltage=200e3,
+        lenses=(
+            LensConfig(
+                name="L1",
+                z_position=0.1,
+                turns=1.0,
+                Gc=1.0e-6,
+                stigmator_strength_x=0.1,
+                stigmator_strength_y=-0.2,
+            ),
+        ),
+        modes={
+            "mode": OperatingMode(
+                control_values=np.array([0.0, 1.0]),
+                normalized_currents=np.array([[0.5], [0.5]]),
+                full_scale_current=1.0,
+            )
+        },
+    )
+
+    components = model.build_components("mode", 0.5)
+    assert len(components) == 1
+    lens = components[0]
+    np.testing.assert_allclose(float(lens.stigmator_strength_x), 0.1, atol=0.0)
+    np.testing.assert_allclose(float(lens.stigmator_strength_y), -0.2, atol=0.0)
 
 
 def test_build_components_with_deflector_zero_drive():
@@ -378,6 +409,38 @@ def test_microscope_model_npz_roundtrip_no_deflectors(tmp_path):
     loaded = MicroscopeModel.from_npz(filepath)
     assert len(loaded.deflectors) == 0
     assert len(loaded.lenses) == 1
+    np.testing.assert_allclose(loaded.lenses[0].stigmator_strength_x, 0.0, atol=0.0)
+    np.testing.assert_allclose(loaded.lenses[0].stigmator_strength_y, 0.0, atol=0.0)
+
+
+def test_microscope_model_npz_roundtrip_lens_stigmator_strengths(tmp_path):
+    model = MicroscopeModel(
+        voltage=200e3,
+        lenses=(
+            LensConfig(
+                name="L1",
+                z_position=0.1,
+                turns=1.0,
+                Gc=1.0e-6,
+                stigmator_strength_x=0.05,
+                stigmator_strength_y=-0.1,
+            ),
+        ),
+        modes={
+            "mode": OperatingMode(
+                control_values=np.array([0.0, 1.0]),
+                normalized_currents=np.array([[0.5], [0.5]]),
+                full_scale_current=1.0,
+            )
+        },
+    )
+    filepath = str(tmp_path / "model_stig.npz")
+    model.to_npz(filepath)
+
+    loaded = MicroscopeModel.from_npz(filepath)
+    assert len(loaded.lenses) == 1
+    np.testing.assert_allclose(loaded.lenses[0].stigmator_strength_x, 0.05, atol=0.0)
+    np.testing.assert_allclose(loaded.lenses[0].stigmator_strength_y, -0.1, atol=0.0)
 
 
 def test_duplicate_deflector_names_rejected():
@@ -541,6 +604,37 @@ shift_balance_x = -1.0
     assert d.Dc == pytest.approx(1.5)
     assert d.shift_balance_x == pytest.approx(-1.0)
     assert d.shift_balance_y == pytest.approx(1.0)  # default
+
+
+def test_from_toml_lens_stigmator_strengths(tmp_path):
+    toml_text = """\
+[beam]
+voltage_kV = 200
+
+[lenses.L1]
+z_m = 0.10
+turns = 1000
+Gc = 1e-5
+stigmator_strength_x = 0.12
+stigmator_strength_y = -0.08
+
+[lenses.L2]
+z_m = 0.30
+turns = 2000
+Gc = 2e-5
+
+[modes.imaging.magnification]
+headers = ["mag", "L1", "L2"]
+values = [[100.0, 0.5, 1.0], [200.0, 0.8, 2.0]]
+"""
+    toml_path = tmp_path / "test_stig.toml"
+    toml_path.write_text(toml_text)
+
+    model = MicroscopeModel.from_toml(str(toml_path))
+    assert model.lenses[0].stigmator_strength_x == pytest.approx(0.12)
+    assert model.lenses[0].stigmator_strength_y == pytest.approx(-0.08)
+    assert model.lenses[1].stigmator_strength_x == pytest.approx(0.0)
+    assert model.lenses[1].stigmator_strength_y == pytest.approx(0.0)
 
 
 def test_from_toml_with_detector(tmp_path):

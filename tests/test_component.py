@@ -16,6 +16,7 @@ from temgym_core.components import (
     Deflector,
     DoubleDeflector,
     Lens,
+    Stigmator,
     ElectromagneticLens,
     Rotator,
     InterpolatedSample2D,
@@ -817,6 +818,51 @@ def test_electromagnetic_lens_thick_advances_ray_when_tc_positive():
 
     assert float(out_tc.z) > float(out_thin.z)
     assert float(out_tc.pathlength) > float(out_thin.pathlength)
+
+
+def test_electromagnetic_lens_with_xy_stigmator_matches_stigmator_plus_rotator():
+    voltage = 200e3
+    turns = 100.0
+    current = 50.0
+    sx = 0.2
+    sy = -0.1
+    V_star = float(effective_accelerating_potential(voltage))
+    Gc_geom = 5e-6 * V_star
+
+    em_lens = ElectromagneticLens(
+        z=0.0,
+        turns=turns,
+        current=current,
+        Gc=Gc_geom,
+        stigmator_strength_x=sx,
+        stigmator_strength_y=sy,
+    )
+
+    f = float(em_lens.focal_length(voltage))
+    fx = f / (1.0 + sx)
+    fy = f / (1.0 + sy)
+    manual_stig = Stigmator(z=0.0, focal_length_x=fx, focal_length_y=fy)
+    rotator = Rotator(z=0.0, angle=np.rad2deg(float(em_lens.rotation_angle(voltage))))
+
+    test_ray = Ray(
+        x=jnp.array(1.0e-3),
+        y=jnp.array(0.7e-3),
+        dx=jnp.array(0.01),
+        dy=jnp.array(-0.004),
+        _one=jnp.array(1.0),
+        pathlength=jnp.array(0.0),
+        z=jnp.array(0.0),
+        voltage=jnp.array(voltage),
+    )
+
+    ray_em = em_lens(test_ray)
+    ray_manual = rotator(manual_stig(test_ray))
+
+    np.testing.assert_allclose(ray_em.x, ray_manual.x, rtol=1e-5)
+    np.testing.assert_allclose(ray_em.y, ray_manual.y, rtol=1e-5)
+    np.testing.assert_allclose(ray_em.dx, ray_manual.dx, rtol=1e-5)
+    np.testing.assert_allclose(ray_em.dy, ray_manual.dy, rtol=1e-5)
+    np.testing.assert_allclose(ray_em.pathlength, ray_manual.pathlength, rtol=1e-5)
 
 
 def test_electromagnetic_lens_ht_wobble_gaussian():
