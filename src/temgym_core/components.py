@@ -739,6 +739,9 @@ class ElectromagneticLens(Component):
     Tc: float = 0.0  # Thickness constant
     x0: float = 0.0
     y0: float = 0.0
+    stigmator_strength_x: float = 0.0
+    stigmator_strength_y: float = 0.0
+    stigmator_eps: float = 1e-6
 
     @property
     def excitation(self) -> float:
@@ -769,6 +772,33 @@ class ElectromagneticLens(Component):
         x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
         rho2 = x * x + y * y
         return -0.5 * rho2 / self.focal_length(voltage)
+
+    def _has_stigmator(self) -> bool:
+        return bool(
+            abs(float(self.stigmator_strength_x)) > 0.0
+            or abs(float(self.stigmator_strength_y)) > 0.0
+        )
+
+    def _effective_stigmator_strengths(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+        min_strength = -1.0 + jnp.abs(self.stigmator_eps)
+        sx = jnp.clip(jnp.asarray(self.stigmator_strength_x), min_strength, jnp.inf)
+        sy = jnp.clip(jnp.asarray(self.stigmator_strength_y), min_strength, jnp.inf)
+        return sx, sy
+
+    def _stigmator_focal_lengths(self, voltage: float) -> tuple[jnp.ndarray, jnp.ndarray]:
+        f = self.focal_length(voltage)
+        sx, sy = self._effective_stigmator_strengths()
+        return f / (1.0 + sx), f / (1.0 + sy)
+
+    def _apply_thin_stigmator(self, ray: Ray | GaussianBeam, fx, fy):
+        stig = Stigmator(
+            z=self.z,
+            focal_length_x=fx,
+            focal_length_y=fy,
+            x0=self.x0,
+            y0=self.y0,
+        )
+        return stig(ray)
 
     def _apply_thin_lens_ray(self, ray: Ray, focal_length: float) -> Ray:
         x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
@@ -807,13 +837,24 @@ class ElectromagneticLens(Component):
         f = self.focal_length(voltage)
         D = self.thickness
 
-        def _thin(_):
-            return self._apply_thin_lens_ray(ray, f)
+        if self._has_stigmator():
+            fx, fy = self._stigmator_focal_lengths(voltage)
 
-        def _thick(_):
-            out = self._apply_thin_lens_ray(ray, 2.0 * f)
-            out = FreeSpaceParaxial()(out, D)
-            return self._apply_thin_lens_ray(out, 2.0 * f)
+            def _thin(_):
+                return self._apply_thin_stigmator(ray, fx, fy)
+
+            def _thick(_):
+                out = self._apply_thin_stigmator(ray, 2.0 * fx, 2.0 * fy)
+                out = FreeSpaceParaxial()(out, D)
+                return self._apply_thin_stigmator(out, 2.0 * fx, 2.0 * fy)
+        else:
+            def _thin(_):
+                return self._apply_thin_lens_ray(ray, f)
+
+            def _thick(_):
+                out = self._apply_thin_lens_ray(ray, 2.0 * f)
+                out = FreeSpaceParaxial()(out, D)
+                return self._apply_thin_lens_ray(out, 2.0 * f)
 
         out = lax.cond(D > 0.0, _thick, _thin, operand=None)
         return self._apply_rotation_ray(out, self.rotation_angle(voltage))
@@ -825,25 +866,36 @@ class ElectromagneticLens(Component):
         f = self.focal_length(voltage)
         D = self.thickness
 
-        def _thin(_):
-            thin_lens = Lens(
-                z=self.z,
-                focal_length=f,
-                x0=self.x0,
-                y0=self.y0,
-            )
-            return thin_lens(ray)
+        if self._has_stigmator():
+            fx, fy = self._stigmator_focal_lengths(voltage)
 
-        def _thick(_):
-            half_lens = Lens(
-                z=self.z,
-                focal_length=2.0 * f,
-                x0=self.x0,
-                y0=self.y0,
-            )
-            out = half_lens(ray)
-            out = FreeSpacePropagator()(out, D)
-            return half_lens(out)
+            def _thin(_):
+                return self._apply_thin_stigmator(ray, fx, fy)
+
+            def _thick(_):
+                out = self._apply_thin_stigmator(ray, 2.0 * fx, 2.0 * fy)
+                out = FreeSpacePropagator()(out, D)
+                return self._apply_thin_stigmator(out, 2.0 * fx, 2.0 * fy)
+        else:
+            def _thin(_):
+                thin_lens = Lens(
+                    z=self.z,
+                    focal_length=f,
+                    x0=self.x0,
+                    y0=self.y0,
+                )
+                return thin_lens(ray)
+
+            def _thick(_):
+                half_lens = Lens(
+                    z=self.z,
+                    focal_length=2.0 * f,
+                    x0=self.x0,
+                    y0=self.y0,
+                )
+                out = half_lens(ray)
+                out = FreeSpacePropagator()(out, D)
+                return half_lens(out)
 
         out = lax.cond(D > 0.0, _thick, _thin, operand=None)
 

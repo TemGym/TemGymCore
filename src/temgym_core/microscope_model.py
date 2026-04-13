@@ -17,6 +17,8 @@ class LensConfig:
     turns: float
     Gc: float
     Tc: float = 0.0
+    stigmator_strength_x: float = 0.0
+    stigmator_strength_y: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -335,6 +337,8 @@ class MicroscopeModel:
                     current=float(combined_currents[i]),
                     Gc=Gc_geom,
                     Tc=float(lens.Tc) * tc_scale,
+                    stigmator_strength_x=float(lens.stigmator_strength_x),
+                    stigmator_strength_y=float(lens.stigmator_strength_y),
                 )
             )
 
@@ -383,6 +387,8 @@ class MicroscopeModel:
                     "turns": l.turns,
                     "Gc": l.Gc,
                     "Tc": l.Tc,
+                    "stigmator_strength_x": l.stigmator_strength_x,
+                    "stigmator_strength_y": l.stigmator_strength_y,
                 }
                 for l in self.lenses
             ],
@@ -513,6 +519,8 @@ class MicroscopeModel:
                 turns=float(spec["turns"]),
                 Gc=float(spec["Gc"]),
                 Tc=float(spec.get("Tc", 0.0)),
+                stigmator_strength_x=float(spec.get("stigmator_strength_x", 0.0)),
+                stigmator_strength_y=float(spec.get("stigmator_strength_y", 0.0)),
             )
             for name, spec in lenses_cfg.items()
         )
