@@ -773,17 +773,16 @@ class ElectromagneticLens(Component):
         rho2 = x * x + y * y
         return -0.5 * rho2 / self.focal_length(voltage)
 
-    def _has_stigmator(self) -> bool:
-        return bool(
-            abs(float(self.stigmator_strength_x)) > 0.0
-            or abs(float(self.stigmator_strength_y)) > 0.0
-        )
-
     def _effective_stigmator_strengths(self) -> tuple[jnp.ndarray, jnp.ndarray]:
         min_strength = -1.0 + jnp.abs(self.stigmator_eps)
         sx = jnp.clip(jnp.asarray(self.stigmator_strength_x), min_strength, jnp.inf)
         sy = jnp.clip(jnp.asarray(self.stigmator_strength_y), min_strength, jnp.inf)
         return sx, sy
+
+    def _stigmator_is_active(self) -> jnp.ndarray:
+        sx, sy = self._effective_stigmator_strengths()
+        eps = jnp.asarray(self.stigmator_eps)
+        return jnp.logical_or(jnp.abs(sx) > eps, jnp.abs(sy) > eps)
 
     def _stigmator_focal_lengths(self, voltage: float) -> tuple[jnp.ndarray, jnp.ndarray]:
         f = self.focal_length(voltage)
@@ -836,10 +835,9 @@ class ElectromagneticLens(Component):
         voltage = ray.voltage
         f = self.focal_length(voltage)
         D = self.thickness
+        fx, fy = self._stigmator_focal_lengths(voltage)
 
-        if self._has_stigmator():
-            fx, fy = self._stigmator_focal_lengths(voltage)
-
+        def _stigmator_path(_):
             def _thin(_):
                 return self._apply_thin_stigmator(ray, fx, fy)
 
@@ -847,7 +845,10 @@ class ElectromagneticLens(Component):
                 out = self._apply_thin_stigmator(ray, 2.0 * fx, 2.0 * fy)
                 out = FreeSpaceParaxial()(out, D)
                 return self._apply_thin_stigmator(out, 2.0 * fx, 2.0 * fy)
-        else:
+
+            return lax.cond(D > 0.0, _thick, _thin, operand=None)
+
+        def _lens_path(_):
             def _thin(_):
                 return self._apply_thin_lens_ray(ray, f)
 
@@ -856,7 +857,9 @@ class ElectromagneticLens(Component):
                 out = FreeSpaceParaxial()(out, D)
                 return self._apply_thin_lens_ray(out, 2.0 * f)
 
-        out = lax.cond(D > 0.0, _thick, _thin, operand=None)
+            return lax.cond(D > 0.0, _thick, _thin, operand=None)
+
+        out = lax.cond(self._stigmator_is_active(), _stigmator_path, _lens_path, operand=None)
         return self._apply_rotation_ray(out, self.rotation_angle(voltage))
 
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
@@ -865,10 +868,9 @@ class ElectromagneticLens(Component):
         voltage = ray.voltage
         f = self.focal_length(voltage)
         D = self.thickness
+        fx, fy = self._stigmator_focal_lengths(voltage)
 
-        if self._has_stigmator():
-            fx, fy = self._stigmator_focal_lengths(voltage)
-
+        def _stigmator_path(_):
             def _thin(_):
                 return self._apply_thin_stigmator(ray, fx, fy)
 
@@ -876,7 +878,10 @@ class ElectromagneticLens(Component):
                 out = self._apply_thin_stigmator(ray, 2.0 * fx, 2.0 * fy)
                 out = FreeSpacePropagator()(out, D)
                 return self._apply_thin_stigmator(out, 2.0 * fx, 2.0 * fy)
-        else:
+
+            return lax.cond(D > 0.0, _thick, _thin, operand=None)
+
+        def _lens_path(_):
             def _thin(_):
                 thin_lens = Lens(
                     z=self.z,
@@ -897,7 +902,9 @@ class ElectromagneticLens(Component):
                 out = FreeSpacePropagator()(out, D)
                 return half_lens(out)
 
-        out = lax.cond(D > 0.0, _thick, _thin, operand=None)
+            return lax.cond(D > 0.0, _thick, _thin, operand=None)
+
+        out = lax.cond(self._stigmator_is_active(), _stigmator_path, _lens_path, operand=None)
 
         angle = self.rotation_angle(voltage)
         cos_a = jnp.cos(angle)
