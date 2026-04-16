@@ -6,27 +6,29 @@ virtual_source_diameter_nm = 10.0
 source_half_angle_mrad = 0.05
 z_source_m = 0.0
 
-[microscope]
 # Global component order along +z (first component after source -> detector).
 # This includes active and passive components.
-
-[microscope.components]
-
 # Each lens object contains both geometry (absolute z) and optics.
 # Gc uses: 1/f = Gc * (N*I)^2
 
-[lenses.CL1]
+[[components]]
+type = "lens"
+name = "CL1"
 z_m = 0.2000000000000000
 turns = 3000
 Gc = 8.0e-6
 
-[lenses.CL3]
+[[components]]
+type = "lens"
+name = "CL3"
 z_m = 0.2400000000000000
 turns = 3600
 Gc = 4.0e-6
 
-[apertures.C_aperture]
-name = "C aperture"
+[[components]]
+type = "aperture"
+name = "C_aperture"
+display_name = "C aperture"
 z_m = 0.2500000000000000
 radii_m = [10e-6, 20e-6, 30e-6, 50e-6, 80e-6, 100e-6, 150e-6] # um
 
@@ -34,7 +36,9 @@ radii_m = [10e-6, 20e-6, 30e-6, 50e-6, 80e-6, 100e-6, 150e-6] # um
 # z_m is the upper (1st) deflector; the lower (2nd) sits at z_m + spacing_m.
 # Dc is the deflection constant: alpha = Dc * N * I / sqrt(V*) [rad].
 # Balance ratios solved by condenser_deflector_design notebook.
-[deflectors.CL12_deflector]
+[[components]]
+type = "double_deflector"
+name = "CL12_deflector"
 z_m = 0.2900000000000000
 spacing_m = 0.005
 turns = 1
@@ -44,27 +48,34 @@ shift_balance_y = -1.0
 tilt_balance_x = 1.0
 tilt_balance_y = 1.0
 
-[lenses.C_mini]
+[[components]]
+type = "lens"
+name = "C_mini"
 z_m = 0.3000000000000000
 turns = 2000
 Gc = 5.0e-5
 
-[lenses.Obj_prefield]
+[[components]]
+type = "lens"
+name = "Obj_prefield"
 z_m = 0.3200000000000000
 turns = 3000
 Gc = 2.22222e-5
 
-[sample]
+[[components]]
+type = "sample"
 name = "Sample"
 z_m = 0.3250000000000000
-type = "random_phase"
+sample_type = "random_phase"
 strength = 5.0
 width_m = 200e-9
 height_m = 200e-9
 correlation_length_m = 5e-9
 edge_sharpness = 5e6
 
-[lenses.Obj_post]
+[[components]]
+type = "lens"
+name = "Obj_post"
 z_m = 0.3273000000000000
 turns = 3000
 Gc = 8.0e-6
@@ -73,27 +84,36 @@ Gc = 8.0e-6
 stigmator_strength_x = 0.0
 stigmator_strength_y = 0.0
 
-[lenses.IL1]
+[[components]]
+type = "lens"
+name = "IL1"
 z_m = 0.5385239553839318
 turns = 3000
 Gc = 1.2462e-6
 
-[lenses.IL2]
+[[components]]
+type = "lens"
+name = "IL2"
 z_m = 0.6154801564212946
 turns = 2000
 Gc = 4.2935e-6
 
-[lenses.IL3]
+[[components]]
+type = "lens"
+name = "IL3"
 z_m = 0.6779801564212946
 turns = 2000
 Gc = 1.6645e-6
 
-[lenses.PL1]
+[[components]]
+type = "lens"
+name = "PL1"
 z_m = 0.7329834964770994
 turns = 2000
 Gc = 8.92613870347955e-06
 
-[detector]
+[[components]]
+type = "detector"
 name = "Detector"
 z_m = 1.04375
 pixel_size_m = 1e-2
