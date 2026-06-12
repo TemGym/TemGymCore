@@ -6,9 +6,16 @@ from temgym_core.grid import Grid
 from jax._src.lax.control_flow.loops import _batch_and_remainder
 import numpy as np
 import math
-import cupy as cp
-from numba import cuda
-import numba 
+
+try:
+    import cupy as cp
+except ModuleNotFoundError:
+    cp = None
+
+try:
+    from numba import cuda
+except ModuleNotFoundError:
+    cuda = None
 
 def evaluate_gaussians_gpu_kernel(
     r_centre: jnp.ndarray,      # (N,2) float64
@@ -170,7 +177,6 @@ _OPT_TPB_BEAM = 32
 _OPT_TPB_PIX  = 128
 
 
-@cuda.jit(cache=True, fastmath=True, lineinfo=True)
 def _beam_field_cuda_opt(x_det, y_det, rays, out_r, out_i):
     pix_idx, beam_block_idx = cuda.grid(2)
     # loc_beam_block = cuda.threadIdx.y  -> always zero
@@ -223,6 +229,12 @@ def _beam_field_cuda_opt(x_det, y_det, rays, out_r, out_i):
         cuda.atomic.add(out_i, pix_idx, acc_i)
 
 
+if cuda is not None:
+    _beam_field_cuda_opt = cuda.jit(cache=True, fastmath=True, lineinfo=True)(
+        _beam_field_cuda_opt
+    )
+
+
 rays_type = np.dtype([
     ('Qi_r', np.float64, (3,)),  # packed: (0,0), (0,1)+(1,0), (1,1)
     ('Qi_i', np.float64, (3,)),
@@ -235,6 +247,11 @@ rays_type = np.dtype([
 ])
 
 def evaluate_gaussians_cuda_gpu_kernel_wrapper_opt(gaussian_ray, grid):
+    if cp is None or cuda is None:
+        raise ImportError(
+            "evaluate_gaussians_cuda_gpu_kernel_wrapper_opt requires cupy and numba."
+        )
+
     r, dr, amp, pl, Q_inv, k = _prepare_gaussian_params(gaussian_ray)
 
     x_det = np.ascontiguousarray(grid.coords[:, 0], dtype=np.float64)
