@@ -234,7 +234,7 @@ class Lens(GaussianActionComponent):
         pathlength = ray.pathlength - (x**2 + y**2) / (2 * f)
         return ray.derive(dx=new_dx, dy=new_dy, pathlength=pathlength)
 
-    def phase_shift(self, xy: jnp.ndarray):
+    def phase_shift(self, xy: jnp.ndarray):  # type: ignore # noqa
         x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
         rho2 = x * x + y * y
         return -0.5 * rho2 / self.focal_length

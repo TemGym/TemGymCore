@@ -10,6 +10,7 @@ from temgym_core.components import ElectromagneticLens, Plane
 from temgym_core.plotting import plot_model, PlotParams, _stack_ray_positions, _compute_cumulative_rotation
 from temgym_core.source import make_waist_divergence_rays
 from temgym_core.ray import Ray
+from temgym_core.gaussian import make_gaussian
 
 
 def _single_center_ray(*, z: float = 0.0) -> Ray:
@@ -343,6 +344,42 @@ def test_compute_cumulative_rotation_matches_em_lenses():
     np.testing.assert_allclose(angles[5], Rc_val)
     # After em2 applied: Rc_val + Rc_val * 2 = 3 * Rc_val
     np.testing.assert_allclose(angles[6], 3 * Rc_val)
+
+
+def test_compute_cumulative_rotation_accepts_per_ray_voltage():
+    em = ElectromagneticLens(z=1.0, turns=1.0, current=2.0, Gc=1.0)
+    components = (em,)
+    voltages = np.asarray([100e3, 200e3], dtype=float)
+
+    angles = _compute_cumulative_rotation(
+        components,
+        voltage=voltages,
+        include_input_rays=True,
+    )
+
+    expected = np.asarray(compute_Rc_from_voltage(voltages), dtype=float) * 2.0
+    assert angles.shape == (3, 2)
+    np.testing.assert_allclose(angles[0], np.zeros_like(voltages))
+    np.testing.assert_allclose(angles[1], np.zeros_like(voltages))
+    np.testing.assert_allclose(angles[2], expected)
+
+
+def test_plot_model_accepts_gaussian_bundle_voltage_array():
+    rays = make_gaussian(
+        x=np.asarray([-1e-6, 1e-6], dtype=float),
+        y=0.0,
+        waist_x=10e-9,
+        waist_y=10e-9,
+        voltage=200e3,
+    )
+    components = (Plane(z=1.0),)
+
+    fig, ax = plot_model(components, rays=rays, include_input_rays=True)
+
+    try:
+        assert ax.lines
+    finally:
+        plt.close(fig)
 
 
 def test_plot_model_x_corot_alias_still_works():

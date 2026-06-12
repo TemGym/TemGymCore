@@ -256,6 +256,20 @@ _RAY_COORD_ALIASES = {
 }
 
 
+def _plotting_voltage_from_rays(rays: Ray, default: float = 200e3) -> float | np.ndarray:
+    """Return scalar or per-ray voltage values for plotting helpers."""
+    voltage = getattr(rays, "voltage", None)
+    if voltage is None:
+        return float(default)
+
+    voltage_arr = np.asarray(voltage, dtype=float)
+    if voltage_arr.size == 0:
+        return float(default)
+    if voltage_arr.ndim == 0 or voltage_arr.size == 1:
+        return float(np.ravel(voltage_arr)[0])
+    return np.ravel(voltage_arr)
+
+
 def _normalize_ray_coordinate_mode(ray_coordinate: str) -> str:
     mode = str(ray_coordinate).lower().strip()
     mode = _RAY_COORD_ALIASES.get(mode, mode)
@@ -270,7 +284,7 @@ def _normalize_ray_coordinate_mode(ray_coordinate: str) -> str:
 def _compute_cumulative_rotation(
     components: Sequence[Component],
     *,
-    voltage: float = 200e3,
+    voltage: float | np.ndarray = 200e3,
     include_input_rays: bool = True,
 ) -> np.ndarray:
     """Compute the cumulative Larmor rotation angle at each ray step.
@@ -279,23 +293,37 @@ def _compute_cumulative_rotation(
     Rotation is applied only during the application step of
     `ElectromagneticLens` components.
 
-    Returns an array of shape ``(n_steps,)`` with one cumulative angle
-    (in radians) per ray step.
+    Returns an array of shape ``(n_steps,)`` for scalar voltage, or
+    ``(n_steps, n_rays)`` for per-ray voltage, with cumulative angles
+    in radians.
     """
     from .components import ElectromagneticLens as _EMLens
 
-    angles: list[float] = []
-    if include_input_rays:
-        angles.append(0.0)  # angle for the prepended input-ray step
+    voltage_arr = np.asarray(voltage, dtype=float)
+    vector_voltage = voltage_arr.ndim > 0 and voltage_arr.size > 1
+    voltage_use: float | np.ndarray
+    if vector_voltage:
+        voltage_use = np.ravel(voltage_arr)
+        zero_angle: float | np.ndarray = np.zeros_like(voltage_use, dtype=float)
+        cum: float | np.ndarray = zero_angle.copy()
+    else:
+        voltage_use = float(np.ravel(voltage_arr)[0]) if voltage_arr.size else 200e3
+        zero_angle = 0.0
+        cum = 0.0
 
-    cum = 0.0
+    angles: list[float | np.ndarray] = []
+    if include_input_rays:
+        angles.append(np.asarray(zero_angle, dtype=float).copy())  # prepended input-ray step
+
     for c in components:
         # Propagation step – no rotation change
-        angles.append(cum)
+        angles.append(np.asarray(cum, dtype=float).copy())
         # Component application step
         if isinstance(c, _EMLens):
-            cum += float(c.rotation_angle(voltage))
-        angles.append(cum)
+            cum = np.asarray(cum, dtype=float) + np.asarray(
+                c.rotation_angle(voltage_use), dtype=float
+            )
+        angles.append(np.asarray(cum, dtype=float).copy())
 
     return np.asarray(angles, dtype=float)
 
@@ -383,7 +411,7 @@ def plot_model(
     radial_sign = _ray_side_sign_from_metric(rays_for_plot) if side_sign_in_r else None
 
     # Compute cumulative rotation from EM lenses for _rot modes
-    _voltage = float(rays.voltage) if hasattr(rays.voltage, '__float__') else 200e3
+    _voltage = _plotting_voltage_from_rays(rays_for_plot)
     cum_rotation = (
         _compute_cumulative_rotation(components, voltage=_voltage, include_input_rays=include_input_rays)
         if coord_mode in ("x_rot", "y_rot")
@@ -410,11 +438,20 @@ def plot_model(
         if include_input_rays:
             solution_steps = (solution_rays,) + solution_steps
         solution_radial_sign = _ray_side_sign_from_metric(solution_rays) if side_sign_in_r else None
+        solution_cum_rotation = (
+            _compute_cumulative_rotation(
+                components,
+                voltage=_plotting_voltage_from_rays(solution_rays),
+                include_input_rays=include_input_rays,
+            )
+            if coord_mode in ("x_rot", "y_rot")
+            else None
+        )
         X_solution, Z_solution = _stack_ray_positions(
             solution_steps,
             ray_coordinate=coord_mode,
             radial_sign=solution_radial_sign,
-            cumulative_rotation=cum_rotation,
+            cumulative_rotation=solution_cum_rotation,
         )
         if X_solution.size > 0 and X_solution.shape[1] != 2:
             raise ValueError(
@@ -896,8 +933,9 @@ def _stack_ray_positions(
                 val = np.atleast_1d(rmag)
 
         elif coord_mode in ("x_rot", "y_rot"):
-            # De-rotate by cumulative Larmor angle
-            angle = 0.0 if cum_rot is None else float(cum_rot[step_idx])
+            # De-rotate by cumulative Larmor angle.  With per-ray voltages,
+            # `angle` is a vector and NumPy broadcasts it across the bundle.
+            angle = 0.0 if cum_rot is None else np.asarray(cum_rot[step_idx], dtype=float)
             cos_a = np.cos(-angle)
             sin_a = np.sin(-angle)
             x_b, y_b = np.broadcast_arrays(x_arr, y_arr)
@@ -968,7 +1006,7 @@ def plot_model_plotly(
     rays_for_plot = _subset_rays_by_half_sign(rays, ray_half_sign)
     radial_sign = _ray_side_sign_from_metric(rays_for_plot) if side_sign_in_r else None
 
-    _voltage = float(rays.voltage) if hasattr(rays.voltage, '__float__') else 200e3
+    _voltage = _plotting_voltage_from_rays(rays_for_plot)
     cum_rotation = (
         _compute_cumulative_rotation(components, voltage=_voltage, include_input_rays=include_input_rays)
         if coord_mode in ("x_rot", "y_rot")
@@ -993,11 +1031,20 @@ def plot_model_plotly(
         if include_input_rays:
             solution_steps = (solution_rays,) + solution_steps
         solution_radial_sign = _ray_side_sign_from_metric(solution_rays) if side_sign_in_r else None
+        solution_cum_rotation = (
+            _compute_cumulative_rotation(
+                components,
+                voltage=_plotting_voltage_from_rays(solution_rays),
+                include_input_rays=include_input_rays,
+            )
+            if coord_mode in ("x_rot", "y_rot")
+            else None
+        )
         X_solution, Z_solution = _stack_ray_positions(
             solution_steps,
             ray_coordinate=coord_mode,
             radial_sign=solution_radial_sign,
-            cumulative_rotation=cum_rotation,
+            cumulative_rotation=solution_cum_rotation,
         )
         if X_solution.size > 0 and X_solution.shape[1] != 2:
             raise ValueError(
