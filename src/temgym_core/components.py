@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import warnings
+from collections.abc import Mapping
 from typing import Any, Dict, NamedTuple
 
 import jax
@@ -14,8 +15,10 @@ from jax.nn import softplus
 
 from . import CoordsXY, Degrees, ScaleYX, ShapeYX
 from .gaussian import (
+    LENGTH,
     FreeSpacePropagator,
     GaussianBeam,
+    _solve_2x2,
     apply_action_delta,
     taylor_expand,
 )
@@ -23,10 +26,16 @@ from .aberrations import (
     KrivanekCoeffs,
     SeidelCoeffs,
     Seidel_aperture_pos_aperture_slope,
+    Seidel_object_pos_aperture_pos,
     W_krivanek,
     grad_W_krivanek,
+    zernike_noll_cartesian,
 )
-from .constants import compute_Rc_from_voltage, effective_accelerating_potential
+from .constants import (
+    compute_Rc_from_voltage,
+    effective_accelerating_potential,
+    energy2wavelength,
+)
 from .grid import Grid
 from .potential import potential_smoothed
 from .ray import Ray
@@ -59,8 +68,8 @@ class Component(HasParamsMixin):
 
 def _min_eigval_2x2(M: jnp.ndarray) -> jnp.ndarray:
     """Minimum eigenvalue of a real symmetric 2×2 matrix."""
-    tr = M[0, 0] + M[1, 1]
-    det = M[0, 0] * M[1, 1] - M[0, 1] * M[1, 0]
+    tr = M[..., 0, 0] + M[..., 1, 1]
+    det = M[..., 0, 0] * M[..., 1, 1] - M[..., 0, 1] * M[..., 1, 0]
     disc = jnp.maximum(tr * tr - 4.0 * det, 0.0)
     return 0.5 * (tr - jnp.sqrt(disc))
 
@@ -81,7 +90,51 @@ def _regularize_L2k(
     min_eig_Q = _min_eigval_2x2(ImQ)
     required = min_frac * min_eig_Q
     shift = jnp.maximum(required - min_eig_M, 0.0)
-    return L2k - shift * jnp.eye(2, dtype=L2k.dtype)
+    return L2k - shift[..., None, None] * jnp.eye(2, dtype=L2k.dtype)
+
+
+def _is_batched_gaussian(ray: GaussianBeam) -> bool:
+    return jnp.asarray(ray.r_xy).ndim > 1
+
+
+def _call_single_or_batched_gaussian(ray: GaussianBeam, single_call):
+    if _is_batched_gaussian(ray):
+        return jax.vmap(single_call)(ray.to_vector())
+    return single_call(ray)
+
+
+def _default_action_terms(xy_ref: jnp.ndarray):
+    return (
+        jnp.zeros((), dtype=xy_ref.dtype),
+        jnp.zeros_like(xy_ref),
+        jnp.zeros((2, 2), dtype=xy_ref.dtype),
+    )
+
+
+def _value_grad_hessian(fn, x: jnp.ndarray):
+    value, grad = jax.value_and_grad(fn)(x)
+    return value, grad, jax.hessian(fn)(x)
+
+
+def _uses_default_phase_shift(component: "GaussianActionComponent") -> bool:
+    return type(component).phase_shift is GaussianActionComponent.phase_shift
+
+
+def _uses_default_log_transmission(component: "GaussianActionComponent") -> bool:
+    return type(component).log_transmission is GaussianActionComponent.log_transmission
+
+
+def _matvec(matrix: jnp.ndarray, vector: jnp.ndarray) -> jnp.ndarray:
+    return jnp.einsum("...ij,...j->...i", matrix, vector)
+
+
+def _matmat(matrix: jnp.ndarray, tensor: jnp.ndarray) -> jnp.ndarray:
+    return jnp.einsum("...ij,...jk->...ik", matrix, tensor)
+
+
+def _rotate_quadratic_form(rotation: jnp.ndarray, q_inv: jnp.ndarray) -> jnp.ndarray:
+    """Rotate Q consistently with r' = R r: Q' = R Q R.T."""
+    return jnp.einsum("...ij,...jk,...lk->...il", rotation, q_inv, rotation)
 
 
 class GaussianActionComponent(Component):
@@ -119,59 +172,48 @@ class GaussianActionComponent(Component):
         return self.phase_shift(xy) - 1j * (L / k)
 
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
+        return _call_single_or_batched_gaussian(ray, self._call_gaussian_single)
+
+    def _call_gaussian_single(self, ray: GaussianBeam) -> GaussianBeam:
         xy_ref = ray.r_xy
         k = ray.k
 
-        # --- Phase Taylor expansion (real-valued, always stable) ---
-        phase_fn = self.phase_shift
+        if _uses_default_phase_shift(self):
+            dS0, dS1, dS2 = _default_action_terms(xy_ref)
+        else:
+            def phase_scalar(xy):
+                return jnp.real(self.phase_shift(xy))
 
-        def _phase_scalar(xy):
-            return jnp.real(phase_fn(xy))
+            dS0, dS1, dS2 = _value_grad_hessian(phase_scalar, xy_ref)
 
-        phi0 = _phase_scalar(xy_ref)
-        phi1 = jax.grad(_phase_scalar)(xy_ref)
-        phi2 = jax.hessian(_phase_scalar)(xy_ref)
+        if not _uses_default_log_transmission(self):
+            def logt_scalar(xy):
+                return jnp.real(jnp.logaddexp(self.log_transmission(xy), -50.0))
 
-        # --- Log-transmission Taylor expansion (real-valued, floored) ---
-        log_t_fn = self.log_transmission
+            L0, L1, L2 = _value_grad_hessian(logt_scalar, xy_ref)
 
-        def _logt_scalar(xy):
-            return jnp.real(jnp.logaddexp(log_t_fn(xy), -50.0))
-
-        L0 = _logt_scalar(xy_ref)
-        L1 = jax.grad(_logt_scalar)(xy_ref)
-        L2 = jax.hessian(_logt_scalar)(xy_ref)
-
-        # --- Adaptive scaling of higher-order log-transmission terms ---
-        # When the implied beam shift from the amplitude gradient exceeds
-        # the beam width, the quadratic approximation of log-transmission
-        # breaks down.  Smoothly suppress L1 and L2 via s = 1/(1+r) so
-        # the method gracefully degrades to pointwise-only transmission.
-        ImQ = jnp.imag(ray.Q_inv)
-        dx_est = jnp.linalg.solve(ImQ, L1) / k
-        ratio = jnp.dot(L1, dx_est)          # L1^T Im(Q)^{-1} L1 / k  (≥ 0)
-        scale = 1.0 / (1.0 + ratio)
-        L1_eff = L1 * scale
-        L2_eff = L2 * scale
-
-        # --- Regularise L2/k to keep Im(Q') positive definite ---
-        L2k = L2_eff / k
-        L2k = _regularize_L2k(L2k, ImQ)
-
-        # --- Combine into complex action Taylor coefficients ---
-        dS0 = phi0 - 1j * (L0 / k)
-        dS1 = phi1 - 1j * (L1_eff / k)
-        dS2 = phi2 - 1j * L2k
+            # Suppress unreliable higher-order amplitude terms when the
+            # implied recentering becomes comparable with the beam width.
+            ImQ = jnp.imag(ray.Q_inv)
+            dx_est = _solve_2x2(ImQ, L1) / k
+            ratio = jnp.dot(L1, dx_est)
+            scale = 1.0 / (1.0 + ratio)
+            L1_eff = L1 * scale
+            L2_eff = L2 * scale
+            L2k = _regularize_L2k(L2_eff / k, ImQ)
+            dS0 = dS0 - 1j * (L0 / k)
+            dS1 = dS1 - 1j * (L1_eff / k)
+            dS2 = dS2 - 1j * L2k
 
         r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
             ray, dS0=dS0, dS1=dS1, dS2=dS2
         )
 
         return ray.derive(
-            x=r_xy[0],
-            y=r_xy[1],
-            dx=d_xy[0],
-            dy=d_xy[1],
+            x=r_xy[..., 0],
+            y=r_xy[..., 1],
+            dx=d_xy[..., 0],
+            dy=d_xy[..., 1],
             z=ray.z,
             amplitude=amplitude,
             pathlength=pathlength,
@@ -228,11 +270,34 @@ class Lens(GaussianActionComponent):
 
     def _call_ray(self, ray: Ray):
         f = self.focal_length
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        x = ray.x - self.x0 * ray._one
+        y = ray.y - self.y0 * ray._one
+        dx, dy = ray.dx, ray.dy
         new_dx = -x / f + dx
         new_dy = -y / f + dy
         pathlength = ray.pathlength - (x**2 + y**2) / (2 * f)
         return ray.derive(dx=new_dx, dy=new_dy, pathlength=pathlength)
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        if (
+            type(self).phase_shift is not Lens.phase_shift
+            or not _uses_default_log_transmission(self)
+        ):
+            return GaussianActionComponent._call_gaussian(self, ray)
+
+        x = ray.x - self.x0 * ray._one
+        y = ray.y - self.y0 * ray._one
+        focal_length = jnp.asarray(self.focal_length, dtype=jnp.float64)
+        q_delta = (-1.0 / focal_length)[..., None, None] * jnp.eye(
+            2, dtype=jnp.asarray(ray.Q_inv).dtype
+        )
+        return ray.derive(
+            dx=ray.dx - x / focal_length,
+            dy=ray.dy - y / focal_length,
+            pathlength=ray.pathlength
+            - (x * x + y * y) / (2.0 * focal_length),
+            Q_inv=ray.Q_inv + q_delta,
+        )
 
     def phase_shift(self, xy: jnp.ndarray):  # type: ignore # noqa
         x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
@@ -262,6 +327,30 @@ class Stigmator(GaussianActionComponent):
         pathlength = ray.pathlength - (x**2) / (2 * fx) - (y**2) / (2 * fy)
         return ray.derive(dx=new_dx, dy=new_dy, pathlength=pathlength)
 
+    def _call_gaussian(self, ray: GaussianBeam):
+        if (
+            type(self).phase_shift is not Stigmator.phase_shift
+            or not _uses_default_log_transmission(self)
+        ):
+            return GaussianActionComponent._call_gaussian(self, ray)
+
+        x = ray.x - self.x0 * ray._one
+        y = ray.y - self.y0 * ray._one
+        focal_length_x = jnp.asarray(self.focal_length_x, dtype=jnp.float64)
+        focal_length_y = jnp.asarray(self.focal_length_y, dtype=jnp.float64)
+        powers = jnp.stack((-1.0 / focal_length_x, -1.0 / focal_length_y), axis=-1)
+        q_delta = powers[..., :, None].astype(jnp.asarray(ray.Q_inv).dtype) * jnp.eye(
+            2, dtype=jnp.asarray(ray.Q_inv).dtype
+        )
+        return ray.derive(
+            dx=ray.dx - x / focal_length_x,
+            dy=ray.dy - y / focal_length_y,
+            pathlength=ray.pathlength
+            - x * x / (2.0 * focal_length_x)
+            - y * y / (2.0 * focal_length_y),
+            Q_inv=ray.Q_inv + q_delta,
+        )
+
     def phase_shift(self, xy: jnp.ndarray):
         x = xy[..., 0] - self.x0
         y = xy[..., 1] - self.y0
@@ -272,6 +361,11 @@ class Stigmator(GaussianActionComponent):
 class KrivanekLens(Lens):
     coeffs: Dict = dataclasses.field(default_factory=dict)
     axis_eps: float = 1e-24
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        # The aberration needs the generic local-action expansion rather than
+        # Lens's exact quadratic fast path.
+        return GaussianActionComponent._call_gaussian(self, ray)
 
     def _call_ray(self, ray: Ray):
         f = self.focal_length
@@ -324,6 +418,7 @@ class AberratedLensKrivanek(KrivanekLens):
 class SeidelLens(Lens):
     object_plane_dist: float = 0.0
     coeffs: SeidelCoeffs = dataclasses.field(default_factory=SeidelCoeffs)
+    object_xy: tuple[float, float] | None = None
 
     def _call_ray(self, ray: Ray):
         raise NotImplementedError(
@@ -335,18 +430,27 @@ class SeidelLens(Lens):
 
     def phase_shift(self, xy, dxy):
         xy = jnp.asarray(xy)
-        dxy = jnp.asarray(dxy)
         x_a, y_a = xy[..., 0], xy[..., 1]
-        x_ap, y_ap = dxy[..., 0], dxy[..., 1]
-        rho2 = x_a * x_a + y_a * y_a
-        return -0.5 * rho2 / self.focal_length - Seidel_aperture_pos_aperture_slope(
-            x_a,
-            y_a,
-            x_ap,
-            y_ap,
-            self.object_plane_dist,
-            self.coeffs,
-        )
+        rho2 = (x_a - self.x0) ** 2 + (y_a - self.y0) ** 2
+        if self.object_xy is not None:
+            aberration = Seidel_object_pos_aperture_pos(
+                self.object_xy[0],
+                self.object_xy[1],
+                x_a,
+                y_a,
+                self.coeffs,
+            )
+        else:
+            dxy = jnp.asarray(dxy)
+            aberration = Seidel_aperture_pos_aperture_slope(
+                x_a,
+                y_a,
+                dxy[..., 0],
+                dxy[..., 1],
+                self.object_plane_dist,
+                self.coeffs,
+            )
+        return -0.5 * rho2 / self.focal_length - aberration
 
     def complex_action(self, xy: jnp.ndarray, dxy: jnp.ndarray, k: float) -> complex:
         logA = self.log_transmission(xy)
@@ -354,6 +458,9 @@ class SeidelLens(Lens):
         return self.phase_shift(xy, dxy) - 1j * (L / k)
 
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
+        return _call_single_or_batched_gaussian(ray, self._call_gaussian_single)
+
+    def _call_gaussian_single(self, ray: GaussianBeam) -> GaussianBeam:
         dS0, dS1, dS2 = taylor_expand(
             self.complex_action,
             ray.r_xy,
@@ -367,10 +474,10 @@ class SeidelLens(Lens):
             dS2=dS2,
         )
         return ray.derive(
-            x=r_xy[0],
-            y=r_xy[1],
-            dx=d_xy[0],
-            dy=d_xy[1],
+            x=r_xy[..., 0],
+            y=r_xy[..., 1],
+            dx=d_xy[..., 0],
+            dy=d_xy[..., 1],
             z=ray.z,
             amplitude=amplitude,
             pathlength=pathlength,
@@ -659,16 +766,15 @@ class Rotator(Component):
     def _call_gaussian(self, ray: GaussianBeam):
         cos_a, sin_a = self._rotation()
         R = jnp.array([[cos_a, -sin_a], [sin_a, cos_a]], dtype=jnp.float64)
-
-        r_xy_rot = R @ ray.r_xy
-        d_xy_rot = R @ ray.d_xy
-        Q_rot = R.T @ ray.Q_inv @ R
+        r_xy_rot = _matvec(R, ray.r_xy)
+        d_xy_rot = _matvec(R, ray.d_xy)
+        Q_rot = _rotate_quadratic_form(R, ray.Q_inv)
 
         return ray.derive(
-            x=r_xy_rot[0],
-            y=r_xy_rot[1],
-            dx=d_xy_rot[0],
-            dy=d_xy_rot[1],
+            x=r_xy_rot[..., 0],
+            y=r_xy_rot[..., 1],
+            dx=d_xy_rot[..., 0],
+            dy=d_xy_rot[..., 1],
             Q_inv=Q_rot,
         )
 
@@ -909,17 +1015,23 @@ class ElectromagneticLens(Component):
         angle = self.rotation_angle(voltage)
         cos_a = jnp.cos(angle)
         sin_a = jnp.sin(angle)
-        R = jnp.array([[cos_a, -sin_a], [sin_a, cos_a]], dtype=jnp.float64)
+        R = jnp.stack(
+            (
+                jnp.stack((cos_a, -sin_a), axis=-1),
+                jnp.stack((sin_a, cos_a), axis=-1),
+            ),
+            axis=-2,
+        ).astype(jnp.float64)
 
-        r_xy_rot = R @ out.r_xy
-        d_xy_rot = R @ out.d_xy
-        Q_rot = R.T @ out.Q_inv @ R
+        r_xy_rot = _matvec(R, out.r_xy)
+        d_xy_rot = _matvec(R, out.d_xy)
+        Q_rot = _rotate_quadratic_form(R, out.Q_inv)
 
         return out.derive(
-            x=r_xy_rot[0],
-            y=r_xy_rot[1],
-            dx=d_xy_rot[0],
-            dy=d_xy_rot[1],
+            x=r_xy_rot[..., 0],
+            y=r_xy_rot[..., 1],
+            dx=d_xy_rot[..., 0],
+            dy=d_xy_rot[..., 1],
             Q_inv=Q_rot,
         )
 
@@ -941,15 +1053,8 @@ class ABCDTransfer(Component):
         B = jnp.asarray(self.B, dtype=jnp.float64)
         C = jnp.asarray(self.C, dtype=jnp.float64)
         D = jnp.asarray(self.D, dtype=jnp.float64)
-
-        def matvec(m, v):
-            return jnp.einsum("ij,...j->...i", m, v)
-
-        r_xy = ray.r_xy
-        d_xy = ray.d_xy
-
-        r_xy_new = matvec(A, r_xy) + matvec(B, d_xy)
-        d_xy_new = matvec(C, r_xy) + matvec(D, d_xy)
+        r_xy_new = _matvec(A, ray.r_xy) + _matvec(B, ray.d_xy)
+        d_xy_new = _matvec(C, ray.r_xy) + _matvec(D, ray.d_xy)
 
         return ray.derive(
             x=r_xy_new[..., 0],
@@ -964,25 +1069,22 @@ class ABCDTransfer(Component):
         C = jnp.asarray(self.C, dtype=jnp.float64)
         D = jnp.asarray(self.D, dtype=jnp.float64)
 
-        def matvec(m, v):
-            return jnp.einsum("ij,...j->...i", m, v)
-
-        def matmat(m, x):
-            return jnp.einsum("ij,...jk->...ik", m, x)
-
-        r_xy = ray.r_xy
-        d_xy = ray.d_xy
-
-        r_xy_new = matvec(A, r_xy) + matvec(B, d_xy)
-        d_xy_new = matvec(C, r_xy) + matvec(D, d_xy)
+        r_xy_new = _matvec(A, ray.r_xy) + _matvec(B, ray.d_xy)
+        d_xy_new = _matvec(C, ray.r_xy) + _matvec(D, ray.d_xy)
 
         Q = ray.Q_inv
-        denom = A + matmat(B, Q)
-        numer = C + matmat(D, Q)
-        eye = jnp.eye(2, dtype=jnp.complex128)
-        inv_denom = jnp.linalg.solve(jnp.swapaxes(denom, -1, -2), eye)
-        inv_denom = jnp.swapaxes(inv_denom, -1, -2)
-        Q_new = jnp.einsum("...ij,...jk->...ik", numer, inv_denom)
+        denom = A + _matmat(B, Q)
+        numer = C + _matmat(D, Q)
+        # Solve the transposed system to evaluate numer @ inv(denom) without
+        # explicitly forming an inverse; swapaxes keeps bundle axes intact.
+        Q_new = jnp.swapaxes(
+            jnp.linalg.solve(
+                jnp.swapaxes(denom, -1, -2),
+                jnp.swapaxes(numer, -1, -2),
+            ),
+            -1,
+            -2,
+        )
 
         return ray.derive(
             x=r_xy_new[..., 0],
@@ -1117,6 +1219,36 @@ class QuadraticPhaseShift(GaussianActionComponent):
 
     def phase_shift(self, xy: jnp.ndarray):
         return 0.5 * xy @ self.quadratic_phase_shift @ xy
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class ZernikeAberration(GaussianActionComponent):
+    """Thin pathlength aberration expressed in unnormalised Noll modes."""
+
+    coefficients: Mapping[int, float]
+    radius: float
+    x0: float = 0.0
+    y0: float = 0.0
+    outside: float = 0.0
+    z: float = 0.0
+
+    def _call_ray(self, ray: Ray):
+        raise NotImplementedError(
+            "ZernikeAberration is only implemented for gaussian beams."
+        )
+
+    def phase_shift(self, xy: jnp.ndarray):
+        x = (xy[..., 0] - self.x0) / self.radius
+        y = (xy[..., 1] - self.y0) / self.radius
+        out = jnp.zeros_like(x, dtype=jnp.float64)
+        for j, coefficient in self.coefficients.items():
+            out = out + coefficient * zernike_noll_cartesian(
+                int(j),
+                x,
+                y,
+                outside=self.outside,
+            )
+        return out
 
 
 @jdc.pytree_dataclass(kw_only=True)
@@ -1313,6 +1445,7 @@ class RandomPhaseSample(GaussianActionComponent):
 @jdc.pytree_dataclass(kw_only=True)
 class InterpolatedSample2D(GaussianActionComponent):
     interpolator: Interpolator2D
+    pathlength_per_radian: float = 1.0
     method: jdc.Static[str] = "catmull-rom"
     z: float = 0.0
 
@@ -1321,7 +1454,39 @@ class InterpolatedSample2D(GaussianActionComponent):
         return ray
 
     @classmethod
-    def from_array(cls, sample, x_coords, y_coords, extrap=1.0, z=0.0, method="cubic"):
+    def from_array(
+        cls,
+        sample,
+        x_coords,
+        y_coords,
+        extrap=1.0,
+        z=0.0,
+        method="cubic",
+        *,
+        voltage: float | None = None,
+        wavelength: float | None = None,
+        wavelength_unit: str = "m",
+    ):
+        """Create a sample from a complex amplitude transmission.
+
+        Provide ``voltage`` (electron optics) or ``wavelength`` when the
+        complex argument is a physical phase in radians. With neither, the
+        argument is interpreted as a pathlength for compatibility with older
+        TemGymCore notebooks. An explicit ``wavelength`` is expressed in
+        ``wavelength_unit``.
+        """
+        if voltage is not None and wavelength is not None:
+            raise ValueError("Provide at most one of `voltage` or `wavelength`.")
+        if wavelength_unit not in LENGTH:
+            raise ValueError(
+                f"Unknown wavelength unit {wavelength_unit!r}; "
+                f"expected one of {tuple(LENGTH)}."
+            )
+        if voltage is not None:
+            wavelength = energy2wavelength(voltage) / LENGTH[wavelength_unit]
+        pathlength_per_radian = (
+            1.0 if wavelength is None else wavelength / (2.0 * jnp.pi)
+        )
         interpolator = Interpolator2D(
             x=x_coords,
             y=y_coords,
@@ -1329,14 +1494,19 @@ class InterpolatedSample2D(GaussianActionComponent):
             method=method,
             extrap=extrap,
         )
-        return cls(z=z, interpolator=interpolator, method=method)
+        return cls(
+            z=z,
+            interpolator=interpolator,
+            method=method,
+            pathlength_per_radian=pathlength_per_radian,
+        )
 
     def evaluate_complex(self, xy):
         return self.interpolator(xy[..., 0], xy[..., 1])
 
     def phase_shift(self, xy):
         z = self.evaluate_complex(xy)
-        return jnp.angle(z)
+        return jnp.angle(z) * self.pathlength_per_radian
 
     def log_transmission(self, xy):
         z = self.evaluate_complex(xy)
@@ -1354,6 +1524,9 @@ def sample_interpolant(
     z: float = 0.0,
     method: str = "cubic",
     extrap: float = 1.0,
+    voltage: float | None = None,
+    wavelength: float | None = None,
+    wavelength_unit: str = "m",
 ) -> InterpolatedSample2D:
     """Create an interpolated sample component from a complex sample array.
 
@@ -1367,6 +1540,9 @@ def sample_interpolant(
         extrap=extrap,
         z=z,
         method=method,
+        voltage=voltage,
+        wavelength=wavelength,
+        wavelength_unit=wavelength_unit,
     )
 
 
@@ -1431,6 +1607,9 @@ class AtomicPotential(Component):
         return self.phase_shift(xy, z, sigma, k) - 1j * (L / k)
 
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
+        return _call_single_or_batched_gaussian(ray, self._call_gaussian_single)
+
+    def _call_gaussian_single(self, ray: GaussianBeam) -> GaussianBeam:
         dS0, dS1, dS2 = taylor_expand(
             self.complex_action,
             ray.r_xy,
@@ -1447,10 +1626,10 @@ class AtomicPotential(Component):
         )
 
         return ray.derive(
-            x=r_xy[0],
-            y=r_xy[1],
-            dx=d_xy[0],
-            dy=d_xy[1],
+            x=r_xy[..., 0],
+            y=r_xy[..., 1],
+            dx=d_xy[..., 0],
+            dy=d_xy[..., 1],
             z=ray.z,
             amplitude=amplitude,
             pathlength=pathlength,
@@ -1509,6 +1688,7 @@ __all__ = [
     "ConstantPhaseShift",
     "LinearPhaseShift",
     "QuadraticPhaseShift",
+    "ZernikeAberration",
     "ConstantAmplitudeShift",
     "LinearAmplitudeShift",
     "QuadraticAmplitudeShift",

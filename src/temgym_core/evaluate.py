@@ -1,11 +1,18 @@
+from functools import lru_cache
+import math
+
 import jax
 import jax.numpy as jnp
-from jax.experimental import pallas as pl
-from jax import lax
-from temgym_core.grid import Grid
-from jax._src.lax.control_flow.loops import _batch_and_remainder
 import numpy as np
-import math
+from jax import lax
+from jax.experimental import pallas as pl
+
+try:
+    from jax.experimental.pallas import triton as plgpu
+except ImportError:
+    plgpu = None
+
+from .grid import Grid
 
 try:
     import cupy as cp
@@ -17,7 +24,7 @@ try:
 except ModuleNotFoundError:
     cuda = None
 
-def evaluate_gaussians_gpu_kernel(
+def _evaluate_gaussians_gpu_kernel_impl(
     r_centre: jnp.ndarray,      # (N,2) float64
     dr: jnp.ndarray,            # (N,2) float64
     amplitude: jnp.ndarray,     # (N,) complex128
@@ -140,7 +147,11 @@ def evaluate_gaussians_gpu_kernel(
     has_gpu = any(d.platform in ("gpu", "cuda", "rocm") for d in jax.devices())
     kw = dict(out_shape=out_shape, grid=(grid_n,))
     if has_gpu:
-        kw["backend"] = "triton"
+        if plgpu is not None:
+            kw["compiler_params"] = plgpu.CompilerParams()
+        else:
+            # Compatibility with older Pallas releases.
+            kw["backend"] = "triton"
     else:
         kw["interpret"] = True
 
@@ -159,7 +170,7 @@ def evaluate_gaussians_gpu_kernel_wrapper(
     r, dr, amp, path, Q_inv, k = _prepare_gaussian_params(gaussian_ray)
     r2 = grid.coords
 
-    fld = evaluate_gaussians_gpu_kernel(
+    fld = _evaluate_gaussians_gpu_kernel_impl(
         r, dr, amp, path, Q_inv, k, r2,
         tile_pixels=tile_pixels,
         tile_beams=tile_beams,
@@ -167,9 +178,36 @@ def evaluate_gaussians_gpu_kernel_wrapper(
     return fld.reshape(grid.shape)
 
 
-evaluate_gaussians_gpu_kernel = jax.jit(
-    evaluate_gaussians_gpu_kernel, static_argnames=["tile_pixels", "tile_beams"]
+_evaluate_gaussians_gpu_kernel_impl = jax.jit(
+    _evaluate_gaussians_gpu_kernel_impl,
+    static_argnames=["tile_pixels", "tile_beams"],
 )
+
+
+def evaluate_gaussians_gpu_kernel(
+    r_centre: jnp.ndarray,
+    dr: jnp.ndarray,
+    amplitude: jnp.ndarray,
+    pathlength: jnp.ndarray,
+    Q_inv: jnp.ndarray,
+    k: jnp.ndarray,
+    r2: jnp.ndarray,
+    *,
+    tile_pixels: int = 16,
+    tile_beams: int = 16,
+):
+    """Run the low-level Pallas kernel using its original public API."""
+    return _evaluate_gaussians_gpu_kernel_impl(
+        r_centre,
+        dr,
+        amplitude,
+        pathlength,
+        Q_inv,
+        k,
+        r2,
+        tile_pixels=tile_pixels,
+        tile_beams=tile_beams,
+    )
 
 
 # Block dims are compile-time constants so cuda.shared.array can use them
@@ -331,6 +369,7 @@ def ensure_batch(x, sample_shape=(), dtype=None):
 
 
 def _prepare_gaussian_params(gaussian_ray):
+    gaussian_ray = gaussian_ray.to_vector()
     r = ensure_batch(gaussian_ray.r_xy, (2,), jnp.float64)
     dr = ensure_batch(gaussian_ray.d_xy, (2,), jnp.float64)
     amplitude = ensure_batch(gaussian_ray.amplitude, (), jnp.complex128)
@@ -416,32 +455,135 @@ _evaluate_gaussians_jax_scan_impl = jax.jit(
 
 def map_reduce(f, reducer, init, xs, *, batch_size: int | None = None):
     def scan_fn(acc_inner, x):
-        # combine f and reducer into function appropriate for normal lax.scan in reduce-only mode
         return reducer(acc_inner, f(x)), None
 
-    if batch_size is not None:
-        scan_xs, remainder_xs = _batch_and_remainder(xs, batch_size)
-
-        def reduce_chunk(acc, x):
-            # Reduce x into acc, assuming x have already been f'dGauss
-            return reducer(acc, x), None
-
-        def map_reduce_chunk(acc, x):
-            #  Vmap apply f to a chunk of x's, then reduce them sequentially into acc
-            elements = jax.vmap(f)(x)
-            return lax.scan(reduce_chunk, acc, elements)
-
-        if scan_xs is not None:
-            # Map f over each chunk of xs, and reduce each sequentially into init
-            acc, _ = lax.scan(map_reduce_chunk, init, scan_xs)
-        else:
-            acc = init
-
-        if remainder_xs is not None:
-            # normal scan-reduce the remainder chunk into acc (could also be vmapped?)
-            acc, _ = lax.scan(scan_fn, acc, remainder_xs)
-
+    if batch_size is None:
+        acc, _ = lax.scan(scan_fn, init, xs)
         return acc
 
-    acc, _ = lax.scan(scan_fn, init, xs)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive or None.")
+
+    leaves = jax.tree_util.tree_leaves(xs)
+    if not leaves:
+        raise ValueError("xs must contain at least one array leaf.")
+    n = leaves[0].shape[0]
+    full = (n // batch_size) * batch_size
+    acc = init
+
+    def reduce_chunk(acc_inner, chunk):
+        elements = jax.vmap(f)(chunk)
+
+        def reduce_one(accumulator, value):
+            return reducer(accumulator, value), None
+
+        return lax.scan(reduce_one, acc_inner, elements)
+
+    if full:
+        chunked = jax.tree_util.tree_map(
+            lambda x: x[:full].reshape((-1, batch_size) + x.shape[1:]),
+            xs,
+        )
+        acc, _ = lax.scan(reduce_chunk, acc, chunked)
+
+    if full < n:
+        remainder = jax.tree_util.tree_map(lambda x: x[full:], xs)
+        acc, _ = lax.scan(scan_fn, acc, remainder)
     return acc
+
+
+def evaluate_gaussians_gpu(
+    gaussian_ray,
+    grid: Grid,
+    *,
+    tile_pixels: int = 16,
+    tile_beams: int = 16,
+    fallback_batch_size: int | None = 128,
+):
+    """Evaluate with the Pallas GPU kernel, falling back to JAX scan on CPU."""
+    if not _gpu_kernel_available():
+        return evaluate_gaussians_jax_scan(
+            gaussian_ray,
+            grid,
+            batch_size=fallback_batch_size,
+        )
+    return evaluate_gaussians_gpu_kernel_wrapper(
+        gaussian_ray,
+        grid,
+        tile_pixels=tile_pixels,
+        tile_beams=tile_beams,
+    )
+
+
+@lru_cache(maxsize=1)
+def _gpu_kernel_available() -> bool:
+    """Probe the optional Pallas backend once before selecting it automatically."""
+    if jax.default_backend() != "gpu":
+        return False
+    try:
+        one = jnp.ones((1,), dtype=jnp.float64)
+        zero = jnp.zeros((1,), dtype=jnp.float64)
+        coords = jnp.zeros((1, 2), dtype=jnp.float64)
+        q_inv = 1j * jnp.eye(2, dtype=jnp.complex128)[None, ...]
+        field = _evaluate_gaussians_gpu_kernel_impl(
+            coords,
+            coords,
+            one.astype(jnp.complex128),
+            zero,
+            q_inv,
+            one,
+            coords,
+            tile_pixels=1,
+            tile_beams=1,
+        )
+        jax.block_until_ready(field)
+    except Exception:
+        return False
+    return True
+
+
+def evaluate_gaussians(
+    gaussian_ray,
+    grid: Grid,
+    *,
+    method: str = "auto",
+    batch_size: int | None = 128,
+    tile_pixels: int = 16,
+    tile_beams: int = 16,
+):
+    """Evaluate a Gaussian bundle with a stable public backend dispatcher.
+
+    ``auto`` selects the Pallas implementation on GPU and the portable JAX
+    scan elsewhere. ``loop`` is primarily useful as a reference evaluator.
+    """
+    if method == "auto":
+        method = "gpu_kernel" if _gpu_kernel_available() else "scan"
+    if method == "scan":
+        return evaluate_gaussians_jax_scan(
+            gaussian_ray,
+            grid,
+            batch_size=batch_size,
+        )
+    if method == "gpu_kernel":
+        return evaluate_gaussians_gpu(
+            gaussian_ray,
+            grid,
+            tile_pixels=tile_pixels,
+            tile_beams=tile_beams,
+            fallback_batch_size=batch_size,
+        )
+    if method == "loop":
+        return evaluate_gaussians_for(gaussian_ray, grid)
+    raise ValueError(f"Unknown Gaussian evaluation method {method!r}.")
+
+
+__all__ = [
+    "evaluate_gaussians",
+    "evaluate_gaussians_for",
+    "evaluate_gaussians_gpu",
+    "evaluate_gaussians_gpu_kernel",
+    "evaluate_gaussians_gpu_kernel_wrapper",
+    "evaluate_gaussians_cuda_gpu_kernel_wrapper_opt",
+    "evaluate_gaussians_jax_scan",
+    "map_reduce",
+]

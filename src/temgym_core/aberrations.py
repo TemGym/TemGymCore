@@ -1,3 +1,5 @@
+import math
+
 import jax.numpy as jnp
 import jax_dataclasses as jdc
 
@@ -147,3 +149,129 @@ def Seidel_aperture_pos_aperture_slope(xa, ya, xap, yap, z1, coeffs: SeidelCoeff
     chi = (xa - xap*z1)*xa + (ya - yap*z1)*ya
     sigma = (xa - xap*z1)*ya - (ya - yap*z1)*xa
     return A*R**2 + B*rho**2 + C*chi**2 + D*R*rho + E*R*chi + F*rho*chi + e*R*sigma + f*rho*sigma + c*chi*sigma
+
+
+# Lower-case aliases follow normal Python naming while retaining the original
+# public functions used by existing notebooks.
+def seidel_object_pos_aperture_pos(xo, yo, xa, ya, coeffs: SeidelCoeffs):
+    return Seidel_object_pos_aperture_pos(xo, yo, xa, ya, coeffs)
+
+
+def seidel_object_pos_object_slope(xo, yo, xop, yop, z1, coeffs: SeidelCoeffs):
+    return Seidel_object_pos_object_slope(xo, yo, xop, yop, z1, coeffs)
+
+
+def seidel_aperture_pos_aperture_slope(xa, ya, xap, yap, z1, coeffs: SeidelCoeffs):
+    return Seidel_aperture_pos_aperture_slope(xa, ya, xap, yap, z1, coeffs)
+
+
+_NOLL_TABLE: dict[int, tuple[int, int]] = {
+    1: (0, 0),
+    2: (1, 1),
+    3: (1, -1),
+    4: (2, 0),
+    5: (2, -2),
+    6: (2, 2),
+    7: (3, -1),
+    8: (3, 1),
+    9: (3, -3),
+    10: (3, 3),
+    11: (4, 0),
+    12: (4, 2),
+    13: (4, -2),
+    14: (4, 4),
+    15: (4, -4),
+    16: (5, 1),
+    17: (5, -1),
+    18: (5, 3),
+    19: (5, -3),
+    20: (5, 5),
+    21: (5, -5),
+    22: (6, 0),
+    23: (6, -2),
+    24: (6, 2),
+    25: (6, -4),
+    26: (6, 4),
+    27: (6, -6),
+    28: (6, 6),
+}
+
+
+def noll_to_nm(j: int) -> tuple[int, int]:
+    """Return radial and azimuthal orders for the first 28 Noll indices."""
+    j = int(j)
+    if j not in _NOLL_TABLE:
+        raise ValueError("Noll indices above 28 are not included.")
+    return _NOLL_TABLE[j]
+
+
+def _zernike_radial(n: int, m_abs: int, rho):
+    out = jnp.zeros_like(rho, dtype=jnp.float64)
+    for k in range((n - m_abs) // 2 + 1):
+        coeff = (
+            (-1) ** k
+            * math.factorial(n - k)
+            / (
+                math.factorial(k)
+                * math.factorial((n + m_abs) // 2 - k)
+                * math.factorial((n - m_abs) // 2 - k)
+            )
+        )
+        out = out + coeff * rho ** (n - 2 * k)
+    return out
+
+
+def zernike_nm(n: int, m: int, rho, phi, *, outside: float = 0.0):
+    """Evaluate an unnormalised Zernike mode in polar coordinates."""
+    n = int(n)
+    m = int(m)
+    m_abs = abs(m)
+    if n < 0 or m_abs > n or (n - m_abs) % 2:
+        raise ValueError(f"Invalid Zernike order (n={n}, m={m}).")
+    radial = _zernike_radial(n, m_abs, rho)
+    if m == 0:
+        value = radial
+    elif m > 0:
+        value = radial * jnp.cos(m_abs * phi)
+    else:
+        value = radial * jnp.sin(m_abs * phi)
+    return jnp.where(rho <= 1.0, value, outside)
+
+
+def zernike_noll(j: int, rho, phi, *, outside: float = 0.0):
+    n, m = noll_to_nm(j)
+    return zernike_nm(n, m, rho, phi, outside=outside)
+
+
+def zernike_noll_cartesian(j: int, x, y, *, outside: float = 0.0):
+    """Evaluate a Noll Zernike polynomial without a polar-axis singularity."""
+    x = jnp.asarray(x)
+    y = jnp.asarray(y)
+    n, m = noll_to_nm(j)
+    m_abs = abs(m)
+    rho2 = x * x + y * y
+
+    radial_factor = jnp.zeros_like(rho2, dtype=jnp.float64)
+    for k in range((n - m_abs) // 2 + 1):
+        coeff = (
+            (-1) ** k
+            * math.factorial(n - k)
+            / (
+                math.factorial(k)
+                * math.factorial((n + m_abs) // 2 - k)
+                * math.factorial((n - m_abs) // 2 - k)
+            )
+        )
+        power = (n - 2 * k - m_abs) // 2
+        radial_factor = radial_factor + coeff * rho2**power
+
+    if m_abs == 0:
+        angular_polynomial = jnp.ones_like(rho2)
+    else:
+        z_power = (
+            x.astype(jnp.complex128) + 1j * y.astype(jnp.complex128)
+        ) ** m_abs
+        angular_polynomial = jnp.real(z_power) if m > 0 else jnp.imag(z_power)
+
+    value = radial_factor * angular_polynomial
+    return jnp.where(rho2 <= 1.0, value, outside)

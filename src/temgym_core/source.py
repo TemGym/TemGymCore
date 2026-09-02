@@ -5,7 +5,7 @@ import numpy as np
 import jax_dataclasses as jdc
 
 from .tree_utils import HasParamsMixin
-from .gaussian import GaussianBeam, make_gaussian
+from .gaussian import LENGTH, GaussianBeam, make_gaussian
 from .constants import energy2wavelength
 from .ray import Ray
 from .utils import (
@@ -19,6 +19,75 @@ from . import CoordsXY
 
 if TYPE_CHECKING:
     from interpax import Interpolator2D
+
+
+def _electron_wavelength_in_unit(voltage: float, wavelength_unit: str) -> float:
+    """Return the relativistic electron wavelength in the coordinate unit."""
+    if wavelength_unit not in LENGTH:
+        raise ValueError(
+            f"Unknown wavelength unit {wavelength_unit!r}; "
+            f"expected one of {tuple(LENGTH)}."
+        )
+
+    voltage = float(voltage)
+    if not np.isfinite(voltage) or voltage <= 0.0:
+        raise ValueError("voltage must be finite and positive.")
+    wavelength_m = float(np.asarray(energy2wavelength(voltage)))
+    return wavelength_m / LENGTH[wavelength_unit]
+
+
+def _gaussian_cardinal_coefficients(
+    target: np.ndarray,
+    *,
+    width_over_step: float,
+    kernel_tolerance: float = 1e-13,
+    ridge: float = 1e-10,
+) -> np.ndarray:
+    """Fit a square equal-width Gaussian lattice with a separable banded solve."""
+    from scipy.linalg import solve_banded
+
+    values = np.asarray(target)
+    if values.ndim != 2 or values.shape[0] != values.shape[1]:
+        raise ValueError("target must be a square two-dimensional array.")
+    if values.shape[0] == 0:
+        raise ValueError("target must not be empty.")
+
+    axis = int(values.shape[0])
+    alpha = float(width_over_step)
+    kernel_tolerance = float(kernel_tolerance)
+    ridge = float(ridge)
+    if not np.isfinite(alpha) or alpha <= 0.0:
+        raise ValueError("width_over_step must be finite and positive.")
+    if not 0.0 < kernel_tolerance < 1.0:
+        raise ValueError("kernel_tolerance must lie strictly between zero and one.")
+    if not np.isfinite(ridge) or ridge < 0.0:
+        raise ValueError("ridge must be finite and non-negative.")
+
+    bandwidth = min(
+        axis - 1,
+        int(np.ceil(alpha * np.sqrt(-np.log(kernel_tolerance)))),
+    )
+    kernel = np.exp(-(np.arange(bandwidth + 1, dtype=float) / alpha) ** 2)
+    banded = np.zeros((2 * bandwidth + 1, axis), dtype=float)
+    for offset in range(-bandwidth, bandwidth + 1):
+        start = max(0, -offset)
+        stop = min(axis, axis - offset)
+        banded[bandwidth + offset, start:stop] = kernel[abs(offset)]
+    banded[bandwidth] += ridge
+
+    solve_dtype = np.result_type(values, np.float64)
+    along_y = solve_banded(
+        (bandwidth, bandwidth),
+        banded,
+        values.astype(solve_dtype, copy=False),
+        check_finite=False,
+    )
+    return solve_banded(
+        (bandwidth, bandwidth),
+        banded,
+        along_y.T,
+        check_finite=False,
+    ).T
 
 
 def make_waist_divergence_rays(
@@ -52,7 +121,16 @@ def make_waist_divergence_rays(
     dy = np.asarray([0.0, 0.0], dtype=float)
     z_vec = np.full((2,), float(z), dtype=float)
     path_vec = np.full((2,), float(pathlength), dtype=float)
-    return Ray(x=x, y=y, dx=dx, dy=dy, z=z_vec, pathlength=path_vec)
+    ray_voltage = float(voltage) if voltage is not None else 200e3
+    return Ray(
+        x=x,
+        y=y,
+        dx=dx,
+        dy=dy,
+        z=z_vec,
+        pathlength=path_vec,
+        voltage=np.full((2,), ray_voltage, dtype=float),
+    )
 
 
 class Source(HasParamsMixin):
@@ -235,6 +313,104 @@ class ParallelBeam(Source):
         return r
 
 
+def airy_input_wave_for_flat_disk(
+    axis: int,
+    disk_radius: float,
+    focal_length: float,
+    voltage: float,
+    *,
+    z0: float = 0.0,
+    target_centre_xy: tuple[float, float] = (0.0, 0.0),
+    rings: float = 10.0,
+    overlap_factor: float = 1.1,
+    taper_fraction: float = 0.12,
+    wavelength_unit: str = "m",
+) -> GaussianBeam:
+    """Represent the Airy/jinc input field that focuses to a flat disk.
+
+    Place an ideal thin lens one focal length after this source and observe the
+    field one focal length beyond the lens. Under the paraxial Fourier-transform
+    relation, the signed radial input amplitude ``2 J1(u) / u`` produces a
+    circular top-hat field of radius ``disk_radius`` in that back focal plane.
+
+    All distances use ``wavelength_unit`` as their coordinate unit. The
+    infinite jinc input is truncated after ``rings`` oscillations and smoothly
+    tapered at the edge of the sampled disk.
+    """
+    from scipy.special import j1
+
+    axis = int(axis)
+    disk_radius = float(disk_radius)
+    focal_length = float(focal_length)
+    rings = float(rings)
+    overlap_factor = float(overlap_factor)
+    taper_fraction = float(taper_fraction)
+    wavelength = _electron_wavelength_in_unit(voltage, wavelength_unit)
+
+    if axis < 8:
+        raise ValueError("axis must be at least eight.")
+    if disk_radius <= 0.0 or focal_length <= 0.0:
+        raise ValueError("disk_radius and focal_length must be positive.")
+    if rings < 2.0:
+        raise ValueError("rings must be at least two.")
+    if overlap_factor <= 0.0:
+        raise ValueError("overlap_factor must be positive.")
+    if not 0.0 < taper_fraction < 1.0:
+        raise ValueError("taper_fraction must lie strictly between zero and one.")
+
+    wavenumber = 2.0 * np.pi / wavelength
+    max_argument = (rings + 0.25) * np.pi
+    extent = max_argument * focal_length / (wavenumber * disk_radius)
+    coordinates = np.linspace(-extent, extent, axis)
+    spacing = float(coordinates[1] - coordinates[0])
+    waist = overlap_factor * spacing
+    xx, yy = np.meshgrid(coordinates, coordinates, indexing="xy")
+    radius = np.hypot(xx, yy)
+    argument = wavenumber * disk_radius * radius / focal_length
+
+    target = np.ones_like(argument)
+    nonzero = argument != 0.0
+    target[nonzero] = 2.0 * j1(argument[nonzero]) / argument[nonzero]
+    normalized_radius = radius / extent
+    taper_start = 1.0 - taper_fraction
+    taper_phase = np.clip(
+        (normalized_radius - taper_start) / taper_fraction,
+        0.0,
+        1.0,
+    )
+    taper = np.where(
+        normalized_radius <= taper_start,
+        1.0,
+        0.5 * (1.0 + np.cos(np.pi * taper_phase)),
+    )
+    taper = np.where(normalized_radius <= 1.0, taper, 0.0)
+    coefficients = _gaussian_cardinal_coefficients(
+        target * taper,
+        width_over_step=overlap_factor,
+    )
+
+    slope_x = float(target_centre_xy[0]) / focal_length
+    slope_y = float(target_centre_xy[1]) / focal_length
+    tilt_phase = np.exp(1j * wavenumber * (slope_x * xx + slope_y * yy))
+    count = axis * axis
+    ones = np.ones(count, dtype=float)
+    return make_gaussian(
+        x=xx.ravel(),
+        y=yy.ravel(),
+        dx=ones * slope_x,
+        dy=ones * slope_y,
+        amp=(coefficients * tilt_phase).ravel(),
+        phase=np.zeros(count),
+        waist_x=ones * waist,
+        waist_y=ones * waist,
+        rcurv_x=ones * np.inf,
+        rcurv_y=ones * np.inf,
+        z=ones * z0,
+        voltage=ones * voltage,
+        wavelength_unit=wavelength_unit,
+    )
+
+
 def circular_input_wave(
     aperture_radius: float,
     waist: float,
@@ -248,7 +424,6 @@ def circular_input_wave(
     offset_xy: tuple[float, float] = (0.0, 0.0),
     wavelength_unit: str = "m",
 ) -> GaussianBeam:
-    _ = amp
     d = waist / overlap_factor
     area = jnp.pi * aperture_radius**2
     num_rays = int(jnp.ceil(area / (d * d)))
@@ -261,7 +436,7 @@ def circular_input_wave(
     x0 = x0 + offset_xy[0]
     y0 = y0 + offset_xy[1]
 
-    amp_per_ray = uniform_amp_from_area(num_rays, waist, area)
+    amp_per_ray = amp * uniform_amp_from_area(num_rays, waist, area)
 
     beam = make_gaussian(
         x=x0,
@@ -336,6 +511,155 @@ def point_source_wave(
     )
 
 
+def point_source_wave_focused_to_plane(
+    n: int,
+    half_angle: float,
+    waist_at_plane: float,
+    voltage: float,
+    target_z: float,
+    *,
+    z0: float = 0.0,
+    x0: float = 0.0,
+    y0: float = 0.0,
+    wavelength_unit: str = "m",
+) -> GaussianBeam:
+    """Create a point-source fan with a chosen waist at ``target_z``.
+
+    The beamlet centres and slopes follow a point source while their complex
+    curvature is back-propagated from a waist of ``waist_at_plane`` at the
+    target plane. All spatial arguments use ``wavelength_unit`` as their
+    coordinate unit; ``voltage`` is the accelerating voltage in volts.
+    """
+    n = int(n)
+    half_angle = float(half_angle)
+    waist_at_plane = float(waist_at_plane)
+    target_z = float(target_z)
+    z0 = float(z0)
+    if n <= 0:
+        raise ValueError("n must be positive.")
+    if not np.isfinite(half_angle) or half_angle < 0.0:
+        raise ValueError("half_angle must be finite and non-negative.")
+    if not np.isfinite(waist_at_plane) or waist_at_plane <= 0.0:
+        raise ValueError("waist_at_plane must be finite and positive.")
+    if not np.isfinite(target_z) or not np.isfinite(z0):
+        raise ValueError("target_z and z0 must be finite.")
+
+    wavelength = _electron_wavelength_in_unit(voltage, wavelength_unit)
+    dx, dy = fibonacci_spiral(n, half_angle)
+    dx = jnp.asarray(dx)
+    dy = jnp.asarray(dy)
+    ones = jnp.ones_like(dx)
+
+    q_inv_target = 1j * wavelength / (jnp.pi * waist_at_plane**2)
+    distance = target_z - z0
+    q_inv_source = q_inv_target / (1.0 - distance * q_inv_target)
+    source_im = jnp.imag(q_inv_source)
+    source_re = jnp.real(q_inv_source)
+    source_waist = jnp.sqrt(wavelength / (jnp.pi * source_im))
+    source_rcurv = jnp.where(
+        jnp.abs(source_re) > 0.0,
+        1.0 / source_re,
+        jnp.inf,
+    )
+
+    return make_gaussian(
+        x=ones * x0,
+        y=ones * y0,
+        dx=dx,
+        dy=dy,
+        amp=ones / n,
+        phase=jnp.zeros_like(dx),
+        waist_x=ones * source_waist,
+        waist_y=ones * source_waist,
+        rcurv_x=ones * source_rcurv,
+        rcurv_y=ones * source_rcurv,
+        z=ones * z0,
+        voltage=ones * voltage,
+        wavelength_unit=wavelength_unit,
+    )
+
+
+def finite_probe_wave_focused_to_plane(
+    n: int,
+    input_radius: float,
+    target_radius: float,
+    waist_at_plane: float,
+    voltage: float,
+    target_z: float,
+    *,
+    z0: float = 0.0,
+    input_center_xy: tuple[float, float] = (0.0, 0.0),
+    target_center_xy: tuple[float, float] = (0.0, 0.0),
+    wavelength_unit: str = "m",
+) -> GaussianBeam:
+    """Create a finite probe aimed to cover a disk at ``target_z``.
+
+    Beamlet centres sample ``input_radius`` at ``z0`` and map to the matching
+    samples within ``target_radius`` at the target plane. Each beamlet is given
+    a waist of ``waist_at_plane`` there. All spatial arguments use
+    ``wavelength_unit`` as their coordinate unit.
+    """
+    n = int(n)
+    input_radius = float(input_radius)
+    target_radius = float(target_radius)
+    waist_at_plane = float(waist_at_plane)
+    target_z = float(target_z)
+    z0 = float(z0)
+    if n <= 0:
+        raise ValueError("n must be positive.")
+    if not np.isfinite(input_radius) or input_radius < 0.0:
+        raise ValueError("input_radius must be finite and non-negative.")
+    if not np.isfinite(target_radius) or target_radius < 0.0:
+        raise ValueError("target_radius must be finite and non-negative.")
+    if not np.isfinite(waist_at_plane) or waist_at_plane <= 0.0:
+        raise ValueError("waist_at_plane must be finite and positive.")
+    if not np.isfinite(target_z) or not np.isfinite(z0):
+        raise ValueError("target_z and z0 must be finite.")
+
+    distance = target_z - z0
+    if distance == 0.0:
+        raise ValueError("`target_z` must differ from `z0`.")
+    wavelength = _electron_wavelength_in_unit(voltage, wavelength_unit)
+
+    unit_x, unit_y = fibonacci_spiral(n, 1.0)
+    unit_x = jnp.asarray(unit_x)
+    unit_y = jnp.asarray(unit_y)
+    source_x = input_center_xy[0] + input_radius * unit_x
+    source_y = input_center_xy[1] + input_radius * unit_y
+    target_x = target_center_xy[0] + target_radius * unit_x
+    target_y = target_center_xy[1] + target_radius * unit_y
+    dx = (target_x - source_x) / distance
+    dy = (target_y - source_y) / distance
+    ones = jnp.ones_like(source_x)
+
+    q_inv_target = 1j * wavelength / (jnp.pi * waist_at_plane**2)
+    q_inv_source = q_inv_target / (1.0 - distance * q_inv_target)
+    source_im = jnp.imag(q_inv_source)
+    source_re = jnp.real(q_inv_source)
+    source_waist = jnp.sqrt(wavelength / (jnp.pi * source_im))
+    source_rcurv = jnp.where(
+        jnp.abs(source_re) > 0.0,
+        1.0 / source_re,
+        jnp.inf,
+    )
+
+    return make_gaussian(
+        x=source_x,
+        y=source_y,
+        dx=dx,
+        dy=dy,
+        amp=ones / n,
+        phase=jnp.zeros_like(source_x),
+        waist_x=ones * source_waist,
+        waist_y=ones * source_waist,
+        rcurv_x=ones * source_rcurv,
+        rcurv_y=ones * source_rcurv,
+        z=ones * z0,
+        voltage=ones * voltage,
+        wavelength_unit=wavelength_unit,
+    )
+
+
 def square_input_wave(
     aperture_length: float,
     waist: float,
@@ -347,37 +671,19 @@ def square_input_wave(
     centre_xy: tuple[float, float] = (0.0, 0.0),
     wavelength_unit: str = "m",
 ) -> GaussianBeam:
-    d = waist / overlap_factor
-    nx = int(jnp.ceil(aperture_length / d))
-    ny = int(jnp.ceil(aperture_length / d))
-
-    xs = (jnp.arange(nx) - 0.5 * (nx - 1)) * d
-    ys = (jnp.arange(ny) - 0.5 * (ny - 1)) * d
-    xg, yg = jnp.meshgrid(xs, ys, indexing="ij")
-    x0 = xg.ravel()
-    y0 = yg.ravel()
-
-    amp_norm = overlap_factor * 2 * jnp.pi
-
-    x0 = x0 + centre_xy[0]
-    y0 = y0 + centre_xy[1]
-
-    beam = make_gaussian(
-        x=x0,
-        y=y0,
-        dx=jnp.zeros_like(x0),
-        dy=jnp.zeros_like(y0),
-        amp=jnp.ones_like(x0) * amp / amp_norm,
-        phase=jnp.zeros_like(y0) + phase,
-        waist_x=jnp.ones_like(x0) * waist,
-        waist_y=jnp.ones_like(y0) * waist,
-        rcurv_x=jnp.ones_like(x0) * jnp.inf,
-        rcurv_y=jnp.ones_like(y0) * jnp.inf,
-        z=jnp.ones_like(x0) * z0,
-        voltage=jnp.ones_like(x0) * voltage,
+    """Create a square Gaussian lattice using the rectangular implementation."""
+    return rectangular_input_wave(
+        aperture_width=aperture_length,
+        aperture_height=aperture_length,
+        waist=waist,
+        voltage=voltage,
+        amp=amp,
+        phase=phase,
+        z0=z0,
+        overlap_factor=overlap_factor,
+        centre_xy=centre_xy,
         wavelength_unit=wavelength_unit,
     )
-    return beam
 
 
 def rectangular_input_wave(
@@ -392,7 +698,6 @@ def rectangular_input_wave(
     centre_xy: tuple[float, float] = (0.0, 0.0),
     wavelength_unit: str = "m",
 ) -> GaussianBeam:
-    _ = amp
     area = aperture_width * aperture_height
     d = waist / overlap_factor
 
@@ -406,7 +711,7 @@ def rectangular_input_wave(
     x0 = xg.ravel()
     y0 = yg.ravel()
 
-    amp_ray = uniform_amp_from_area(num_rays, waist, area)
+    amp_ray = amp * uniform_amp_from_area(num_rays, waist, area)
 
     x0 = x0 + centre_xy[0]
     y0 = y0 + centre_xy[1]

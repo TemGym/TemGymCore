@@ -30,10 +30,13 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+  'ase',
+  'interpax',
   'jax',
   'jax_dataclasses',
   'numpy',
   'numba',
+  'scipy',
   'typing-extensions',
 ]
 
