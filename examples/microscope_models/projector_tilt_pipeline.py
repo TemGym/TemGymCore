@@ -112,7 +112,7 @@ def pair_tilt_measurements(*, lens_controls, input_tilts_rad, positions_pixels,
     controls, angles = np.asarray(lens_controls), np.asarray(input_tilts_rad)
     positions, covariance = np.asarray(positions_pixels), np.asarray(position_covariances)
     n = len(controls)
-    if (not n or n % 2 or controls.shape != (n, 4) or angles.shape != (n, 2)
+    if (not n or n % 2 or controls.ndim != 2 or controls.shape[1] not in (4, 5) or angles.shape != (n, 2)
             or positions.shape != (n, 2) or covariance.shape != (n, 2, 2)
             or len(pair_labels) != n//2):
         raise ValueError("Supply two images per tilt pair and matching measurement arrays.")

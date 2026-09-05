@@ -25,6 +25,18 @@ def test_zero_excitation_is_full_axial_drift_in_grouped_coordinates():
     np.testing.assert_allclose(actual, expected, rtol=1e-14, atol=1e-14)
 
 
+def test_objective_control_is_independent_and_legacy_controls_are_unchanged():
+    p = pipeline.initial_guess()
+    projector_controls = np.array([.9,.8,.7,.9])
+    legacy = np.asarray(pipeline.matrix5(p, projector_controls))
+    np.testing.assert_allclose(pipeline.matrix5(p,np.r_[1.,projector_controls]),legacy,atol=0,rtol=0)
+    changed = p.copy(); changed[11] *= 1.002
+    np.testing.assert_allclose(pipeline.matrix5(p,np.r_[1.002,projector_controls]),
+                               pipeline.matrix5(changed,projector_controls),rtol=1e-13,atol=1e-9)
+    with pytest.raises(ValueError,match='four projector controls or five'):
+        pipeline.matrix5(p,np.ones(3))
+
+
 def test_axial_scale_preserves_images_across_lens_wobbles():
     p, _ = pipeline._generator_parameters()
     controls = np.array([.96, .78, .87, .91])
@@ -159,6 +171,104 @@ def test_calibrated_tilt_has_physical_units_and_breaks_axial_scale_ambiguity():
     np.testing.assert_allclose(pipeline.predict_observables(p, controls[0], pipeline.public_specification()),
                                pipeline.predict_observables(scaled, controls[0], pipeline.public_specification()),
                                atol=1e-12)
+
+
+def test_calibrated_beam_shift_uses_a_and_known_angle_coupling():
+    p = pipeline.initial_guess()
+    controls = np.array([[.9, .8, .7, .9], [1., .8, .7, .9]])
+    positions = np.array([[20e-9, 0.], [0., -20e-9]])
+    angles = np.array([[.0001, -.0002], [.0003, 0.]])
+    pitch = 110e-6
+    expected = np.array([(np.asarray(pipeline.matrix5(p, c)) @ np.r_[s, a, 1.])[:2]/pitch
+                         for c, s, a in zip(controls, positions, angles)])
+    actual = pipeline.predict_beam_shift_displacements(p, controls, positions, angles, pitch)
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-10)
+    other = p.copy()
+    other[16] = 1.2  # unknown illumination curvature cannot replace A in this measurement
+    np.testing.assert_allclose(pipeline.predict_beam_shift_displacements(other, controls, positions, angles, pitch), actual)
+    p[11] = 0.
+    distance = float(pipeline.decode_geometry(p)[-1])
+    np.testing.assert_allclose(pipeline.predict_beam_shift_displacements(p, np.zeros((2,4)), positions, angles, pitch),
+                               (positions + distance*angles)/pitch, atol=1e-12)
+
+
+def test_beam_centres_are_recovered_from_visible_texture_and_boundary(monkeypatch):
+    monkeypatch.syspath_prepend(str(_path.parent))
+    from projector_beam_shift_pipeline import (
+        make_beam_shift_image_operator, analyse_beam_shift_images, beam_centre_pixels,
+    )
+
+    spec = pipeline.public_specification()
+    spec.update(shape_yx=[48,48], read_noise_std_e=2.,
+                specimen=dict(illumination_radius_m=40e-9, illumination_edge_m=2.5e-9))
+    axis = np.linspace(-65e-9,65e-9,27)
+    x, y = np.meshgrid(axis,axis)
+    intensity = .2 + .5*(np.sin(x/5e-9) > .3) + .2*(y > 4e-9)
+    template = dict(axis_m=axis, intensity=intensity)
+    operator = make_beam_shift_image_operator(spec, template)
+    p = np.r_[np.log(40000.), .23, np.log(.85), .37, -.18, np.log([2e6,3.]), -7., 3.]
+    other = p.copy()
+    other[7:9] = [7., -3.]
+    images = np.array([operator(p), operator(other)])
+    seed = np.r_[np.log(40000.), .18, np.log(1.), .2, -.3, np.log([2e6,3.])]
+    result = analyse_beam_shift_images(
+        images=images, nominal_magnifications=[40000.,40000.], specimen_template=template,
+        specimen_and_detector=spec, initial_image_parameters=np.tile(seed,(2,1)), verbose=False,
+    )
+    expected = np.array([beam_centre_pixels(v,spec['pixel_pitch_m']) for v in (p,other)])
+    np.testing.assert_allclose(result['beam_centres_pixels'], expected, atol=1e-6)
+    np.testing.assert_allclose(result['image_parameters'][:,7:9], [p[7:9],other[7:9]], atol=1e-6)
+    # The texture translation is unchanged even though illumination has moved.
+    np.testing.assert_allclose(result['image_parameters'][:,3:5], [p[3:5],p[3:5]], atol=1e-6)
+    assert np.all(np.linalg.eigvalsh(result['beam_centre_covariances']) > 0)
+    assert np.max(result['image_residual_rms']) < 1e-6
+
+
+
+def test_illumination_centre_matches_ray_transport_with_curvature_and_specimen_rotation(monkeypatch):
+    monkeypatch.syspath_prepend(str(_path.parent))
+    from projector_beam_shift_pipeline import beam_centre_pixels
+
+    p = pipeline.initial_guess()
+    p[16], p[18] = .4, .31
+    commands = np.array([.9,.8,.7,.9])
+    spec = pipeline.public_specification()
+    matrix = np.asarray(pipeline.matrix5(p, commands))
+    position, angle = np.array([10e-9,-4e-9]), np.array([.001,-.002])
+    rotation = np.array([[np.cos(p[18]),-np.sin(p[18])], [np.sin(p[18]),np.cos(p[18])]])
+    texture_shift = matrix[:2,2:4] @ (angle-p[16]*1e4*position) / spec['pixel_pitch_m']
+    image_parameters = np.r_[pipeline.predict_observables(p,commands,spec), texture_shift,
+                             np.log([2e6,3.]), rotation.T @ position*1e9]
+    expected = (matrix @ np.r_[position,angle,1.])[:2] / spec['pixel_pitch_m']
+    np.testing.assert_allclose(beam_centre_pixels(image_parameters,spec['pixel_pitch_m']),
+                               expected, rtol=1e-12, atol=1e-9)
+
+
+def test_beam_displacements_enter_the_fit_with_their_covariance():
+    p = pipeline.initial_guess()
+    spec = pipeline.public_specification()
+    controls = np.array([[.9, .8, .7, .9], [1., .8, .7, .9]])
+    positions = np.eye(2)*20e-9
+    angles = np.zeros((2,2))
+    predicted = np.asarray(pipeline.predict_beam_shift_displacements(p, controls, positions, angles, spec['pixel_pitch_m']))
+    offset = np.array([[.1, -.2], [.3, -.4]])
+    beam = dict(lens_controls=controls, position_changes_m=positions, angle_changes_rad=angles,
+                displacements_pixels=predicted+offset, covariance_pixels=np.tile(np.eye(2)*.25, (2,1,1)))
+    problem = pipeline.prepare_column_fit(
+        lens_controls=controls, measured_values=np.array([pipeline.predict_observables(p,c,spec) for c in controls]),
+        measurement_covariances=np.tile(np.eye(3), (2,1,1)), specimen_and_detector=spec,
+        prior_parameters=p, beam_shift_measurements=beam,
+    )
+    result = problem.solve(p, max_evaluations=1)
+    np.testing.assert_allclose(result.data_residual[-4:], -2*offset.ravel(), atol=1e-9)
+    assert len(result.data_residual) == 10
+    beam['position_changes_m'] = np.zeros((1,2))
+    with pytest.raises(ValueError, match='matching pair counts'):
+        pipeline.prepare_column_fit(
+            lens_controls=controls, measured_values=np.zeros((2,3)),
+            measurement_covariances=np.tile(np.eye(3), (2,1,1)), specimen_and_detector=spec,
+            prior_parameters=p, beam_shift_measurements=beam,
+        )
 
 
 def test_tilt_registration_recovers_shifts_without_lens_truth(monkeypatch):

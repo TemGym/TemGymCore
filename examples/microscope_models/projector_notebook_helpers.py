@@ -149,7 +149,7 @@ def measure_images(*, images, nominal_magnifications, specimen_template, specime
 
 def fit_microscope(*, lens_controls, image_measurements, specimen_and_detector,
                    starting_guess, position_priors, max_evaluations=10000,
-                   tilt_measurements=None):
+                   tilt_measurements=None, beam_shift_measurements=None):
     """Fit all supplied image measurements, and return a named microscope model.
 
     Supply recorded controls, measured scale/rotation/blur with covariance,
@@ -157,6 +157,8 @@ def fit_microscope(*, lens_controls, image_measurements, specimen_and_detector,
     priors. The fit reads no files and never receives the generating model.
     Optional tilt_measurements adds calibrated angle changes and measured
     image-pair displacements, with covariance, to constrain the B block.
+    Optional beam_shift_measurements adds calibrated beam motion and measured
+    footprint-centre differences to constrain A (plus any known tilt coupling).
     Output.model has the same readable keys and units as starting_guess.
     """
     result = fit_column_from_measurements(
@@ -166,6 +168,7 @@ def fit_microscope(*, lens_controls, image_measurements, specimen_and_detector,
         starting_parameters=model_to_parameters(starting_guess),
         position_priors=position_priors, max_evaluations=max_evaluations,
         tilt_measurements=tilt_measurements,
+        beam_shift_measurements=beam_shift_measurements,
     )
     if not result.success:
         raise RuntimeError(f"Microscope fit stopped before convergence: {result.message}")

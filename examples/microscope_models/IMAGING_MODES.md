@@ -155,8 +155,27 @@ profiles. Each profile point refits the other 18 parameters, with fixed prior
 centres and two sweeps to look for competing branches. The plots show the
 total error and its data contribution at those same fitted models. These
 finite searches do not count all minima or establish full uncertainty
-intervals. A final experiment adds ±3 mrad tilt pairs to the existing ±1 mrad
+intervals. A further experiment adds ±3 mrad tilt pairs to the existing ±1 mrad
 pairs at all four measured lens settings, then repeats the fits and compares
-B accuracy and detector profiles. The prior ranges are engineering assumptions.
+B accuracy and detector profiles. The final experiment adds calibrated ±10 nm
+beam shifts at those same four settings. Sixteen extra images retain the fixed
+MAGICAL specimen while moving the circular illumination across it. Pixel
+analysis separates the specimen-pattern motion from illumination-boundary
+motion to measure A through the beam centre. The microscope fit then sees the
+paired displacements and their uncertainties. The comparison repeats the same
+searches and reports A, B, curvature, geometry and detector profiles. This assumes
+the beam and its wavefront move together with calibrated position and mean angle;
+a specimen-stage translation would be a different measurement.
+The prior ranges are engineering assumptions.
 Its finite-lens reference controls are generated separately from the
 thin-lens table above.
+
+The [adaptive calibration continuation](projector_adaptive_calibration.ipynb)
+uses those measurements to select mixed-lens and compensated objective settings,
+predicts new images before acquisition, then refits. Its final synthetic test
+recovers all 19 parameters within 0.11%, with independent noise repeats within
+0.22% and successful predictions at new settings. The final fitting procedure
+first estimates 16 optical parameters from calibrated beam/tilt displacements,
+then fits all 19 jointly; all 20 tested starts reach the same solution.
+The [notes and limitations](ADAPTIVE_CALIBRATION_NOTES.md) document the large
+excitation range and distinguish this model test from validation on real hardware.

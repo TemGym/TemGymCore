@@ -209,7 +209,7 @@ NEOARM optical responses or a calibration of the recorded raw controls.
 The section-wise notebook executes the recorded-control audit. A separate
 [projector calibration pipeline](../microscope_models/projector_calibration_pipeline.ipynb)
 now executes a synthetic image-to-measurement-to-fit experiment with unknown
-finite-lens geometry. The short notebook uses only the clean synthetic
+finite-lens geometry. The initial experiment uses the clean synthetic
 MAGICAL sample at 40k and 60k, illuminated within a 100 nm radius. Each setting
 supplies one reference image
 and ±2.5% wobbles of IL1, IL2, IL3, and PL1: 18 images used in both fits.
@@ -225,7 +225,7 @@ on an 11-point grid, refitting the other 18 parameters in two opposite sweeps.
 Prior centres are fixed independently of optimizer starting points.
 Adding ±5% and ±10% wobbles at 40k supplies 16 more ordinary images and eight
 more tilt images. The same searches compare the original and expanded data.
-The final comparison keeps all of those exposures and adds ±3 mrad tilt
+A further comparison keeps all of those exposures and adds ±3 mrad tilt
 pairs at the same four lens settings (16 more images). It repeats the same
 20 starts and detector profile, and scores B on the same lens controls.
 Larger-tilt image files are stored separately from the ±1 mrad exposures.
@@ -235,6 +235,20 @@ separately optimized data-only profile. Neither search counts all minima.
 The tilt model assumes exact angle calibration, a fixed illumination
 footprint, and known independent frame drift of 0.003 detector pixels.
 
+The final experiment adds 16 MAGICAL images with calibrated
+±10 nm beam shifts along x and y at the same four lens settings (82 images
+overall). The specimen stays fixed and visible while the circular illumination
+moves across it. Moving the beam
+and its wavefront together, with its mean angle fixed, gives a centre change
+`A @ position_change`. Known accompanying angle changes can also be supplied
+as `B @ angle_change`. This is not a specimen-stage translation. Pixel analysis
+fits the pattern's scale, rotation, blur and translation, brightness, background
+and the illumination centre relative to the specimen. It uses the texture and
+circular boundary to separate their motions. Only paired illumination-centre
+differences and their full propagated covariances enter the microscope fit. The
+calibration is exact in this experiment, and the same priors, starting models
+and detector scan compare recovery of A, B, curvature and geometry.
+
 The MAGICAL intensity model retains the nominal 13 nm Si and 10 nm SiGe
 widths; coherent phase contrast remains a separate forward-model check.
 The fit includes bounded priors on lens-centre and detector positions,
@@ -243,6 +257,19 @@ and hard bounds on effective lens lengths. The
 records illustrative engineering estimates around the approximate layout;
 they are not measured NEOARM positions. A good image fit alone does not
 establish unique physical geometry.
+
+The [adaptive calibration notebook](../microscope_models/projector_adaptive_calibration.ipynb)
+continues with model-guided combinations, objective variation, and wider
+compensated settings. It saves predictions before acquiring each new batch,
+then measures and refits. The final 334-image synthetic calibration recovers
+all 19 parameters within 0.11% in its first realization; two complete noise
+repeats stay within 0.22%. A frozen model predicts 72 fresh images at 0.95
+noise-unit RMS. Fitting calibrated displacements before the full image
+measurements improves successful recovery from 1/20 to 20/20 dispersed starts.
+Some successful settings require three to four times reference excitation;
+hardware feasibility and validity of the assumed control law remain untested.
+See the [experiment notes](../microscope_models/ADAPTIVE_CALIBRATION_NOTES.md)
+and [all numerical results](../microscope_models/calibration_results/adaptive_summary.json).
 
 The general cubic sample, GPU field evaluation,
 finite-lens optics, detector likelihoods, covariance tools, and ray plotting

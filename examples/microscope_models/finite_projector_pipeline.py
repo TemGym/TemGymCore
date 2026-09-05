@@ -54,9 +54,18 @@ def decode_geometry(p):
 
 
 def matrix5(p, controls):
-    """Reuse the existing finite solenoid map, with an explicit permutation."""
+    """Finite solenoid map in grouped ray coordinates.
+
+    Four controls mean IL1, IL2, IL3, PL1 with the objective held at one.
+    Five controls mean Objective, IL1, IL2, IL3, PL1. The objective control
+    multiplies its fitted reference strength, just as for the other lenses.
+    """
+    controls = jnp.asarray(controls)
+    if controls.shape not in ((4,), (5,)):
+        raise ValueError("Supply four projector controls or five controls including the objective first.")
     gaps, lengths, _, _ = decode_geometry(p)
-    q = jnp.r_[p[11], SIGNS * jnp.exp(p[12:16]) * controls]
+    objective = controls[0] if controls.shape == (5,) else 1.
+    q = jnp.r_[p[11]*objective, SIGNS * jnp.exp(p[12:16]) * controls[-4:]]
     matrix = drift_matrix(gaps[0])
     for i in range(5):
         matrix = drift_matrix(gaps[i + 1]) @ hard_edge_solenoid_matrix(q[i], lengths[i]) @ matrix
@@ -92,6 +101,20 @@ def predict_tilt_displacements(p, controls, angle_changes_rad, pixel_pitch_m):
     """
     return jax.vmap(lambda d, angle: matrix5(p, d)[:2, 2:4] @ angle)(
         jnp.asarray(controls), jnp.asarray(angle_changes_rad)) / pixel_pitch_m
+
+
+def predict_beam_shift_displacements(p, controls, position_changes_m,
+                                    angle_changes_rad, pixel_pitch_m):
+    """Response of a translated incoming beam: (A ds + B dtheta) / pixel size.
+
+    Positions and mean angles are independently calibrated in specimen x/y
+    axes. This is a beam displacement, not a specimen-stage translation.
+    """
+    def displacement(commands, position, angle):
+        matrix = matrix5(p, commands)
+        return matrix[:2, :2] @ position + matrix[:2, 2:4] @ angle
+    return jax.vmap(displacement)(jnp.asarray(controls), jnp.asarray(position_changes_m),
+                                  jnp.asarray(angle_changes_rad)) / pixel_pitch_m
 
 
 def make_image_operator(spec):
@@ -332,7 +355,8 @@ def fit_unknown_column(directory, guess=None, max_nfev=8000, regularization=1., 
 def fit_column_from_measurements(*, lens_controls, measured_values, measurement_covariances,
                                  specimen_and_detector, starting_parameters,
                                  position_priors=None, prior_weight=1., max_evaluations=8000,
-                                 tilt_measurements=None, prior_parameters=None):
+                                 tilt_measurements=None, prior_parameters=None,
+                                 beam_shift_measurements=None):
     """Fit once; keep the prior centre separate from the optimizer's start.
 
     Omitted prior_parameters preserves the historical single-fit behaviour.
@@ -345,22 +369,30 @@ def fit_column_from_measurements(*, lens_controls, measured_values, measurement_
         prior_parameters=starting_parameters if prior_parameters is None else prior_parameters,
         position_priors=position_priors, prior_weight=prior_weight,
         tilt_measurements=tilt_measurements,
+        beam_shift_measurements=beam_shift_measurements,
     )
     return problem.solve(starting_parameters, max_evaluations=max_evaluations)
 
 
 def prepare_column_fit(*, lens_controls, measured_values, measurement_covariances,
                        specimen_and_detector, prior_parameters,
-                       position_priors=None, prior_weight=1., tilt_measurements=None):
+                       position_priors=None, prior_weight=1., tilt_measurements=None,
+                       beam_shift_measurements=None):
     """Compile a fixed measurement/prior objective. This function reads no files.
 
-    Controls have shape (frames, 4), ordered IL1, IL2, IL3, PL1. Values have
+    Controls have shape (frames, 4), ordered IL1, IL2, IL3, PL1, or (frames, 5)
+    with Objective first. Values have
     shape (frames, 3): log scale, rotation in radians, log width in pixels.
     Covariances have shape (frames, 3, 3), in those same coordinates.
     Prior parameters use the 19-element vector defined by PARAMETERS and stay
     fixed across all optimizer starts and detector-position profiles.
     Optional tilt_measurements supplies independent image-pair displacements
     (pixels), their 2x2 covariances, controls, and angle changes (radians).
+    Optional beam_shift_measurements adds calibrated position changes (metres)
+    and accompanying mean-angle changes (radians), with measured beam-centre
+    differences (pixels) and their 2x2 covariance. Only these differences enter
+    the column fit; texture shape and illumination coordinates are fitted
+    jointly in the preceding image-analysis step.
     Calling the returned object's solve method gives a scipy result with the
     fitted vector, data residuals, and data-only Jacobian. The notebook adapter gives these named fields
     and translates the vector into positions, lengths, gains, and angles.
@@ -368,7 +400,7 @@ def prepare_column_fit(*, lens_controls, measured_values, measurement_covariance
     controls = jnp.asarray(lens_controls)
     observations = jnp.asarray(measured_values)
     covariances = np.asarray(measurement_covariances)
-    if (controls.ndim != 2 or controls.shape[1] != 4 or not len(controls)
+    if (controls.ndim != 2 or controls.shape[1] not in (4, 5) or not len(controls)
             or observations.shape != (len(controls), 3)
             or covariances.shape != (len(controls), 3, 3)):
         raise ValueError("Controls, measurements, and covariances must have matching frame counts.")
@@ -387,7 +419,7 @@ def prepare_column_fit(*, lens_controls, measured_values, measurement_covariance
         tilt_shifts = np.asarray(tilt_measurements["displacements_pixels"])
         tilt_covariance = np.asarray(tilt_measurements["covariance_pixels"])
         count = len(tilt_controls)
-        if (not count or tilt_controls.shape != (count, 4)
+        if (not count or tilt_controls.ndim != 2 or tilt_controls.shape[1] not in (4, 5)
                 or tilt_angles.shape != (count, 2) or tilt_shifts.shape != (count, 2)
                 or tilt_covariance.shape != (count, 2, 2)):
             raise ValueError("Tilt controls, angles, displacements, and covariances must have matching pair counts.")
@@ -397,16 +429,38 @@ def prepare_column_fit(*, lens_controls, measured_values, measurement_covariance
             raise ValueError("Each tilt pair needs a nonzero calibrated angle change.")
         tilt_whitening = jnp.asarray(np.linalg.inv(np.linalg.cholesky(tilt_covariance)))
 
+    if beam_shift_measurements is not None:
+        beam_controls = np.asarray(beam_shift_measurements["lens_controls"])
+        beam_positions = np.asarray(beam_shift_measurements["position_changes_m"])
+        beam_angles = np.asarray(beam_shift_measurements["angle_changes_rad"])
+        beam_displacements = np.asarray(beam_shift_measurements["displacements_pixels"])
+        beam_covariance = np.asarray(beam_shift_measurements["covariance_pixels"])
+        count = len(beam_controls)
+        if (not count or beam_controls.ndim != 2 or beam_controls.shape[1] not in (4, 5)
+                or beam_positions.shape != (count, 2) or beam_angles.shape != (count, 2)
+                or beam_displacements.shape != (count, 2) or beam_covariance.shape != (count, 2, 2)):
+            raise ValueError("Beam-shift arrays must have matching pair counts and x/y coordinates.")
+        if not all(np.isfinite(a).all() for a in
+                   (beam_controls, beam_positions, beam_angles, beam_displacements, beam_covariance)):
+            raise ValueError("Beam-shift measurements must be finite.")
+        if np.any(np.linalg.norm(beam_positions, axis=1) == 0):
+            raise ValueError("Each beam-shift pair needs a nonzero calibrated position change.")
+        beam_whitening = jnp.asarray(np.linalg.inv(np.linalg.cholesky(beam_covariance)))
+
     def residual(p):
         predicted = jax.vmap(lambda d: predict_observables(p, d, spec))(controls)
         difference = predicted - observations
         difference = difference.at[:, 1].set(jnp.arctan2(jnp.sin(difference[:, 1]), jnp.cos(difference[:, 1])))
         image_residual = jnp.einsum("nij,nj->ni", whitening, difference).ravel()
-        if tilt_measurements is None:
-            return image_residual
-        predicted_shifts = predict_tilt_displacements(p, tilt_controls, tilt_angles, spec["pixel_pitch_m"])
-        shift_residual = jnp.einsum("nij,nj->ni", tilt_whitening, predicted_shifts-tilt_shifts).ravel()
-        return jnp.r_[image_residual, shift_residual]
+        parts = [image_residual]
+        if tilt_measurements is not None:
+            predicted_shifts = predict_tilt_displacements(p, tilt_controls, tilt_angles, spec["pixel_pitch_m"])
+            parts.append(jnp.einsum("nij,nj->ni", tilt_whitening, predicted_shifts-tilt_shifts).ravel())
+        if beam_shift_measurements is not None:
+            predicted_shifts = predict_beam_shift_displacements(
+                p, beam_controls, beam_positions, beam_angles, spec["pixel_pitch_m"])
+            parts.append(jnp.einsum("nij,nj->ni", beam_whitening, predicted_shifts-beam_displacements).ravel())
+        return jnp.concatenate(parts)
 
     compiled = jax.jit(residual)
     jacobian = jax.jit(jax.jacfwd(residual))
@@ -417,9 +471,9 @@ def prepare_column_fit(*, lens_controls, measured_values, measurement_covariance
     upper = np.r_[base[:11] + 1.2, -.15, base[12:16] + .8, 10., np.log(.01), np.pi]
     # Minimum Gaussian emittance at the known wavelength and feature width.
     lower[17] = np.log(float(energy2wavelength(spec["voltage_v"])) / (4 * np.pi * spec["feature_sigma_m"]))
-    # The data have exact null directions. A declared preference for the
-    # starting coordinates selects one representative, not a measured geometry.
-    # Keep the data-only residual/Jacobian for rank and predictive diagnostics.
+    # Some measurement sets leave exact or very weak parameter directions.
+    # Keep the data-only residual/Jacobian so added controls can be checked
+    # independently of the priors that select among poorly constrained models.
     if position_priors is None:
         encode = lambda p: p
         decode = lambda u: u

@@ -135,7 +135,7 @@ class FitLandscape:
 def explore_fit_landscape(*, lens_controls, image_measurements, tilt_measurements,
                           specimen_and_detector, prior_model, position_priors,
                           starting_models, detector_positions_mm, output_directory,
-                          max_evaluations=4000):
+                          max_evaluations=4000, beam_shift_measurements=None):
     """Repeat a fixed fit, then profile detector position with two warm-start sweeps.
 
     Each profile point fixes one coordinate and refits the other 18. Both
@@ -153,12 +153,21 @@ def explore_fit_landscape(*, lens_controls, image_measurements, tilt_measurement
         measurement_covariances=image_measurements.covariance, tilt_measurements=tilt_measurements,
         specimen_and_detector=specimen_and_detector, prior_parameters=model_to_parameters(prior_model),
         position_priors=position_priors,
+        beam_shift_measurements=beam_shift_measurements,
     )
     directory = Path(output_directory)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "fit_inputs.json").write_text(json.dumps(dict(
         prior_model=prior_model, position_priors=position_priors, starting_models=starting_models,
         detector_positions_mm=positions.tolist(), max_evaluations=max_evaluations), indent=2))
+    if beam_shift_measurements is not None and tilt_measurements is not None:
+        # A complete calibration checkpoint for the next prospective experiment.
+        # Persist actual measured arrays, not only fit-summary statistics.
+        np.savez_compressed(directory / 'calibration_measurements.npz',
+                            controls=lens_controls, values=image_measurements.values,
+                            covariance=image_measurements.covariance,
+                            **{f'tilt_{k}':v for k,v in tilt_measurements.items() if k != 'image_analysis'},
+                            **{f'shift_{k}':v for k,v in beam_shift_measurements.items() if k != 'image_analysis'})
     fits = []
     for i, model in enumerate(starting_models):
         result = problem.solve(model_to_parameters(model), max_evaluations=max_evaluations)
