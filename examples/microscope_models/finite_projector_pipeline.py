@@ -84,6 +84,16 @@ def predict_observables(p, controls, spec):
     ])
 
 
+def predict_tilt_displacements(p, controls, angle_changes_rad, pixel_pitch_m):
+    """Image displacement in detector x/y pixels for calibrated specimen tilts.
+
+    One fixed lens setting per tilt pair. A shared image offset cancels when
+    subtracting the two images; input tilt axes use the matrix's x/y basis.
+    """
+    return jax.vmap(lambda d, angle: matrix5(p, d)[:2, 2:4] @ angle)(
+        jnp.asarray(controls), jnp.asarray(angle_changes_rad)) / pixel_pitch_m
+
+
 def make_image_operator(spec):
     """Exact pixel-integrated sum of round Gaussian intensity features.
 
@@ -321,15 +331,38 @@ def fit_unknown_column(directory, guess=None, max_nfev=8000, regularization=1., 
 
 def fit_column_from_measurements(*, lens_controls, measured_values, measurement_covariances,
                                  specimen_and_detector, starting_parameters,
-                                 position_priors=None, prior_weight=1., max_evaluations=8000):
-    """Fit all supplied measurements. This function reads no files.
+                                 position_priors=None, prior_weight=1., max_evaluations=8000,
+                                 tilt_measurements=None, prior_parameters=None):
+    """Fit once; keep the prior centre separate from the optimizer's start.
+
+    Omitted prior_parameters preserves the historical single-fit behaviour.
+    For multiple starts, prepare_column_fit compiles one fixed objective once.
+    """
+    problem = prepare_column_fit(
+        lens_controls=lens_controls, measured_values=measured_values,
+        measurement_covariances=measurement_covariances,
+        specimen_and_detector=specimen_and_detector,
+        prior_parameters=starting_parameters if prior_parameters is None else prior_parameters,
+        position_priors=position_priors, prior_weight=prior_weight,
+        tilt_measurements=tilt_measurements,
+    )
+    return problem.solve(starting_parameters, max_evaluations=max_evaluations)
+
+
+def prepare_column_fit(*, lens_controls, measured_values, measurement_covariances,
+                       specimen_and_detector, prior_parameters,
+                       position_priors=None, prior_weight=1., tilt_measurements=None):
+    """Compile a fixed measurement/prior objective. This function reads no files.
 
     Controls have shape (frames, 4), ordered IL1, IL2, IL3, PL1. Values have
     shape (frames, 3): log scale, rotation in radians, log width in pixels.
     Covariances have shape (frames, 3, 3), in those same coordinates.
-    Starting parameters use the 19-element vector defined by PARAMETERS.
-    The returned scipy result includes the fitted vector, data residuals,
-    and the data-only Jacobian. The notebook adapter gives these named fields
+    Prior parameters use the 19-element vector defined by PARAMETERS and stay
+    fixed across all optimizer starts and detector-position profiles.
+    Optional tilt_measurements supplies independent image-pair displacements
+    (pixels), their 2x2 covariances, controls, and angle changes (radians).
+    Calling the returned object's solve method gives a scipy result with the
+    fitted vector, data residuals, and data-only Jacobian. The notebook adapter gives these named fields
     and translates the vector into positions, lengths, gains, and angles.
     """
     controls = jnp.asarray(lens_controls)
@@ -343,16 +376,37 @@ def fit_column_from_measurements(*, lens_controls, measured_values, measurement_
         raise ValueError("Measurements and controls must be finite.")
     whitening = jnp.asarray(np.linalg.inv(np.linalg.cholesky(covariances)))
     spec = specimen_and_detector
-    initial = np.asarray(starting_parameters, dtype=float)
+    initial = np.asarray(prior_parameters, dtype=float)
     if initial.shape != (len(PARAMETERS),) or not np.isfinite(initial).all():
         raise ValueError("Supply 19 finite starting parameters.")
-    regularization, max_nfev = prior_weight, max_evaluations
+    regularization = prior_weight
+
+    if tilt_measurements is not None:
+        tilt_controls = np.asarray(tilt_measurements["lens_controls"])
+        tilt_angles = np.asarray(tilt_measurements["angle_changes_rad"])
+        tilt_shifts = np.asarray(tilt_measurements["displacements_pixels"])
+        tilt_covariance = np.asarray(tilt_measurements["covariance_pixels"])
+        count = len(tilt_controls)
+        if (not count or tilt_controls.shape != (count, 4)
+                or tilt_angles.shape != (count, 2) or tilt_shifts.shape != (count, 2)
+                or tilt_covariance.shape != (count, 2, 2)):
+            raise ValueError("Tilt controls, angles, displacements, and covariances must have matching pair counts.")
+        if not all(np.isfinite(a).all() for a in (tilt_controls, tilt_angles, tilt_shifts, tilt_covariance)):
+            raise ValueError("Tilt measurements must be finite.")
+        if np.any(np.linalg.norm(tilt_angles, axis=1) == 0):
+            raise ValueError("Each tilt pair needs a nonzero calibrated angle change.")
+        tilt_whitening = jnp.asarray(np.linalg.inv(np.linalg.cholesky(tilt_covariance)))
 
     def residual(p):
         predicted = jax.vmap(lambda d: predict_observables(p, d, spec))(controls)
         difference = predicted - observations
         difference = difference.at[:, 1].set(jnp.arctan2(jnp.sin(difference[:, 1]), jnp.cos(difference[:, 1])))
-        return jnp.einsum("nij,nj->ni", whitening, difference).ravel()
+        image_residual = jnp.einsum("nij,nj->ni", whitening, difference).ravel()
+        if tilt_measurements is None:
+            return image_residual
+        predicted_shifts = predict_tilt_displacements(p, tilt_controls, tilt_angles, spec["pixel_pitch_m"])
+        shift_residual = jnp.einsum("nij,nj->ni", tilt_whitening, predicted_shifts-tilt_shifts).ravel()
+        return jnp.r_[image_residual, shift_residual]
 
     compiled = jax.jit(residual)
     jacobian = jax.jit(jax.jacfwd(residual))
@@ -367,6 +421,7 @@ def fit_column_from_measurements(*, lens_controls, measured_values, measurement_
     # starting coordinates selects one representative, not a measured geometry.
     # Keep the data-only residual/Jacobian for rank and predictive diagnostics.
     if position_priors is None:
+        encode = lambda p: p
         decode = lambda u: u
         solver_initial = initial
         prior_residual = lambda p: regularization * (p - initial)
@@ -385,24 +440,66 @@ def fit_column_from_measurements(*, lens_controls, measured_values, measurement_
 
     regularized_residual = jax.jit(lambda u: full_residual(decode(u)))
     regularized_jacobian = jax.jit(jax.jacfwd(regularized_residual))
-    result = least_squares(lambda u: np.asarray(regularized_residual(u)), solver_initial,
-                           jac=lambda u: np.asarray(regularized_jacobian(u)), bounds=(lower, upper),
-                           x_scale="jac", max_nfev=max_nfev, ftol=1e-9, xtol=1e-10, gtol=1e-5)
-    result.solver_x = result.x.copy()
-    result.solver_jacobian = result.jac.copy()
-    result.solver_active_mask = result.active_mask.copy()
-    result.x = np.asarray(decode(result.solver_x))
-    result.jac = np.asarray(jax.jacfwd(full_residual)(result.x))
-    result.grad = result.jac.T @ result.fun
-    # The bounds apply to solver coordinates when centre priors are active.
-    # Keep that mask explicitly named rather than attaching it to log gaps.
-    if position_priors is not None:
-        del result.active_mask
-    result.data_residual = np.asarray(compiled(result.x))
-    result.data_jacobian = np.asarray(jacobian(result.x))
-    result.regularization = regularization
-    result.position_priors = position_priors
-    return result
+    return PreparedColumnFit(encode, decode, lower, upper, initial, position_priors,
+                             regularization, regularized_residual, regularized_jacobian,
+                             compiled, jacobian, jax.jit(jax.jacfwd(full_residual)))
+
+
+class PreparedColumnFit:
+    """A fixed data set and priors, reusable across starts and constrained fits."""
+
+    def __init__(self, encode, decode, lower, upper, prior_parameters, position_priors,
+                 prior_weight, residual, jacobian, data_residual, data_jacobian, physical_jacobian):
+        self.encode, self.decode = encode, decode
+        self.lower, self.upper = lower, upper
+        self.prior_parameters = prior_parameters.copy()
+        self.position_priors, self.prior_weight = position_priors, prior_weight
+        self.residual, self.jacobian = residual, jacobian
+        self.data_residual, self.data_jacobian = data_residual, data_jacobian
+        self.physical_jacobian = physical_jacobian
+
+    def solve(self, starting_parameters, *, max_evaluations=8000, fixed_detector_position_mm=None):
+        """Refit every free coordinate; pin detector position exactly if supplied."""
+        start = np.asarray(starting_parameters, dtype=float)
+        if start.shape != (19,) or not np.isfinite(start).all():
+            raise ValueError("Supply 19 finite starting parameters.")
+        initial = np.asarray(self.encode(start)).copy()
+        free = np.ones(19, dtype=bool)
+        if fixed_detector_position_mm is not None:
+            if self.position_priors is None:
+                raise ValueError("A detector profile requires position priors to define position coordinates.")
+            mean = self.position_priors["position_mean_mm"][5]
+            sigma = self.position_priors["position_sigma_mm"][5]
+            initial[5] = (fixed_detector_position_mm-mean)/sigma
+            free[5] = False
+        if not np.isfinite(initial).all() or np.any(initial < self.lower) or np.any(initial > self.upper):
+            raise ValueError("The starting geometry or fixed detector is outside the declared prior bounds.")
+
+        def expand(v):
+            u = initial.copy()
+            u[free] = v
+            return u
+
+        result = least_squares(lambda v: np.asarray(self.residual(expand(v))), initial[free],
+                               jac=lambda v: np.asarray(self.jacobian(expand(v)))[:, free],
+                               bounds=(self.lower[free], self.upper[free]), x_scale="jac",
+                               max_nfev=max_evaluations, ftol=1e-9, xtol=1e-10, gtol=1e-5)
+        result.solver_x = expand(result.x)
+        result.solver_jacobian = result.jac.copy()
+        result.solver_active_mask = result.active_mask.copy()
+        result.free_coordinate_mask = free
+        result.fixed_detector_position_mm = fixed_detector_position_mm
+        result.x = np.asarray(self.decode(result.solver_x))
+        result.jac = np.asarray(self.physical_jacobian(result.x))
+        result.grad = result.jac.T @ result.fun
+        if self.position_priors is not None:
+            del result.active_mask
+        result.data_residual = np.asarray(self.data_residual(result.x))
+        result.data_jacobian = np.asarray(self.data_jacobian(result.x))
+        result.regularization = self.prior_weight
+        result.position_priors = self.position_priors
+        result.prior_parameters = self.prior_parameters.copy()
+        return result
 
 
 def axial_scale_family(p, scale):

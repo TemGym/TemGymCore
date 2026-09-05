@@ -210,13 +210,30 @@ The section-wise notebook executes the recorded-control audit. A separate
 [projector calibration pipeline](../microscope_models/projector_calibration_pipeline.ipynb)
 now executes a synthetic image-to-measurement-to-fit experiment with unknown
 finite-lens geometry. The short notebook uses only the clean synthetic
-MAGICAL sample at 40k and 150k. Each setting supplies one reference image
-and ±2.5% wobbles of IL1, IL2, IL3, and PL1: 18 images, all used in one fit.
+MAGICAL sample at 40k and 60k, illuminated within a 100 nm radius. Each setting
+supplies one reference image
+and ±2.5% wobbles of IL1, IL2, IL3, and PL1: 18 images used in both fits.
 The notebook shows what each function receives and returns, with named
 starting and fitted parameters in mm, mrad, and degrees. It fits six gaps,
 five effective lengths, five excitation parameters, and three specimen/beam
-parameters from measured scale, rotation, and blur. The final table compares
-the fitted geometry with the generating values.
+parameters from measured scale, rotation, and blur. Eight additional images
+use calibrated ±1 mrad specimen tilts along x and y at one wobbled setting
+per magnification. Image-pair displacements constrain B in a second fit,
+using the same starting guess and priors. The notebook then explores the
+objective from 20 dispersed starting models and profiles detector position
+on an 11-point grid, refitting the other 18 parameters in two opposite sweeps.
+Prior centres are fixed independently of optimizer starting points.
+Adding ±5% and ±10% wobbles at 40k supplies 16 more ordinary images and eight
+more tilt images. The same searches compare the original and expanded data.
+The final comparison keeps all of those exposures and adds ±3 mrad tilt
+pairs at the same four lens settings (16 more images). It repeats the same
+20 starts and detector profile, and scores B on the same lens controls.
+Larger-tilt image files are stored separately from the ±1 mrad exposures.
+Plots show converged endpoints, total profiled error, and its data contribution.
+The latter is evaluated at the same prior-regularized fits; it is not a
+separately optimized data-only profile. Neither search counts all minima.
+The tilt model assumes exact angle calibration, a fixed illumination
+footprint, and known independent frame drift of 0.003 detector pixels.
 
 The MAGICAL intensity model retains the nominal 13 nm Si and 10 nm SiGe
 widths; coherent phase contrast remains a separate forward-model check.

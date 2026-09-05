@@ -114,14 +114,14 @@ def test_readable_model_parameters_round_trip(monkeypatch):
 
 def test_two_magnifications_have_eighteen_settings_and_no_blob_images(tmp_path):
     spec = pipeline.generate_dataset(
-        directory=tmp_path, magnifications=[40000, 150000], wobble_fraction=.025,
+        directory=tmp_path, magnifications=[40000, 60000], wobble_fraction=.025,
         settings_only=True,
     )
     assert len(spec["controls"]) == 18
     assert all(spec["training_mask"])
     assert not (tmp_path / "images.npz").exists()
     assert all("withheld" not in label for label in spec["labels"])
-    for start, magnification in [(0, 40000), (9, 150000)]:
+    for start, magnification in [(0, 40000), (9, 60000)]:
         controls = np.array(spec["controls"])[start:start+9]
         np.testing.assert_allclose((controls[1:] / controls[0] - 1),
                                    np.repeat(np.eye(4), 2, axis=0) * np.tile([-.025,.025],4)[:,None],
@@ -137,3 +137,139 @@ def test_in_memory_fitter_checks_matching_inputs():
             specimen_and_detector=pipeline.public_specification(),
             starting_parameters=pipeline.initial_guess(),
         )
+
+
+def test_calibrated_tilt_has_physical_units_and_breaks_axial_scale_ambiguity():
+    p = pipeline.initial_guess()
+    p[11] = 0.
+    controls = np.zeros((2, 4))
+    angles = np.array([[.002, 0.], [0., -.002]])
+    pixel_pitch = 110e-6
+    distance = float(pipeline.decode_geometry(p)[-1])
+    shifts = pipeline.predict_tilt_displacements(p, controls, angles, pixel_pitch)
+    np.testing.assert_allclose(shifts, distance*angles/pixel_pitch, atol=1e-12)
+    np.testing.assert_allclose(pipeline.predict_tilt_displacements(p, controls, 3*angles, pixel_pitch),
+                               3*shifts, atol=1e-12)
+    scaled = pipeline.axial_scale_family(p, 1.1)
+    np.testing.assert_allclose(
+        pipeline.predict_tilt_displacements(scaled, controls, angles, pixel_pitch),
+        1.1*shifts, atol=1e-12,
+    )
+    # Without the known tilt, the very same models give identical observables.
+    np.testing.assert_allclose(pipeline.predict_observables(p, controls[0], pipeline.public_specification()),
+                               pipeline.predict_observables(scaled, controls[0], pipeline.public_specification()),
+                               atol=1e-12)
+
+
+def test_tilt_registration_recovers_shifts_without_lens_truth(monkeypatch):
+    monkeypatch.syspath_prepend(str(_path.parent))
+    from magical_projector_pipeline import make_magical_image_operator, analyse_magical_arrays
+    from projector_tilt_pipeline import pair_tilt_measurements
+
+    spec = pipeline.public_specification()
+    spec['read_noise_std_e'] = 2.
+    template = dict(centres_m=np.asarray(spec['feature_centres_m']), weights=np.array([.4,.25,.35]))
+    operator = make_magical_image_operator(spec, template)
+    p = np.r_[np.log(40000.), .23, np.log(1.4), 1.7, -1.1, np.log(2e6), np.log(3.)]
+    delta = np.array([.17, -.08])
+    plus = p.copy()
+    plus[3:5] += delta
+    results = analyse_magical_arrays(
+        images=np.array([operator(p), operator(plus)]), nominal_magnifications=[40000., 40000.],
+        specimen_template=template, specimen_and_detector=spec,
+        initial_image_parameters=np.array([p, p]),
+    )
+    covariance = results['parameter_covariance'][:, 3:5, 3:5]
+    measurements = pair_tilt_measurements(
+        lens_controls=np.ones((2,4)), input_tilts_rad=np.array([[-.001,0.],[.001,0.]]),
+        positions_pixels=results['image_parameters'][:,3:5], position_covariances=covariance,
+        drift_std_pixels=.003, pair_labels=['x tilt'],
+    )
+    np.testing.assert_allclose(measurements['displacements_pixels'][0], delta, atol=1e-8)
+    np.testing.assert_allclose(measurements['angle_changes_rad'][0], [.002,0.], atol=1e-15)
+    np.testing.assert_allclose(measurements['covariance_pixels'][0], covariance.sum(axis=0)+2*.003**2*np.eye(2))
+    assert np.all(np.linalg.eigvalsh(measurements['covariance_pixels']) > 0)
+
+
+def test_tilt_pairs_reject_a_changed_projector_setting(monkeypatch):
+    monkeypatch.syspath_prepend(str(_path.parent))
+    from projector_tilt_pipeline import pair_tilt_measurements
+
+    with pytest.raises(ValueError, match='fixed within each tilt pair'):
+        pair_tilt_measurements(
+            lens_controls=np.array([[1.,1.,1.,1.], [1.01,1.,1.,1.]]),
+            input_tilts_rad=np.array([[-.001,0.],[.001,0.]]),
+            positions_pixels=np.zeros((2,2)), position_covariances=np.tile(np.eye(2),(2,1,1)),
+            drift_std_pixels=.003, pair_labels=['x tilt'],
+        )
+
+
+def test_optical_fit_rejects_mismatched_tilt_measurements():
+    with pytest.raises(ValueError, match='matching pair counts'):
+        pipeline.fit_column_from_measurements(
+            lens_controls=np.ones((2,4)), measured_values=np.zeros((2,3)),
+            measurement_covariances=np.tile(np.eye(3),(2,1,1)),
+            specimen_and_detector=pipeline.public_specification(),
+            starting_parameters=pipeline.initial_guess(),
+            tilt_measurements=dict(lens_controls=np.ones((2,4)), angle_changes_rad=np.ones((1,2)),
+                                   displacements_pixels=np.zeros((2,2)), covariance_pixels=np.tile(np.eye(2),(2,1,1))),
+        )
+
+
+def test_multiple_starts_keep_the_same_prior_and_detector_profiles_pin_one_coordinate():
+    p = pipeline.initial_guess()
+    spec = pipeline.public_specification()
+    controls = np.array([[.9,.8,.7,.9], [1.,.8,.7,.9]])
+    values = np.array([pipeline.predict_observables(p, row, spec) for row in controls])
+    priors = json.loads((_path.parent / 'projector_position_priors.json').read_text())
+    problem = pipeline.prepare_column_fit(
+        lens_controls=controls, measured_values=values,
+        measurement_covariances=np.tile(np.eye(3), (2,1,1)),
+        specimen_and_detector=spec, prior_parameters=p, position_priors=priors,
+    )
+    other = p.copy()
+    other[12] += .1
+    result = problem.solve(other, max_evaluations=1)
+    np.testing.assert_allclose(result.prior_parameters, p, atol=0)
+    # With only one evaluation, the optimizer remains at the other start;
+    # its gain prior must still penalize the displacement from the fixed prior.
+    assert result.fun[-13:][6] == pytest.approx(.1)
+    np.testing.assert_allclose(result.fun[-13:], result.x[6:]-p[6:], atol=1e-12)
+    fixed = problem.solve(other, max_evaluations=2, fixed_detector_position_mm=700.)
+    assert float(pipeline.decode_geometry(fixed.x)[-1])*1000 == pytest.approx(700., abs=1e-9)
+    assert fixed.free_coordinate_mask.sum() == 18
+    assert not fixed.free_coordinate_mask[5]
+    assert np.all(fixed.solver_x >= problem.lower-1e-12)
+    assert np.all(fixed.solver_x <= problem.upper+1e-12)
+    with pytest.raises(ValueError, match='outside'):
+        problem.solve(p, max_evaluations=1, fixed_detector_position_mm=900.)
+
+
+def test_extra_wobbles_preserve_reference_controls_and_add_sixteen_images(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(_path.parent))
+    from projector_notebook_helpers import Experiment
+    from projector_landscape import simulate_extra_wobbles
+    from projector_tilt_pipeline import simulate_tilt_images
+
+    spec = pipeline.generate_dataset(tmp_path, magnifications=[40000, 60000], settings_only=True)
+    template = dict(centres_m=np.array(spec['feature_centres_m']), weights=np.array([.4,.25,.35]))
+    experiment = Experiment(np.zeros((18,128,128)), np.array(spec['controls']),
+                            np.array(spec['nominal_magnifications']), spec['labels'], template, spec, tmp_path)
+    original = experiment.lens_controls.copy()
+    extra = simulate_extra_wobbles(experiment=experiment, reference_image_index=0,
+                                   wobble_fractions=[.05,.10], random_seed=1)
+    assert extra.images.shape == (16,128,128)
+    assert np.isfinite(extra.images).all()
+    np.testing.assert_array_equal(experiment.lens_controls, original)
+    for start, fraction in [(0,.05), (8,.10)]:
+        expected = np.repeat(np.eye(4), 2, axis=0)*np.tile([-fraction, fraction],4)[:,None]
+        np.testing.assert_allclose(extra.lens_controls[start:start+8]/original[0]-1, expected, atol=1e-14)
+    assert np.all(extra.nominal_magnifications == 40000)
+    # Adding the larger tilt amplitude must preserve the existing exposures.
+    one = simulate_tilt_images(experiment=extra, lens_setting_indices=[0], tilt_mrad=1., random_seed=1)
+    saved_one = (extra.output_directory/'tilt_images.npz').read_bytes()
+    three = simulate_tilt_images(experiment=extra, lens_setting_indices=[0], tilt_mrad=3., random_seed=2)
+    assert (extra.output_directory/'tilt_images.npz').read_bytes() == saved_one
+    assert (extra.output_directory/'tilt_images_3mrad.npz').exists()
+    np.testing.assert_array_equal(three.lens_controls, one.lens_controls)
+    np.testing.assert_allclose(three.input_tilts_rad, 3*one.input_tilts_rad)

@@ -88,12 +88,14 @@ def parameters_to_model(parameters):
 
 def simulate_experiment(*, magnifications, wobble_fraction, voltage_v,
                         detector_pixel_size_m, detector_shape, output_directory,
-                        random_seed=7391):
+                        random_seed=7391, illumination_radius_m=160e-9):
     """Make MAGICAL images and return the images, controls, and known specimen.
 
     Each magnification has one reference and two wobbles per intermediate/
     projector lens. All images belong to the same fitting experiment. The true
     optical parameters are saved separately for the final comparison.
+    illumination_radius_m sets the soft circular footprint at the specimen;
+    the existing total-exposure rule is retained as its size changes.
     """
     output_directory = Path(output_directory)
     settings_directory = output_directory / "settings"
@@ -105,6 +107,7 @@ def simulate_experiment(*, magnifications, wobble_fraction, voltage_v,
     )
     specification = generate_magical_dataset(
         base_directory=settings_directory, directory=output_directory, seed=random_seed,
+        illumination_radius_m=illumination_radius_m,
     )
     # The simplified experiment has no split: every supplied image is fitted.
     specification.pop("training_mask", None)
@@ -123,7 +126,8 @@ def simulate_experiment(*, magnifications, wobble_fraction, voltage_v,
     )
 
 
-def measure_images(*, images, nominal_magnifications, specimen_template, specimen_and_detector):
+def measure_images(*, images, nominal_magnifications, specimen_template, specimen_and_detector,
+                   initial_image_parameters=None):
     """Return scale, rotation, blur, and their uncertainty for every image.
 
     Nominal magnifications only initialize image registration. No optical
@@ -132,6 +136,7 @@ def measure_images(*, images, nominal_magnifications, specimen_template, specime
     result = analyse_magical_arrays(
         images=images, nominal_magnifications=nominal_magnifications,
         specimen_template=specimen_template, specimen_and_detector=specimen_and_detector,
+        initial_image_parameters=initial_image_parameters,
     )
     values = result["values"]
     return ImageMeasurements(
@@ -143,12 +148,15 @@ def measure_images(*, images, nominal_magnifications, specimen_template, specime
 
 
 def fit_microscope(*, lens_controls, image_measurements, specimen_and_detector,
-                   starting_guess, position_priors, max_evaluations=10000):
+                   starting_guess, position_priors, max_evaluations=10000,
+                   tilt_measurements=None):
     """Fit all supplied image measurements, and return a named microscope model.
 
     Supply recorded controls, measured scale/rotation/blur with covariance,
     known specimen and detector values, a named starting model, and position
     priors. The fit reads no files and never receives the generating model.
+    Optional tilt_measurements adds calibrated angle changes and measured
+    image-pair displacements, with covariance, to constrain the B block.
     Output.model has the same readable keys and units as starting_guess.
     """
     result = fit_column_from_measurements(
@@ -157,6 +165,7 @@ def fit_microscope(*, lens_controls, image_measurements, specimen_and_detector,
         specimen_and_detector=specimen_and_detector,
         starting_parameters=model_to_parameters(starting_guess),
         position_priors=position_priors, max_evaluations=max_evaluations,
+        tilt_measurements=tilt_measurements,
     )
     if not result.success:
         raise RuntimeError(f"Microscope fit stopped before convergence: {result.message}")

@@ -18,13 +18,15 @@ from temgym_core.gaussian_image_likelihood import normal_interval_probability
 from finite_projector_pipeline import predict_observables
 
 
-def make_magical_template(voltage=200000., pitch_m=2.5e-9):
+def make_magical_template(voltage=200000., pitch_m=2.5e-9, *, illumination_radius_m=160e-9):
     """Same clean nominal atlas as magical_gaussian_imaging.ipynb.
 
     The ROI is fixed at a multilayer edge so the 600k view is not the central
     perforation or an effectively one-dimensional periodic stripe pattern.
     A soft circular illumination envelope is part of the public template.
     """
+    if not np.isfinite(illumination_radius_m) or illumination_radius_m <= 0:
+        raise ValueError("Illumination radius must be finite and positive.")
     atlas = MAGICALSampleAtlas.nominal(
         shape_yx=(384, 384), region_shape_yx=(128, 128),
         authoritative_multilayer_shape_yx=(256, 256), max_levels=3, voltage=voltage,
@@ -40,15 +42,15 @@ def make_magical_template(voltage=200000., pitch_m=2.5e-9):
     sample = SampleView.from_level(atlas.pyramid.levels[0], z=0.)
     region = next(r for r in certificate.regions if r.name == "multilayer_region_3")
     roi = np.array([4e-9, region.centre_xy_m[1] + region.size_xy_m[1] / 2 - 2e-9])
-    n = int(np.ceil(380e-9 / pitch_m))
+    n = int(np.ceil(2 * (illumination_radius_m + 30e-9) / pitch_m))
     axis = (np.arange(n) - (n - 1) / 2) * pitch_m
     xx, yy = np.meshgrid(axis, axis)
     coordinates = np.stack((xx, yy), axis=-1)
     actions = np.asarray(sample.evaluate_actions(jnp.asarray(coordinates + roi)))
     intensity = np.exp(2 * actions[..., 1])
     radius = np.hypot(xx, yy)
-    illumination = 1 / (1 + np.exp((radius - 160e-9) / 2.5e-9))
-    included = radius <= 185e-9
+    illumination = 1 / (1 + np.exp((radius - illumination_radius_m) / 2.5e-9))
+    included = radius <= illumination_radius_m + 25e-9
     weights = (intensity * illumination)[included] * pitch_m**2
     weights /= weights.sum()
     metadata = {
@@ -58,7 +60,7 @@ def make_magical_template(voltage=200000., pitch_m=2.5e-9):
         "sige_width_m": certificate.silicon_germanium_layer_width_m,
         "repeat_m": certificate.silicon_layer_width_m + certificate.silicon_germanium_layer_width_m,
         "template_pitch_m": pitch_m, "gaussian_component_sigma_m": 2e-9,
-        "illumination_radius_m": 160e-9, "illumination_edge_m": 2.5e-9,
+        "illumination_radius_m": float(illumination_radius_m), "illumination_edge_m": 2.5e-9,
         "description": "Known clean atlas intensity and illumination represented by a positive 2 nm-sigma Gaussian mixture; no background texture or fiducial spots",
     }
     return dict(centres_m=coordinates[included], weights=weights,
@@ -87,7 +89,7 @@ def make_magical_image_operator(spec, template):
     return jax.jit(image)
 
 
-def generate_magical_dataset(base_directory, directory, seed=7391):
+def generate_magical_dataset(base_directory, directory, seed=7391, *, illumination_radius_m=160e-9):
     """Reuse the synthetic controls and generating column, replace only the target.
 
     This is a generation function, so it may read the generating truth. Neither
@@ -98,7 +100,7 @@ def generate_magical_dataset(base_directory, directory, seed=7391):
     spec = json.loads((base_directory / "acquisition.json").read_text())
     truth_record = json.loads((base_directory / "scoring_truth.json").read_text())
     truth = np.asarray(truth_record["parameters"])
-    template, metadata = make_magical_template(spec["voltage_v"])
+    template, metadata = make_magical_template(spec["voltage_v"], illumination_radius_m=illumination_radius_m)
     spec.pop("feature_centres_m", None)
     spec.update(scope=metadata["description"], specimen=metadata,
                 feature_sigma_m=metadata["gaussian_component_sigma_m"])
@@ -138,14 +140,16 @@ def analyse_magical_images(directory, verbose=False):
 
 
 def analyse_magical_arrays(*, images, nominal_magnifications, specimen_template,
-                          specimen_and_detector, verbose=False):
+                          specimen_and_detector, verbose=False, initial_image_parameters=None):
     """Measure scale, rotation, and blur from the supplied arrays; read no files."""
     spec, template = specimen_and_detector, specimen_template
     if len(images) != len(nominal_magnifications):
         raise ValueError("Supply one nominal magnification for each image.")
+    if initial_image_parameters is not None and np.shape(initial_image_parameters) != (len(images), 7):
+        raise ValueError("Supply seven image-registration starting values per image.")
     operator = make_magical_image_operator(spec, template)
     jacobian = jax.jit(jax.jacfwd(operator))
-    measured, covariance, costs, image_parameters = [], [], [], []
+    measured, covariance, costs, image_parameters, parameter_covariance = [], [], [], [], []
     references = {}
     for index, (image, nominal) in enumerate(zip(images, nominal_magnifications)):
         sigma = np.sqrt(np.maximum(image, 1.) + spec["read_noise_std_e"]**2)
@@ -158,7 +162,9 @@ def analyse_magical_arrays(*, images, nominal_magnifications, specimen_template,
         def jac(p):
             return np.asarray(jacobian(p)).reshape(-1, 7) / sigma.ravel()[:, None]
 
-        if nominal in references:
+        if initial_image_parameters is not None:
+            seeds = [np.clip(initial_image_parameters[index], lower+1e-8, upper-1e-8)]
+        elif nominal in references:
             seeds = [references[nominal].copy()]
         else:
             seeds = []
@@ -183,10 +189,13 @@ def analyse_magical_arrays(*, images, nominal_magnifications, specimen_template,
         if nominal not in references:
             references[nominal] = result.x.copy()
         measured.append(result.x[:3])
-        covariance.append(np.linalg.inv(result.jac.T @ result.jac)[:3, :3])
+        full_covariance = np.linalg.inv(result.jac.T @ result.jac)
+        covariance.append(full_covariance[:3, :3])
+        parameter_covariance.append(full_covariance)
         costs.append(rms)
         image_parameters.append(result.x)
         if verbose:
             print(f"MAGICAL frame {index+1}/{len(images)}: weighted pixel RMS {rms:.3f}", flush=True)
     return dict(values=np.asarray(measured), covariance=np.asarray(covariance),
-                image_residual_rms=np.asarray(costs), image_parameters=np.asarray(image_parameters))
+                image_residual_rms=np.asarray(costs), image_parameters=np.asarray(image_parameters),
+                parameter_covariance=np.asarray(parameter_covariance))
