@@ -24,9 +24,9 @@ jax.config.update("jax_enable_x64", True)
 def column():
     path = (
         Path(__file__).parents[1]
-        / "examples"
-        / "lens_inversion"
-        / "neoarm_inversion_config.toml"
+        / "tests"
+        / "fixtures"
+        / "neoarm_synthetic_column.toml"
     )
     with path.open("rb") as stream:
         return hard_edge_column_from_config(tomllib.load(stream))

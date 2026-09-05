@@ -671,7 +671,7 @@ def test_refinement_admission_uses_trailing_successful_refinements():
 
 def test_full_column_config_exposes_every_geometry_and_raw_dac_parameter():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         config = tomllib.load(stream)
     column = hard_edge_column_from_config(config)
     # source + detector, 3 physical values for all 9 lenses, and one raw-DAC
@@ -701,7 +701,7 @@ def test_full_column_config_exposes_every_geometry_and_raw_dac_parameter():
 
 def test_default_column_bounds_keep_every_lens_body_in_its_axial_cell():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     lower, upper = column.default_bounds(
         position_half_width_m=3e-3,
@@ -715,7 +715,7 @@ def test_default_column_bounds_keep_every_lens_body_in_its_axial_cell():
 
 def test_nominal_dac_design_solves_focused_low_magnification_states():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     targets = np.asarray((1_000.0, 2_000.0, 5_000.0))
     design = design_nominal_magnification_dacs(
@@ -735,7 +735,7 @@ def test_nominal_dac_design_solves_focused_low_magnification_states():
 
 def test_nominal_dac_design_reports_high_magnification_infeasibility():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     targets = np.asarray((40_000.0, 80_000.0, 150_000.0, 300_000.0, 600_000.0))
     with pytest.raises(MagnificationDACInfeasibleError, match="not focus-feasible") as caught:
@@ -759,7 +759,7 @@ def test_nominal_dac_design_reports_high_magnification_infeasibility():
 
 def test_declared_unscaled_dac_search_finds_focused_40k_to_600k_modes():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         config = tomllib.load(stream)
     column = hard_edge_column_from_config(config)
     experiment = config["experiment"]
@@ -786,7 +786,7 @@ def test_declared_unscaled_dac_search_finds_focused_40k_to_600k_modes():
 
 def _signed_defocus_600k_fixture():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open(
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open(
         "rb"
     ) as stream:
         config = tomllib.load(stream)
@@ -955,7 +955,7 @@ def test_signed_object_defocus_design_fails_closed_with_diagnostics():
 
 def test_gaussian_slice_safety_decodes_every_lens_and_state():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     controls = np.zeros((3, len(column.channel_names)), dtype=float)
     controls[1, column.channel_names.index("IL1")] = -4.0
@@ -994,7 +994,7 @@ def test_gaussian_slice_safety_decodes_every_lens_and_state():
 
 def test_current_focused_600k_state_requires_more_than_8_or_24_slices():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     # Deterministic focused 600k branch from the declared wide raw-DAC search.
     focused_600k_dacs = np.asarray(
@@ -1030,7 +1030,7 @@ def test_current_focused_600k_state_requires_more_than_8_or_24_slices():
 
 def test_coarse_8_and_24_slice_counts_can_select_wrong_metaplectic_sheet():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     beam = make_gaussian(
         z=column.sample_z_m,
@@ -1086,7 +1086,7 @@ def test_coarse_8_and_24_slice_counts_can_select_wrong_metaplectic_sheet():
 
 def test_gaussian_slice_safety_rejects_nonprotective_phase_limit():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     with pytest.raises(ValueError, match="strictly between zero and pi/2"):
         assess_gaussian_slice_safety(
@@ -1099,7 +1099,7 @@ def test_gaussian_slice_safety_rejects_nonprotective_phase_limit():
 
 def test_full_column_and_sample_jacobian_are_jax_differentiable():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     parameters = jnp.asarray(column.nominal_parameters)
     dacs = jnp.linspace(-0.1, 0.1, len(column.channel_names))
@@ -1115,7 +1115,7 @@ def test_full_column_and_sample_jacobian_are_jax_differentiable():
 
 def test_lifted_gaussian_column_matches_ray_map_and_composes_at_sample():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     parameters = column.nominal_parameters
     dacs = np.linspace(-0.12, 0.15, len(column.channel_names))
@@ -1259,7 +1259,7 @@ def test_manifest_records_frozen_interaction_route_and_topology_identity():
 
 def test_frame_predictor_runs_physical_upstream_and_downstream_vacuum_path():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     plan = compact_30_state_plan(perturbations=0.05)
     request = build_acquisition_manifest(plan)[0]

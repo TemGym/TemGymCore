@@ -63,9 +63,9 @@ jax.config.update("jax_enable_x64", True)
 def column_and_config():
     path = (
         Path(__file__).parents[1]
-        / "examples"
-        / "lens_inversion"
-        / "neoarm_inversion_config.toml"
+        / "tests"
+        / "fixtures"
+        / "neoarm_synthetic_column.toml"
     )
     with path.open("rb") as stream:
         config = tomllib.load(stream)

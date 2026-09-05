@@ -23,7 +23,7 @@ jax.config.update("jax_enable_x64", True)
 @pytest.fixture(scope="module")
 def native_design():
     root = Path(__file__).resolve().parents[1]
-    with (root / "examples/lens_inversion/neoarm_inversion_config.toml").open("rb") as stream:
+    with (root / "tests/fixtures/neoarm_synthetic_column.toml").open("rb") as stream:
         column = hard_edge_column_from_config(tomllib.load(stream))
     targets = np.linspace(0.06, 0.16, 6)
     design = solve_native_diffraction_modes(

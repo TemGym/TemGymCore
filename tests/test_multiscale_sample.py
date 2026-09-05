@@ -646,9 +646,9 @@ def test_global_wide_and_compact_tiles_are_registered_views_of_one_scene(
 def test_toml_factory_consumes_certificate_pose_halo_and_vacuum_perforation():
     config_path = (
         Path(__file__).resolve().parents[1]
-        / "examples"
-        / "lens_inversion"
-        / "neoarm_inversion_config.toml"
+        / "tests"
+        / "fixtures"
+        / "neoarm_synthetic_column.toml"
     )
     with config_path.open("rb") as stream:
         config = tomllib.load(stream)
