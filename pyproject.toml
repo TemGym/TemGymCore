@@ -31,13 +31,32 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
   'ase',
-  'interpax',
-  'jax',
+  # ``cubic2`` coefficient and derivative behaviour is part of the calibrated
+  # sample contract.  Change this pin only together with the spline tests.
+  'interpax==0.3.14',
+  # The Gaussian Pallas kernel and cubic-sample derivatives are tested against
+  # this JAX release. Keep the CPU/GPU extras on the same version.
+  'jax==0.10.2',
   'jax_dataclasses',
-  'numpy',
+  # NumPy 2.5 currently breaks the jaxtyping version pulled by interpax 0.3.14.
+  'numpy<2.5',
   'numba',
   'scipy',
+  'tomli; python_version < "3.11"',
   'typing-extensions',
+]
+
+[project.optional-dependencies]
+inversion = [
+  'ipykernel>=6',
+  'matplotlib>=3.8',
+  'nbclient>=0.10',
+  'nbformat>=5.9',
+]
+gpu = [
+  # Linux CUDA 13 wheels support both x86_64 and aarch64. The NEOARM notebook
+  # requires this extra for accepted large forward renders.
+  'jax[cuda13]==0.10.2; sys_platform == "linux"',
 ]
 
 [project.urls]

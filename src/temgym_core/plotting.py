@@ -1,24 +1,34 @@
 from __future__ import annotations
 
+import json
+import textwrap
 from dataclasses import dataclass, replace
-from typing import Sequence, Tuple
+from pathlib import Path
+from typing import Mapping, Sequence, Tuple
 
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
 
-from .ray import Ray
-from .source import make_waist_divergence_rays  # noqa: F401
 from .components import (
     Component,
     DeflectionBiprism,
     Deflector,
-    DoubleDeflector,
     Detector,
+    DoubleDeflector,
+    ElectromagneticLens,
+    InterpolatedSample2D,
     Lens,
+    MagneticPhaseSample,
     PhaseBiprism,
+    Plane,
+    RandomPhaseSample,
+    SigmoidAperture,
+    ThickLens,
 )
+from .ray import Ray
 from .run import run_iter_vmapped
+from .source import make_waist_divergence_rays
 
 
 @dataclass
@@ -1390,3 +1400,2315 @@ def plot_abcd_profile(
 
     fig.tight_layout()
     return fig, axes
+
+
+# ---------------------------------------------------------------------------
+# Publication-quality column ray diagrams
+# ---------------------------------------------------------------------------
+
+# Okabe-Ito-derived colours.  The public mapping makes it straightforward for
+# notebooks to use exactly the same visual language in adjacent diagnostics.
+NEOARM_RAY_COLORS = {
+    "position": "#0072B2",       # blue
+    "angle": "#D55E00",          # vermillion
+    "envelope": "#56B4E9",       # sky blue
+    "centroid": "#222222",
+    "condenser_lens": "#0072B2",
+    "objective_lens": "#6F4C9B",
+    "intermediate_lens": "#E69F00",
+    "projector_lens": "#009E73",
+    "lens": "#4B5563",
+    "sample": "#CC79A7",
+    "aperture": "#666666",
+    "detector": "#009E73",
+    "deflector": "#D55E00",
+    "corrector": "#6F4C9B",
+    "corrector_off": "#9CA3AF",
+    "plane": "#6B7280",
+    "source": "#111827",
+}
+
+
+@dataclass(frozen=True)
+class PositionAngleTrace:
+    """A calibrated two-basis paraxial trace about a reference ray.
+
+    ``position`` and ``angle`` are responses *about* ``centroid``.  For a
+    Gaussian launched at a waist, their root-sum-square is the physical
+    1/e-field (1/e^2-intensity) radius.  Storing the affine centroid
+    separately keeps this relation correct in the presence of deflectors.
+    ``voltage`` records the accelerating voltage used for the trace so that
+    electromagnetic-lens rotation annotations remain calibrated.  All lengths
+    are in metres and angles are in radians.
+    """
+
+    z: np.ndarray
+    centroid: np.ndarray
+    position: np.ndarray
+    angle: np.ndarray
+    radius: np.ndarray
+    coordinate: str
+    position_scale: float
+    angle_scale: float
+    label: str = "nominal"
+    voltage: float = 200e3
+
+    @property
+    def position_path(self) -> np.ndarray:
+        return np.asarray(self.centroid) + np.asarray(self.position)
+
+    @property
+    def angle_path(self) -> np.ndarray:
+        return np.asarray(self.centroid) + np.asarray(self.angle)
+
+    @property
+    def lower_envelope(self) -> np.ndarray:
+        return np.asarray(self.centroid) - np.asarray(self.radius)
+
+    @property
+    def upper_envelope(self) -> np.ndarray:
+        return np.asarray(self.centroid) + np.asarray(self.radius)
+
+
+@dataclass(frozen=True)
+class AxialRayEvent:
+    """A derived event on a paraxial trace."""
+
+    kind: str
+    z: float
+    x: float
+    radius: float | None
+    segment_index: int
+
+
+@dataclass(frozen=True)
+class ColumnElement:
+    """Display metadata for one active or passive column element."""
+
+    z: float
+    label: str
+    role: str = "auto"
+    z_end: float | None = None
+
+
+@dataclass(frozen=True)
+class ColumnSection:
+    """A linearly scaled detail region in a column ray diagram.
+
+    ``x_limit`` is a symmetric half-width in metres.  If omitted, the limit
+    is derived from all traces visible in the section.
+    """
+
+    title: str
+    z_min: float
+    z_max: float
+    x_limit: float | None = None
+
+
+def make_position_angle_basis_rays(
+    position_scale: float,
+    angle_scale: float,
+    *,
+    z: float = 0.0,
+    voltage: float = 200e3,
+    x0: float = 0.0,
+    y0: float = 0.0,
+    axis: str = "x",
+) -> Ray:
+    """Construct calibrated position- and angle-basis rays.
+
+    The first ray has a pure ``position_scale`` displacement and the second a
+    pure ``angle_scale`` slope, both relative to ``(x0, y0)``.  This is the
+    general calibrated counterpart of :func:`make_waist_divergence_rays`.
+    """
+
+    position_scale = float(position_scale)
+    angle_scale = float(angle_scale)
+    z = float(z)
+    voltage = float(voltage)
+    axis = str(axis).lower().strip()
+    if axis not in ("x", "y"):
+        raise ValueError("axis must be 'x' or 'y'.")
+    if not np.isfinite(position_scale) or position_scale == 0.0:
+        raise ValueError("position_scale must be finite and non-zero.")
+    if not np.isfinite(angle_scale) or angle_scale == 0.0:
+        raise ValueError("angle_scale must be finite and non-zero.")
+    if not np.isfinite(voltage) or voltage <= 0.0:
+        raise ValueError("voltage must be finite and positive.")
+
+    x = np.full(2, float(x0), dtype=float)
+    y = np.full(2, float(y0), dtype=float)
+    dx = np.zeros(2, dtype=float)
+    dy = np.zeros(2, dtype=float)
+    if axis == "x":
+        x[0] += position_scale
+        dx[1] = angle_scale
+    else:
+        y[0] += position_scale
+        dy[1] = angle_scale
+
+    return Ray(
+        x=x,
+        y=y,
+        dx=dx,
+        dy=dy,
+        z=np.full(2, z, dtype=float),
+        pathlength=np.zeros(2, dtype=float),
+        voltage=np.full(2, voltage, dtype=float),
+    )
+
+
+def trace_ray_paths(
+    components: Sequence[Component],
+    rays: Ray,
+    *,
+    ray_coordinate: str = "x",
+    include_input_rays: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Trace a ray bundle and return ``(z, transverse_position)`` arrays.
+
+    The returned transverse array has shape ``(n_steps, n_rays)``.  The helper
+    uses the same propagation and Larmor de-rotation path as :func:`plot_model`
+    without coupling numerical tracing to a particular renderer.
+    """
+
+    mode = _normalize_ray_coordinate_mode(ray_coordinate)
+    steps = tuple(run_iter_vmapped(rays, components))
+    if include_input_rays:
+        steps = (rays,) + steps
+    rotation = (
+        _compute_cumulative_rotation(
+            components,
+            voltage=_plotting_voltage_from_rays(rays),
+            include_input_rays=include_input_rays,
+        )
+        if mode in ("x_rot", "y_rot")
+        else None
+    )
+    X, Z = _stack_ray_positions(
+        steps,
+        ray_coordinate=mode,
+        cumulative_rotation=rotation,
+    )
+    return Z, X
+
+
+def _reference_ray(
+    *,
+    z: float,
+    voltage: float,
+    x0: float,
+    y0: float,
+) -> Ray:
+    return Ray(
+        x=np.asarray([x0], dtype=float),
+        y=np.asarray([y0], dtype=float),
+        dx=np.asarray([0.0], dtype=float),
+        dy=np.asarray([0.0], dtype=float),
+        z=np.asarray([z], dtype=float),
+        pathlength=np.asarray([0.0], dtype=float),
+        voltage=np.asarray([voltage], dtype=float),
+    )
+
+
+def _trace_basis_and_reference(
+    components: Sequence[Component],
+    basis_rays: Ray,
+    reference_ray: Ray,
+    *,
+    ray_coordinate: str,
+    position_scale: float,
+    angle_scale: float,
+    label: str,
+) -> PositionAngleTrace:
+    def _joined_field(name: str) -> np.ndarray:
+        return np.concatenate(
+            (
+                np.ravel(np.asarray(getattr(basis_rays, name), dtype=float)),
+                np.ravel(np.asarray(getattr(reference_ray, name), dtype=float)),
+            )
+        )
+
+    # Trace the two basis rays and affine reference in one batch.  Apart from
+    # being faster for wobble sweeps, this guarantees identical axial samples.
+    ray_bundle = Ray(
+        x=_joined_field("x"),
+        y=_joined_field("y"),
+        dx=_joined_field("dx"),
+        dy=_joined_field("dy"),
+        z=_joined_field("z"),
+        pathlength=_joined_field("pathlength"),
+        voltage=_joined_field("voltage"),
+    )
+    z_basis, X_bundle = trace_ray_paths(
+        components,
+        ray_bundle,
+        ray_coordinate=ray_coordinate,
+        include_input_rays=True,
+    )
+    if X_bundle.ndim != 2 or X_bundle.shape[1] != 3:
+        raise ValueError("Expected two basis rays and one reference ray.")
+
+    centroid = np.asarray(X_bundle[:, 2], dtype=float)
+    position = np.asarray(X_bundle[:, 0], dtype=float) - centroid
+    angle = np.asarray(X_bundle[:, 1], dtype=float) - centroid
+    radius = gaussian_basis_envelope(position, angle)
+    bundle_voltages = np.ravel(np.asarray(ray_bundle.voltage, dtype=float))
+    if bundle_voltages.size == 0 or not np.all(np.isfinite(bundle_voltages)):
+        raise ValueError("Basis-ray voltage must be finite.")
+    if not np.allclose(bundle_voltages, bundle_voltages[0], rtol=1e-12, atol=0.0):
+        raise ValueError("All calibrated basis and reference rays must share one voltage.")
+    return PositionAngleTrace(
+        z=np.asarray(z_basis, dtype=float),
+        centroid=centroid,
+        position=position,
+        angle=angle,
+        radius=radius,
+        coordinate=_normalize_ray_coordinate_mode(ray_coordinate),
+        position_scale=float(position_scale),
+        angle_scale=float(angle_scale),
+        label=str(label),
+        voltage=float(bundle_voltages[0]),
+    )
+
+
+def trace_position_angle_basis(
+    components: Sequence[Component],
+    position_scale: float,
+    angle_scale: float,
+    *,
+    z: float = 0.0,
+    voltage: float = 200e3,
+    x0: float = 0.0,
+    y0: float = 0.0,
+    axis: str = "x",
+    ray_coordinate: str | None = None,
+    label: str = "nominal",
+) -> PositionAngleTrace:
+    """Trace a calibrated position/angle basis and its affine centroid."""
+
+    basis = make_position_angle_basis_rays(
+        position_scale,
+        angle_scale,
+        z=z,
+        voltage=voltage,
+        x0=x0,
+        y0=y0,
+        axis=axis,
+    )
+    reference = _reference_ray(
+        z=float(z), voltage=float(voltage), x0=float(x0), y0=float(y0)
+    )
+    coordinate = axis if ray_coordinate is None else ray_coordinate
+    coordinate_norm = _normalize_ray_coordinate_mode(coordinate)
+    if coordinate_norm == "r":
+        raise ValueError(
+            "A signed linear basis cannot be recovered from ray_coordinate='r'; "
+            "use x/y or x_rot/y_rot."
+        )
+    return _trace_basis_and_reference(
+        components,
+        basis,
+        reference,
+        ray_coordinate=coordinate_norm,
+        position_scale=position_scale,
+        angle_scale=angle_scale,
+        label=label,
+    )
+
+
+def trace_gaussian_basis(
+    components: Sequence[Component],
+    waist: float,
+    *,
+    voltage: float | None = None,
+    wavelength: float | None = None,
+    z: float = 0.0,
+    x0: float = 0.0,
+    y0: float = 0.0,
+    ray_coordinate: str = "x",
+    label: str = "nominal",
+) -> PositionAngleTrace:
+    """Trace the two real basis rays associated with an input Gaussian waist.
+
+    Pass ``voltage`` for an electromagnetic column.  Supplying only a
+    wavelength retains the historical 200 kV voltage carried by
+    :func:`make_waist_divergence_rays`, which is appropriate only for
+    voltage-independent components or an actual 200 kV column.
+    """
+
+    coordinate = _normalize_ray_coordinate_mode(ray_coordinate)
+    if coordinate == "r":
+        raise ValueError(
+            "A signed Gaussian basis cannot be recovered from "
+            "ray_coordinate='r'; use x/y or x_rot/y_rot."
+        )
+    basis = make_waist_divergence_rays(
+        waist,
+        voltage=voltage,
+        wavelength=wavelength,
+        z=z,
+        x0=x0,
+        y0=y0,
+    )
+    basis_voltage = float(np.ravel(np.asarray(basis.voltage, dtype=float))[0])
+    theta = float(np.ravel(np.asarray(basis.dx, dtype=float))[1])
+    if coordinate in ("y", "y_rot"):
+        # The historical constructor is x-oriented.  Retain it as the source
+        # of the wavelength-calibrated divergence, then rotate that basis into
+        # y for the corresponding signed coordinate.
+        basis = make_position_angle_basis_rays(
+            waist,
+            theta,
+            z=z,
+            voltage=basis_voltage,
+            x0=x0,
+            y0=y0,
+            axis="y",
+        )
+    reference = _reference_ray(
+        z=float(z), voltage=basis_voltage, x0=float(x0), y0=float(y0)
+    )
+    return _trace_basis_and_reference(
+        components,
+        basis,
+        reference,
+        ray_coordinate=coordinate,
+        position_scale=float(waist),
+        angle_scale=theta,
+        label=label,
+    )
+
+
+def gaussian_basis_envelope(
+    position_response: np.ndarray,
+    angle_response: np.ndarray,
+) -> np.ndarray:
+    """Return the Gaussian radius from its orthogonal real ray responses."""
+
+    position = np.asarray(position_response, dtype=float)
+    angle = np.asarray(angle_response, dtype=float)
+    if position.shape != angle.shape:
+        raise ValueError("position_response and angle_response must have the same shape.")
+    return np.hypot(position, angle)
+
+
+def _event_tolerance(values: np.ndarray) -> float:
+    finite = np.asarray(values, dtype=float)[np.isfinite(values)]
+    # A response may legitimately be picometres, so an absolute floor of one
+    # metre would classify the complete trace as zero.  Keep this tolerance
+    # relative to the response magnitude instead.
+    scale = float(np.max(np.abs(finite))) if finite.size else 1.0
+    scale = max(scale, np.finfo(float).tiny)
+    return 64.0 * np.finfo(float).eps * scale
+
+
+def _axial_tolerance(values: np.ndarray) -> float:
+    finite = np.asarray(values, dtype=float)[np.isfinite(values)]
+    scale = max(1.0, float(np.max(np.abs(finite))) if finite.size else 1.0)
+    return 64.0 * np.finfo(float).eps * scale
+
+
+def _deduplicate_events(events: Sequence[AxialRayEvent]) -> tuple[AxialRayEvent, ...]:
+    ordered = sorted(events, key=lambda event: (event.z, event.segment_index))
+    if not ordered:
+        return ()
+    z_scale = max(1.0, max(abs(event.z) for event in ordered))
+    z_tol = 128.0 * np.finfo(float).eps * z_scale
+    unique = [ordered[0]]
+    for event in ordered[1:]:
+        if abs(event.z - unique[-1].z) <= z_tol and event.kind == unique[-1].kind:
+            # Prefer an event with a radius payload (waists) and otherwise the
+            # first deterministic segment occurrence.
+            if unique[-1].radius is None and event.radius is not None:
+                unique[-1] = event
+            continue
+        unique.append(event)
+    return tuple(unique)
+
+
+def find_ray_crossings(
+    z: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray | None = None,
+    *,
+    kind: str = "crossover",
+    include_endpoints: bool = False,
+) -> tuple[AxialRayEvent, ...]:
+    """Find zeros or pairwise intersections on piecewise-linear ray paths.
+
+    Equal-z component-application jumps are never interpolated, preventing a
+    thin lens or lab-frame Larmor rotation from creating a false crossing.
+    """
+
+    z_arr = np.ravel(np.asarray(z, dtype=float))
+    first_arr = np.ravel(np.asarray(first, dtype=float))
+    if z_arr.shape != first_arr.shape:
+        raise ValueError("z and first must have the same one-dimensional shape.")
+    if second is None:
+        second_arr = None
+        delta = first_arr
+    else:
+        second_arr = np.ravel(np.asarray(second, dtype=float))
+        if second_arr.shape != first_arr.shape:
+            raise ValueError("first and second must have the same shape.")
+        delta = first_arr - second_arr
+    if z_arr.size < 2:
+        return ()
+
+    tol = _event_tolerance(delta)
+    finite_delta = delta[np.isfinite(delta)]
+    if finite_delta.size and np.all(np.abs(finite_delta) <= tol):
+        # Coincident paths (or a response that vanishes everywhere) do not
+        # define an isolated axial event.
+        return ()
+    events: list[AxialRayEvent] = []
+
+    # Exact sampled roots.  Exclude only the global input/output when asked;
+    # roots at component planes are physically meaningful and are retained.
+    for idx, value in enumerate(delta):
+        if not np.isfinite(value) or abs(value) > tol:
+            continue
+        if not include_endpoints and idx in (0, z_arr.size - 1):
+            continue
+        x_value = 0.0 if second_arr is None else float(
+            0.5 * (first_arr[idx] + second_arr[idx])
+        )
+        events.append(
+            AxialRayEvent(str(kind), float(z_arr[idx]), x_value, None, max(0, idx - 1))
+        )
+
+    for idx in range(z_arr.size - 1):
+        z0, z1 = z_arr[idx], z_arr[idx + 1]
+        v0, v1 = delta[idx], delta[idx + 1]
+        if not np.all(np.isfinite([z0, z1, v0, v1])) or z1 == z0:
+            continue
+        # Exact endpoint roots were handled above; only strict sign changes
+        # need interpolation here.
+        if not ((v0 < -tol and v1 > tol) or (v0 > tol and v1 < -tol)):
+            continue
+        t = -v0 / (v1 - v0)
+        z_cross = z0 + t * (z1 - z0)
+        if second_arr is None:
+            x_cross = 0.0
+        else:
+            x_cross = first_arr[idx] + t * (first_arr[idx + 1] - first_arr[idx])
+        events.append(
+            AxialRayEvent(str(kind), float(z_cross), float(x_cross), None, idx)
+        )
+
+    return _deduplicate_events(events)
+
+
+def find_gaussian_waists(
+    z: np.ndarray,
+    position_response: np.ndarray,
+    angle_response: np.ndarray,
+    *,
+    centroid: np.ndarray | None = None,
+    include_endpoints: bool = False,
+) -> tuple[AxialRayEvent, ...]:
+    """Find local minima of the Gaussian basis radius along linear drifts."""
+
+    z_arr = np.ravel(np.asarray(z, dtype=float))
+    pos = np.ravel(np.asarray(position_response, dtype=float))
+    ang = np.ravel(np.asarray(angle_response, dtype=float))
+    if z_arr.shape != pos.shape or pos.shape != ang.shape:
+        raise ValueError("z, position_response, and angle_response must share shape.")
+    if centroid is None:
+        centre = np.zeros_like(z_arr)
+    else:
+        centre = np.ravel(np.asarray(centroid, dtype=float))
+        if centre.shape != z_arr.shape:
+            raise ValueError("centroid must have the same shape as z.")
+    if z_arr.size == 0:
+        return ()
+
+    events: list[AxialRayEvent] = []
+    radius = np.hypot(pos, ang)
+    response_scale = max(
+        float(np.max(np.abs(pos))) if pos.size else 0.0,
+        float(np.max(np.abs(ang))) if ang.size else 0.0,
+        np.finfo(float).tiny,
+    )
+    denom_tol = 64.0 * np.finfo(float).eps * response_scale**2
+
+    # Analytic minimum of ||v0 + t*dv|| on each non-zero-length drift.
+    for idx in range(z_arr.size - 1):
+        z0, z1 = z_arr[idx], z_arr[idx + 1]
+        if not np.all(np.isfinite([z0, z1, pos[idx], pos[idx + 1], ang[idx], ang[idx + 1]])):
+            continue
+        if z1 == z0:
+            continue
+        dp = pos[idx + 1] - pos[idx]
+        da = ang[idx + 1] - ang[idx]
+        denom = dp * dp + da * da
+        if denom <= denom_tol:
+            continue
+        t = -(pos[idx] * dp + ang[idx] * da) / denom
+        if 0.0 < t < 1.0:
+            p_star = pos[idx] + t * dp
+            a_star = ang[idx] + t * da
+            c_star = centre[idx] + t * (centre[idx + 1] - centre[idx])
+            events.append(
+                AxialRayEvent(
+                    "waist",
+                    float(z0 + t * (z1 - z0)),
+                    float(c_star),
+                    float(np.hypot(p_star, a_star)),
+                    idx,
+                )
+            )
+
+    # A thin component can put a minimum exactly at its plane.  Compare each
+    # unique-z sample with its nearest samples at different z.
+    unique_indices: list[int] = []
+    for idx, z_value in enumerate(z_arr):
+        if unique_indices and z_value == z_arr[unique_indices[-1]]:
+            unique_indices[-1] = idx
+        else:
+            unique_indices.append(idx)
+    for order_idx, idx in enumerate(unique_indices):
+        if order_idx in (0, len(unique_indices) - 1) and not include_endpoints:
+            continue
+        left = unique_indices[order_idx - 1] if order_idx > 0 else None
+        right = unique_indices[order_idx + 1] if order_idx + 1 < len(unique_indices) else None
+        left_ok = left is None or radius[idx] <= radius[left]
+        right_ok = right is None or radius[idx] <= radius[right]
+        strict = (
+            (left is not None and radius[idx] < radius[left])
+            or (right is not None and radius[idx] < radius[right])
+        )
+        if left_ok and right_ok and strict:
+            events.append(
+                AxialRayEvent(
+                    "waist",
+                    float(z_arr[idx]),
+                    float(centre[idx]),
+                    float(radius[idx]),
+                    max(0, idx - 1),
+                )
+            )
+
+    return _deduplicate_events(events)
+
+
+def _interpolate_trace_value(z: np.ndarray, values: np.ndarray, at_z: float) -> float:
+    z_arr = np.asarray(z, dtype=float)
+    values_arr = np.asarray(values, dtype=float)
+    exact = np.flatnonzero(np.isclose(z_arr, at_z, rtol=0.0, atol=_axial_tolerance(z_arr)))
+    if exact.size:
+        return float(values_arr[exact[-1]])
+    for idx in range(z_arr.size - 1):
+        z0, z1 = z_arr[idx], z_arr[idx + 1]
+        if z1 == z0 or not (min(z0, z1) <= at_z <= max(z0, z1)):
+            continue
+        t = (at_z - z0) / (z1 - z0)
+        return float(values_arr[idx] + t * (values_arr[idx + 1] - values_arr[idx]))
+    return float("nan")
+
+
+def basis_trace_events(
+    trace: PositionAngleTrace,
+) -> dict[str, tuple[AxialRayEvent, ...]]:
+    """Return A-zero crossovers, B-zero conjugates, and Gaussian waists."""
+
+    z = np.asarray(trace.z, dtype=float)
+    z0 = float(z[0]) if z.size else 0.0
+
+    def _without_input(events: tuple[AxialRayEvent, ...]) -> tuple[AxialRayEvent, ...]:
+        tol = _axial_tolerance(z)
+        return tuple(event for event in events if abs(event.z - z0) > tol)
+
+    crossovers = _without_input(
+        find_ray_crossings(
+            z,
+            trace.position,
+            kind="crossover",
+            include_endpoints=True,
+        )
+    )
+    conjugates = _without_input(
+        find_ray_crossings(
+            z,
+            trace.angle,
+            kind="conjugate",
+            include_endpoints=True,
+        )
+    )
+    waists = _without_input(
+        find_gaussian_waists(
+            z,
+            trace.position,
+            trace.angle,
+            centroid=trace.centroid,
+            include_endpoints=True,
+        )
+    )
+
+    def _put_on_centroid(events: tuple[AxialRayEvent, ...]) -> tuple[AxialRayEvent, ...]:
+        return tuple(
+            replace(
+                event,
+                x=_interpolate_trace_value(z, trace.centroid, event.z),
+            )
+            for event in events
+        )
+
+    return {
+        "crossovers": _put_on_centroid(crossovers),
+        "conjugates": _put_on_centroid(conjugates),
+        "waists": waists,
+    }
+
+
+def _infer_element_role(component: object, label: str) -> str:
+    text = str(label).lower().replace("-", "_").replace(" ", "_")
+    if "corrector" in text:
+        return "corrector_off" if "off" in text else "corrector"
+    if isinstance(component, Detector) or "detector" in text or "screen" in text:
+        return "detector"
+    if isinstance(component, (DoubleDeflector, Deflector)) or "deflector" in text:
+        return "deflector"
+    if (
+        isinstance(component, (MagneticPhaseSample, RandomPhaseSample, InterpolatedSample2D))
+        or "sample" in text
+        or "specimen" in text
+        or "grating" in text
+    ):
+        return "sample"
+    if isinstance(component, SigmoidAperture) or "aperture" in text:
+        return "aperture"
+    # Instrument-native names such as CL1, C Mini, OL, IL1, and PL1 carry
+    # useful semantics even when a notebook represents a fixed lens plane by
+    # a passive ``Plane`` or adds it through ``extra_elements``.
+    if (
+        text.startswith("cl")
+        or text in ("cm", "cmin")
+        or "c_mini" in text
+        or "cmini" in text
+        or "condenser" in text
+    ):
+        return "condenser_lens"
+    if text.startswith("ol") or "obj" in text or "objective" in text:
+        return "objective_lens"
+    if text.startswith("il") or "intermediate" in text:
+        return "intermediate_lens"
+    if text.startswith("pl") or "projector" in text:
+        return "projector_lens"
+    if isinstance(component, (Lens, ElectromagneticLens, ThickLens)) or "lens" in text:
+        return "lens"
+    if "source" in text or "gun" in text:
+        return "source"
+    if isinstance(component, Plane):
+        return "plane"
+    return "plane"
+
+
+def column_elements_from_components(
+    components: Sequence[Component],
+    *,
+    labels: Sequence[str] | None = None,
+    roles: Sequence[str] | None = None,
+    extra_elements: Sequence[ColumnElement] = (),
+) -> tuple[ColumnElement, ...]:
+    """Attach stable names and semantic roles to simulation components."""
+
+    components = tuple(components)
+    if labels is not None and len(labels) != len(components):
+        raise ValueError("labels must have one entry per component.")
+    if roles is not None and len(roles) != len(components):
+        raise ValueError("roles must have one entry per component.")
+
+    elements: list[ColumnElement] = []
+    for idx, component in enumerate(components):
+        z_value = float(component.z)
+        label = str(labels[idx]) if labels is not None else _as_name(component)
+        role = str(roles[idx]) if roles is not None else _infer_element_role(component, label)
+        z_end: float | None = None
+        if isinstance(component, DoubleDeflector):
+            z_end = float(component.z_second)
+        elif isinstance(component, ElectromagneticLens):
+            thickness = float(np.asarray(component.thickness))
+            if np.isfinite(thickness) and thickness > 0.0:
+                z_end = z_value + thickness
+        elif isinstance(component, ThickLens):
+            z_other = float(component.z_pi)
+            z_value, z_end = min(z_value, z_other), max(z_value, z_other)
+        elements.append(ColumnElement(z=z_value, label=label, role=role, z_end=z_end))
+
+    elements.extend(extra_elements)
+    normalized = [
+        ColumnElement(
+            z=float(element.z),
+            label=str(element.label),
+            role=(
+                _infer_element_role(object(), element.label)
+                if str(element.role).lower() == "auto"
+                else str(element.role)
+            ),
+            z_end=None if element.z_end is None else float(element.z_end),
+        )
+        for element in elements
+    ]
+    return tuple(sorted(normalized, key=lambda element: (element.z, element.label)))
+
+
+def _find_element_z(elements: Sequence[ColumnElement], *patterns: str) -> float | None:
+    patterns_lower = tuple(pattern.lower() for pattern in patterns)
+    for element in elements:
+        label = element.label.lower().replace(" ", "_")
+        if any(pattern in label for pattern in patterns_lower):
+            return float(element.z)
+    return None
+
+
+def infer_neoarm_sections(
+    elements: Sequence[ColumnElement],
+    z_min: float,
+    z_max: float,
+) -> tuple[ColumnSection, ColumnSection, ColumnSection]:
+    """Infer three honest linear-z detail regions for a NEOARM-like column."""
+
+    z_min, z_max = float(z_min), float(z_max)
+    if not np.isfinite(z_min) or not np.isfinite(z_max) or z_max <= z_min:
+        raise ValueError("z_max must be finite and greater than z_min.")
+    span = z_max - z_min
+    aperture_z = _find_element_z(elements, "c_aperture", "condenser_aperture")
+    sample_z = _find_element_z(elements, "sample", "specimen", "grating")
+    obj_post_z = _find_element_z(elements, "obj_post", "objective_post")
+    il1_z = _find_element_z(elements, "il1", "intermediate_1")
+
+    if aperture_z is None or not z_min < aperture_z < z_max:
+        aperture_z = z_min + span / 3.0
+    if sample_z is None or not aperture_z < sample_z < z_max:
+        sample_z = aperture_z + 0.45 * (z_max - aperture_z)
+
+    if obj_post_z is not None and il1_z is not None and obj_post_z < il1_z:
+        objective_end = 0.5 * (obj_post_z + il1_z)
+    else:
+        objective_end = min(z_max, sample_z + 0.12 * span)
+    objective_end = max(objective_end, sample_z + 0.01 * span)
+    objective_end = min(objective_end, z_max)
+
+    return (
+        ColumnSection("Illumination: source to condenser aperture", z_min, aperture_z),
+        ColumnSection("Corrector and objective region", aperture_z, objective_end),
+        ColumnSection("Imaging: sample to detector", sample_z, z_max),
+    )
+
+
+def cumulative_larmor_profile(
+    components: Sequence[Component],
+    *,
+    voltage: float = 200e3,
+    z_min: float | None = None,
+    z_max: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return an axial cumulative Larmor-rotation profile in radians.
+
+    Finite-thickness :class:`ElectromagneticLens` rotations are displayed as a
+    linear accumulation between their entrance and exit planes.  Thin lenses
+    produce an explicit equal-z step.  This is a display interpolation of the
+    component's calibrated net rotation; the traced rays remain authoritative.
+    """
+
+    components = tuple(components)
+    voltage = float(voltage)
+    if not np.isfinite(voltage) or voltage <= 0.0:
+        raise ValueError("voltage must be finite and positive.")
+
+    records: list[tuple[float, float, float]] = []
+    component_positions: list[float] = []
+    for component in components:
+        if not hasattr(component, "z"):
+            continue
+        entry = float(component.z)
+        component_positions.append(entry)
+        if not isinstance(component, ElectromagneticLens):
+            continue
+        thickness = max(0.0, float(np.asarray(component.thickness)))
+        exit_z = entry + thickness
+        rotation = float(np.asarray(component.rotation_angle(voltage)))
+        if not np.all(np.isfinite([entry, exit_z, rotation])):
+            raise ValueError("Electromagnetic-lens positions and rotations must be finite.")
+        component_positions.append(exit_z)
+        records.append((entry, exit_z, rotation))
+
+    if z_min is None:
+        if not component_positions:
+            raise ValueError("z_min is required when components have no axial positions.")
+        z_min = min(component_positions)
+    if z_max is None:
+        if not component_positions:
+            raise ValueError("z_max is required when components have no axial positions.")
+        z_max = max(component_positions)
+    z_min, z_max = float(z_min), float(z_max)
+    if not np.isfinite(z_min) or not np.isfinite(z_max) or z_max <= z_min:
+        raise ValueError("z_max must be finite and greater than z_min.")
+
+    breakpoints = {z_min, z_max}
+    for entry, exit_z, _ in records:
+        if z_min <= entry <= z_max:
+            breakpoints.add(entry)
+        if z_min <= exit_z <= z_max:
+            breakpoints.add(exit_z)
+
+    profile_z: list[float] = []
+    profile_theta: list[float] = []
+    axial_tol = _axial_tolerance(np.asarray([z_min, z_max], dtype=float))
+    for z_value in sorted(breakpoints):
+        theta_before = 0.0
+        thin_step = 0.0
+        for entry, exit_z, rotation in records:
+            if exit_z > entry:
+                fraction = np.clip((z_value - entry) / (exit_z - entry), 0.0, 1.0)
+                theta_before += rotation * float(fraction)
+            elif z_value > entry + axial_tol:
+                theta_before += rotation
+            elif abs(z_value - entry) <= axial_tol:
+                thin_step += rotation
+        profile_z.append(z_value)
+        profile_theta.append(theta_before)
+        if abs(thin_step) > 0.0:
+            profile_z.append(z_value)
+            profile_theta.append(theta_before + thin_step)
+
+    return np.asarray(profile_z, dtype=float), np.asarray(profile_theta, dtype=float)
+
+
+def _length_display_unit(max_abs_m: float) -> tuple[float, str]:
+    value = abs(float(max_abs_m))
+    if value < 1e-9:
+        return 1e12, "pm"
+    if value < 1e-6:
+        return 1e9, "nm"
+    if value < 1e-3:
+        return 1e6, "µm"
+    if value < 1.0:
+        return 1e3, "mm"
+    return 1.0, "m"
+
+
+def _format_engineering_length(value_m: float) -> str:
+    value = float(value_m)
+    if not np.isfinite(value):
+        return "not finite"
+    if value == 0.0:
+        return "0 m"
+    factor, unit = _length_display_unit(abs(value))
+    return f"{value * factor:.3g} {unit}"
+
+
+def _trace_values_in_section(
+    trace: PositionAngleTrace,
+    z_min: float,
+    z_max: float,
+) -> np.ndarray:
+    z = np.asarray(trace.z, dtype=float)
+    mask = (z >= z_min) & (z <= z_max)
+    if not np.any(mask):
+        return np.empty((0,), dtype=float)
+    return np.concatenate(
+        (
+            trace.position_path[mask],
+            trace.angle_path[mask],
+            trace.lower_envelope[mask],
+            trace.upper_envelope[mask],
+        )
+    )
+
+
+def _nice_symmetric_limit(value: float) -> float:
+    value = max(abs(float(value)), np.finfo(float).eps)
+    exponent = np.floor(np.log10(value))
+    fraction = value / (10.0**exponent)
+    nice_fraction = next(candidate for candidate in (1.0, 1.5, 2.0, 3.0, 5.0, 10.0) if fraction <= candidate)
+    return float(nice_fraction * 10.0**exponent)
+
+
+def _section_scale(
+    traces: Sequence[PositionAngleTrace],
+    section: ColumnSection,
+) -> tuple[float, float, str]:
+    if section.x_limit is not None:
+        max_abs = abs(float(section.x_limit))
+        if not np.isfinite(max_abs) or max_abs <= 0.0:
+            raise ValueError("ColumnSection.x_limit must be finite and positive.")
+    else:
+        values = [
+            _trace_values_in_section(trace, section.z_min, section.z_max)
+            for trace in traces
+        ]
+        finite = np.concatenate([value for value in values if value.size]) if any(value.size for value in values) else np.asarray([1.0])
+        finite = finite[np.isfinite(finite)]
+        max_abs = float(np.max(np.abs(finite))) if finite.size else 1.0
+    limit_m = _nice_symmetric_limit(1.08 * max_abs)
+    factor, unit = _length_display_unit(limit_m)
+    return limit_m, factor, unit
+
+
+def _spread_label_positions(
+    values: Sequence[float],
+    z_min: float,
+    z_max: float,
+    *,
+    minimum_fraction: float = 0.035,
+) -> np.ndarray:
+    if not values:
+        return np.empty((0,), dtype=float)
+    order = np.argsort(np.asarray(values, dtype=float))
+    sorted_values = np.asarray(values, dtype=float)[order]
+    min_sep = max(0.0, minimum_fraction * (z_max - z_min))
+    placed = sorted_values.copy()
+    for idx in range(1, placed.size):
+        placed[idx] = max(placed[idx], placed[idx - 1] + min_sep)
+    if placed[-1] > z_max:
+        placed -= placed[-1] - z_max
+        for idx in range(placed.size - 2, -1, -1):
+            placed[idx] = min(placed[idx], placed[idx + 1] - min_sep)
+    if placed[0] < z_min:
+        placed += z_min - placed[0]
+    out = np.empty_like(placed)
+    out[order] = placed
+    return out
+
+
+def _spread_label_boxes(
+    values: Sequence[float],
+    line_counts: Sequence[int],
+    z_min: float,
+    z_max: float,
+    *,
+    line_height_fraction: float,
+    gap_fraction: float,
+) -> np.ndarray:
+    """Place variable-height text boxes without axial overlap."""
+
+    if not values:
+        return np.empty((0,), dtype=float)
+    values_array = np.asarray(values, dtype=float)
+    lines_array = np.maximum(1, np.asarray(line_counts, dtype=float))
+    if values_array.shape != lines_array.shape:
+        raise ValueError("values and line_counts must have the same shape.")
+    span = max(float(z_max - z_min), np.finfo(float).eps)
+    order = np.argsort(values_array)
+    centres = values_array[order].copy()
+    half_heights = 0.5 * lines_array[order] * line_height_fraction * span
+    gap = gap_fraction * span
+
+    total_height = float(2.0 * np.sum(half_heights) + gap * (centres.size - 1))
+    available = span
+    if total_height > available:
+        compression = available / total_height
+        half_heights *= compression
+        gap *= compression
+
+    # Compute the latest feasible centre for every box by packing backwards
+    # from the lower endpoint.  A forward placement can then retain each
+    # requested anchor whenever possible while reserving guaranteed room for
+    # every later label.  This matters for a microscope column: widely spaced
+    # CL1/CL3 labels followed by a dense C-mini/corrector/objective stack would
+    # defeat a simple global overflow shift and put the final labels outside
+    # the panel even though ample space existed above the stack.
+    earliest_first = z_min + half_heights[0]
+    latest = np.empty_like(centres)
+    latest[-1] = z_max - half_heights[-1]
+    for idx in range(centres.size - 2, -1, -1):
+        separation = half_heights[idx] + gap + half_heights[idx + 1]
+        latest[idx] = latest[idx + 1] - separation
+
+    centres[0] = np.clip(centres[0], earliest_first, latest[0])
+    for idx in range(1, centres.size):
+        separation = half_heights[idx - 1] + gap + half_heights[idx]
+        earliest = centres[idx - 1] + separation
+        centres[idx] = np.clip(centres[idx], earliest, latest[idx])
+
+    output = np.empty_like(centres)
+    output[order] = centres
+    return output
+
+
+def _wrapped_label(label: str, max_characters: int) -> str:
+    if max_characters <= 0:
+        return str(label)
+    return "\n".join(
+        textwrap.wrap(
+            str(label),
+            width=max_characters,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+    )
+
+
+def _element_mid_z(element: ColumnElement) -> float:
+    return float(element.z) if element.z_end is None else 0.5 * (float(element.z) + float(element.z_end))
+
+
+def _draw_column_element(
+    ax: mpl.axes.Axes,
+    element: ColumnElement,
+    *,
+    z_span: float,
+) -> None:
+    """Draw a fixed-width semantic glyph using axes-x/data-z coordinates."""
+
+    transform = mpl.transforms.blended_transform_factory(ax.transAxes, ax.transData)
+    role = element.role if element.role in NEOARM_RAY_COLORS else "plane"
+    color = NEOARM_RAY_COLORS[role]
+    z_mid = _element_mid_z(element)
+    half_height = max(0.004 * z_span, np.finfo(float).eps)
+
+    if role.endswith("lens") or role == "lens":
+        if element.z_end is not None and element.z_end != element.z:
+            z0, z1 = sorted((element.z, element.z_end))
+            ax.add_patch(
+                mpl.patches.Rectangle(
+                    (0.435, z0),
+                    0.13,
+                    z1 - z0,
+                    transform=transform,
+                    facecolor=color,
+                    edgecolor=color,
+                    linewidth=1.0,
+                    alpha=0.10,
+                    zorder=4,
+                )
+            )
+        left = mpl.path.Path(
+            [(0.435, z_mid - half_height), (0.49, z_mid), (0.435, z_mid + half_height)],
+            [mpl.path.Path.MOVETO, mpl.path.Path.CURVE3, mpl.path.Path.CURVE3],
+        )
+        right = mpl.path.Path(
+            [(0.565, z_mid - half_height), (0.51, z_mid), (0.565, z_mid + half_height)],
+            [mpl.path.Path.MOVETO, mpl.path.Path.CURVE3, mpl.path.Path.CURVE3],
+        )
+        for path in (left, right):
+            ax.add_patch(
+                mpl.patches.PathPatch(
+                    path,
+                    transform=transform,
+                    fill=False,
+                    edgecolor=color,
+                    linewidth=2.0,
+                    zorder=7,
+                )
+            )
+    elif role == "aperture":
+        ax.plot([0.42, 0.485], [z_mid, z_mid], transform=transform, color=color, lw=4.5, zorder=7)
+        ax.plot([0.515, 0.58], [z_mid, z_mid], transform=transform, color=color, lw=4.5, zorder=7)
+    elif role == "sample":
+        ax.plot([0.42, 0.58], [z_mid, z_mid], transform=transform, color=color, lw=2.4, zorder=7)
+        for x_value in np.linspace(0.435, 0.565, 7):
+            ax.plot(
+                [x_value - 0.008, x_value + 0.008],
+                [z_mid - 0.65 * half_height, z_mid + 0.65 * half_height],
+                transform=transform,
+                color=color,
+                lw=0.8,
+                zorder=7,
+            )
+    elif role == "detector":
+        ax.add_patch(
+            mpl.patches.Rectangle(
+                (0.42, z_mid - half_height),
+                0.16,
+                2.0 * half_height,
+                transform=transform,
+                facecolor=color,
+                edgecolor="#1F2937",
+                linewidth=1.0,
+                alpha=0.65,
+                zorder=7,
+            )
+        )
+        for x_value in np.linspace(0.44, 0.56, 5):
+            ax.plot(
+                [x_value, x_value],
+                [z_mid - half_height, z_mid + half_height],
+                transform=transform,
+                color="white",
+                lw=0.5,
+                alpha=0.8,
+                zorder=8,
+            )
+    elif role == "deflector":
+        z_positions = [element.z]
+        if element.z_end is not None:
+            z_positions.append(element.z_end)
+        for z_value in z_positions:
+            ax.plot([0.43, 0.49], [z_value, z_value], transform=transform, color="#D55E00", lw=3.0, zorder=7)
+            ax.plot([0.51, 0.57], [z_value, z_value], transform=transform, color="#0072B2", lw=3.0, zorder=7)
+    elif role in ("corrector", "corrector_off"):
+        z0 = element.z
+        z1 = element.z_end if element.z_end is not None else element.z + 2.0 * half_height
+        z0, z1 = sorted((z0, z1))
+        ax.add_patch(
+            mpl.patches.Rectangle(
+                (0.43, z0),
+                0.14,
+                z1 - z0,
+                transform=transform,
+                facecolor="#F3F4F6",
+                edgecolor=color,
+                hatch="///" if role == "corrector_off" else None,
+                linewidth=1.0,
+                zorder=5,
+            )
+        )
+    elif role == "source":
+        ax.plot(
+            [0.5],
+            [z_mid],
+            transform=transform,
+            marker="*",
+            markersize=8,
+            markerfacecolor=color,
+            markeredgecolor="white",
+            markeredgewidth=0.6,
+            zorder=8,
+        )
+    else:
+        ax.plot([0.445, 0.555], [z_mid, z_mid], transform=transform, color=color, lw=1.2, zorder=6)
+
+
+def _draw_elements(
+    ax: mpl.axes.Axes,
+    elements: Sequence[ColumnElement],
+    *,
+    z_min: float,
+    z_max: float,
+    label_fontsize: float,
+    label_x: float = 0.72,
+    max_label_characters: int = 28,
+    label_line_height_fraction: float = 0.042,
+    label_horizontal_alignment: str = "left",
+) -> None:
+    if label_horizontal_alignment not in {"left", "right"}:
+        raise ValueError("label_horizontal_alignment must be 'left' or 'right'.")
+    visible = [
+        element
+        for element in elements
+        if (element.z_end if element.z_end is not None else element.z) >= z_min
+        and element.z <= z_max
+    ]
+    z_span = max(z_max - z_min, np.finfo(float).eps)
+    for element in visible:
+        _draw_column_element(ax, element, z_span=z_span)
+
+    actual_positions = [_element_mid_z(element) for element in visible]
+    display_labels = []
+    for element in visible:
+        suffix = (
+            " (off)"
+            if element.role == "corrector_off" and "off" not in element.label.lower()
+            else ""
+        )
+        display_labels.append(
+            _wrapped_label(f"{element.label}{suffix}", max_label_characters)
+        )
+    line_counts = [label.count("\n") + 1 for label in display_labels]
+    # ``label_line_height_fraction`` is a useful physical-z design target, but
+    # it can be smaller than the rendered font in short detail panels.  Respect
+    # the target while enforcing enough display-space for the glyphs and the
+    # small white text-box pad.  This remains deterministic for raster and
+    # vector backends because it depends only on figure geometry and points.
+    axes_height_px = max(float(ax.get_window_extent().height), 1.0)
+    minimum_line_height_px = (
+        1.20 * float(label_fontsize) + 1.0
+    ) * float(ax.figure.dpi) / 72.0
+    effective_line_height_fraction = max(
+        float(label_line_height_fraction),
+        minimum_line_height_px / axes_height_px,
+    )
+    label_positions = _spread_label_boxes(
+        actual_positions,
+        line_counts,
+        z_min,
+        z_max,
+        line_height_fraction=effective_line_height_fraction,
+        gap_fraction=0.007,
+    )
+    transform = mpl.transforms.blended_transform_factory(ax.transAxes, ax.transData)
+    if label_horizontal_alignment == "right":
+        # Keep leaders in the small neutral gutter between the fixed-width
+        # semantic glyph and the label band.  Text is right-anchored separately
+        # so even the final column of a small-multiple figure remains in-axis.
+        leader_end_x = min(label_x - 0.012, 0.655)
+    else:
+        leader_end_x = label_x - 0.012
+    for element, actual_z, label_z, display_label in zip(
+        visible,
+        actual_positions,
+        label_positions,
+        display_labels,
+    ):
+        ax.plot(
+            [0.585, leader_end_x],
+            [actual_z, label_z],
+            transform=transform,
+            color="#9CA3AF",
+            linewidth=0.55,
+            zorder=8,
+        )
+        ax.text(
+            label_x,
+            label_z,
+            display_label,
+            transform=transform,
+            ha=label_horizontal_alignment,
+            va="center",
+            linespacing=1.05,
+            fontsize=label_fontsize,
+            color="#374151",
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.82, "pad": 0.5},
+            clip_on=True,
+            zorder=9,
+        )
+
+
+def _masked_trace_arrays(
+    trace: PositionAngleTrace,
+    z_min: float,
+    z_max: float,
+) -> tuple[np.ndarray, ...]:
+    z = np.asarray(trace.z, dtype=float)
+    mask = (z >= z_min) & (z <= z_max)
+    return (
+        z[mask],
+        trace.position_path[mask],
+        trace.angle_path[mask],
+        trace.centroid[mask],
+        trace.lower_envelope[mask],
+        trace.upper_envelope[mask],
+    )
+
+
+def _plot_trace_layer(
+    ax: mpl.axes.Axes,
+    trace: PositionAngleTrace,
+    *,
+    z_min: float,
+    z_max: float,
+    factor: float,
+    linestyle: str,
+    alpha: float,
+    linewidth: float,
+    fill_envelope: bool,
+    scenario_label: str,
+    show_envelope: bool = True,
+) -> None:
+    z, position, angle, centroid, lower, upper = _masked_trace_arrays(trace, z_min, z_max)
+    if z.size == 0:
+        return
+    if show_envelope and fill_envelope:
+        ax.fill_betweenx(
+            z,
+            lower * factor,
+            upper * factor,
+            color=NEOARM_RAY_COLORS["envelope"],
+            alpha=0.14,
+            linewidth=0.0,
+            zorder=1,
+            label=f"{scenario_label}: Gaussian radius",
+        )
+    elif show_envelope:
+        ax.plot(
+            lower * factor,
+            z,
+            color=NEOARM_RAY_COLORS["envelope"],
+            linestyle=linestyle,
+            linewidth=max(0.8, linewidth - 0.3),
+            alpha=0.65 * alpha,
+            zorder=1,
+        )
+        ax.plot(
+            upper * factor,
+            z,
+            color=NEOARM_RAY_COLORS["envelope"],
+            linestyle=linestyle,
+            linewidth=max(0.8, linewidth - 0.3),
+            alpha=0.65 * alpha,
+            zorder=1,
+        )
+
+    position_plot, z_position = _break_same_z_jumps(position[:, None] * factor, z)
+    angle_plot, z_angle = _break_same_z_jumps(angle[:, None] * factor, z)
+    centroid_plot, z_centroid = _break_same_z_jumps(centroid[:, None] * factor, z)
+    ax.plot(
+        position_plot[:, 0],
+        z_position,
+        color=NEOARM_RAY_COLORS["position"],
+        linestyle=linestyle,
+        linewidth=linewidth,
+        alpha=alpha,
+        zorder=3,
+        label=f"{scenario_label}: height basis",
+    )
+    ax.plot(
+        angle_plot[:, 0],
+        z_angle,
+        color=NEOARM_RAY_COLORS["angle"],
+        linestyle=linestyle,
+        linewidth=linewidth,
+        alpha=alpha,
+        zorder=3,
+        label=f"{scenario_label}: angle basis",
+    )
+    ax.plot(
+        centroid_plot[:, 0],
+        z_centroid,
+        color=NEOARM_RAY_COLORS["centroid"],
+        linestyle=linestyle,
+        linewidth=max(0.7, linewidth - 0.8),
+        alpha=0.45 * alpha,
+        zorder=2,
+    )
+
+
+def _annotate_trace_events(
+    ax: mpl.axes.Axes,
+    trace: PositionAngleTrace,
+    *,
+    z_min: float,
+    z_max: float,
+    factor: float,
+    unit: str,
+    max_per_kind: int = 4,
+    include_waists: bool = True,
+) -> None:
+    _ = unit  # Event radii intentionally choose their own engineering unit.
+    events = basis_trace_events(trace)
+    event_styles = {
+        "crossovers": ("A=0 crossover", "o", NEOARM_RAY_COLORS["position"]),
+        "conjugates": ("B=0 conjugate", "s", NEOARM_RAY_COLORS["angle"]),
+        "waists": ("Gaussian waist", "D", NEOARM_RAY_COLORS["objective_lens"]),
+    }
+    axial_span = z_max - z_min
+    transverse_span = abs(float(np.diff(ax.get_xlim())[0]))
+    candidates: list[tuple[str, AxialRayEvent]] = []
+    for group_name, group_events in events.items():
+        if group_name == "waists" and not include_waists:
+            continue
+        visible_all = [event for event in group_events if z_min <= event.z <= z_max]
+        visible: list[AxialRayEvent] = []
+        annotation_z_tolerance = 0.045 * axial_span
+        for event in visible_all:
+            same_visual_location = (
+                visible
+                and abs(event.z - visible[-1].z) < annotation_z_tolerance
+                and abs((event.x - visible[-1].x) * factor)
+                < 0.04 * transverse_span
+            )
+            if same_visual_location:
+                # Event detection remains exact and complete; the figure only
+                # collapses visually indistinguishable annotations.  For two
+                # nearby waists, retain the tighter one.
+                old_radius = visible[-1].radius
+                if (
+                    event.radius is not None
+                    and old_radius is not None
+                    and event.radius < old_radius
+                ):
+                    visible[-1] = event
+                continue
+            visible.append(event)
+        candidates.extend((group_name, event) for event in visible[:max_per_kind])
+
+    candidates.sort(key=lambda item: (item[1].z, item[0]))
+    clusters: list[list[tuple[str, AxialRayEvent]]] = []
+    for candidate in candidates:
+        event = candidate[1]
+        if clusters:
+            previous_events = [item[1] for item in clusters[-1]]
+            cluster_z = float(np.mean([item.z for item in previous_events]))
+            cluster_x = float(np.mean([item.x for item in previous_events]))
+            near_cluster = (
+                abs(event.z - cluster_z) < 0.028 * axial_span
+                and abs((event.x - cluster_x) * factor) < 0.045 * transverse_span
+            )
+        else:
+            near_cluster = False
+        if near_cluster:
+            clusters[-1].append(candidate)
+        else:
+            clusters.append([candidate])
+
+    cluster_labels: list[str] = []
+    cluster_zs: list[float] = []
+    for cluster in clusters:
+        label_lines = []
+        for group_name, event in cluster:
+            text, _, _ = event_styles[group_name]
+            if event.radius is None:
+                label_lines.append(text)
+            else:
+                label_lines.append(
+                    f"{text}, w={_format_engineering_length(event.radius)}"
+                )
+        # Events at a conjugate often coincide (or nearly coincide) with a
+        # Gaussian waist.  Keep that information in one compact horizontal
+        # callout; stacking one line per event makes the projector-panel
+        # callouts collide even after their anchor positions are spread.
+        cluster_labels.append(" · ".join(dict.fromkeys(label_lines)))
+        cluster_zs.append(float(np.mean([event.z for _, event in cluster])))
+
+    label_zs = _spread_label_boxes(
+        cluster_zs,
+        [label.count("\n") + 1 for label in cluster_labels],
+        z_min,
+        z_max,
+        line_height_fraction=0.047,
+        gap_fraction=0.012,
+    )
+    label_transform = mpl.transforms.blended_transform_factory(ax.transAxes, ax.transData)
+    for cluster, label, label_z in zip(clusters, cluster_labels, label_zs):
+        for group_name, event in cluster:
+            _, marker, color = event_styles[group_name]
+            x_value = event.x * factor
+            ax.plot(
+                [x_value],
+                [event.z],
+                marker=marker,
+                markersize=4.5,
+                markerfacecolor="white",
+                markeredgecolor=color,
+                markeredgewidth=1.0,
+                linestyle="none",
+                zorder=12,
+            )
+        anchor_x = float(np.mean([event.x for _, event in cluster])) * factor
+        anchor_z = float(np.mean([event.z for _, event in cluster]))
+        ax.annotate(
+            label,
+            xy=(anchor_x, anchor_z),
+            xycoords="data",
+            xytext=(0.405, label_z),
+            textcoords=label_transform,
+            ha="right",
+            va="center",
+            linespacing=1.06,
+            fontsize=6.6,
+            color="#374151",
+            bbox={
+                "facecolor": "white",
+                "edgecolor": "#E5E7EB",
+                "linewidth": 0.35,
+                "alpha": 0.88,
+                "pad": 0.7,
+            },
+            arrowprops={"arrowstyle": "-", "color": "#9CA3AF", "lw": 0.55},
+            annotation_clip=True,
+            zorder=13,
+        )
+
+
+def _configure_column_axis(
+    ax: mpl.axes.Axes,
+    *,
+    section: ColumnSection,
+    limit_m: float,
+    factor: float,
+    unit: str,
+    coordinate: str,
+    title: str,
+) -> None:
+    # Leave a small *physical-z* gutter beyond the declared section.  Endpoint
+    # glyphs (notably the source and detector) and their text otherwise sit on
+    # the clipping boundary even though their numerical z positions are
+    # correct.  The scale remains linear and the same gutter is used for every
+    # member of a comparison row.
+    z_gutter = 0.018 * (section.z_max - section.z_min)
+    ax.set_facecolor("white")
+    ax.axvline(0.0, color="#CBD5E1", linewidth=0.8, zorder=0)
+    ax.set_xlim(-limit_m * factor, limit_m * factor)
+    ax.set_ylim(section.z_max + z_gutter, section.z_min - z_gutter)
+    ax.set_yscale("linear")
+    ax.set_xlabel(f"{coordinate} [{unit}]")
+    ax.set_ylabel("z [m]")
+    ax.set_title(title, loc="left", fontsize=10.5, fontweight="bold")
+    ax.grid(axis="y", color="#E5E7EB", linestyle="-", linewidth=0.45, zorder=0)
+    ax.grid(axis="x", color="#F3F4F6", linestyle=":", linewidth=0.4, zorder=0)
+    ax.tick_params(labelsize=8, colors="#4B5563")
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("bottom", "left"):
+        ax.spines[side].set_color("#D1D5DB")
+
+
+def _plot_larmor_strip(
+    ax: mpl.axes.Axes,
+    components: Sequence[Component],
+    trace: PositionAngleTrace,
+    *,
+    component_labels: Sequence[str] | None,
+    z_min: float,
+    z_max: float,
+) -> None:
+    profile_z, profile_radians = cumulative_larmor_profile(
+        components,
+        voltage=trace.voltage,
+        z_min=z_min,
+        z_max=z_max,
+    )
+    profile_degrees = np.rad2deg(profile_radians)
+
+    ax.set_facecolor("white")
+    ax.plot(
+        profile_z,
+        profile_degrees,
+        color=NEOARM_RAY_COLORS["objective_lens"],
+        linewidth=1.55,
+        zorder=3,
+    )
+    ax.fill_between(
+        profile_z,
+        0.0,
+        profile_degrees,
+        color=NEOARM_RAY_COLORS["objective_lens"],
+        alpha=0.10,
+        linewidth=0.0,
+        zorder=1,
+    )
+
+    labels = tuple(component_labels) if component_labels is not None else None
+    transform = mpl.transforms.blended_transform_factory(ax.transData, ax.transAxes)
+    em_index = 0
+    for component_index, component in enumerate(components):
+        if not isinstance(component, ElectromagneticLens):
+            continue
+        entry = float(component.z)
+        thickness = max(0.0, float(np.asarray(component.thickness)))
+        exit_z = entry + thickness
+        if exit_z < z_min or entry > z_max:
+            continue
+        label = labels[component_index] if labels is not None else _as_name(component)
+        role = _infer_element_role(component, label)
+        color = NEOARM_RAY_COLORS.get(role, NEOARM_RAY_COLORS["lens"])
+        if thickness > 0.0:
+            ax.axvspan(entry, exit_z, color=color, alpha=0.07, linewidth=0.0, zorder=0)
+        else:
+            ax.axvline(entry, color=color, alpha=0.28, linewidth=0.7, zorder=0)
+        marker_z = min(max(exit_z, z_min), z_max)
+        marker_theta = _interpolate_trace_value(profile_z, profile_degrees, marker_z)
+        ax.plot(
+            [marker_z],
+            [marker_theta],
+            marker="o",
+            markersize=3.0,
+            markerfacecolor="white",
+            markeredgecolor=color,
+            markeredgewidth=0.8,
+            zorder=4,
+        )
+        # Four deterministic lanes keep neighbouring lens names legible in
+        # dense objective stacks.  Alternating only two lanes still lets, for
+        # example, C-mini and Obj-post collide at publication size.
+        label_lanes = (0.94, 0.73, 0.52, 0.31)
+        ax.text(
+            0.5 * (max(entry, z_min) + min(exit_z, z_max)),
+            label_lanes[em_index % len(label_lanes)],
+            str(label),
+            transform=transform,
+            ha="center",
+            va="top",
+            fontsize=5.8,
+            color=color,
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.72, "pad": 0.3},
+            clip_on=True,
+            zorder=5,
+        )
+        em_index += 1
+
+    if em_index == 0:
+        ax.text(
+            0.5,
+            0.54,
+            "No electromagnetic-lens rotation in this model",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=6.5,
+            color="#6B7280",
+        )
+
+    ax.set_xlim(z_min, z_max)
+    ax.set_xscale("linear")
+    ax.set_yscale("linear")
+    ax.set_xlabel("z [m]  (source → detector)", fontsize=7.5)
+    ax.set_ylabel("θ [deg]", fontsize=7.5)
+    ax.set_title(
+        f"Cumulative Larmor rotation at {trace.voltage / 1e3:g} kV",
+        loc="left",
+        fontsize=8.2,
+        fontweight="bold",
+    )
+    ax.axhline(0.0, color="#CBD5E1", linewidth=0.65, zorder=0)
+    ax.grid(color="#E5E7EB", linestyle=":", linewidth=0.45, zorder=0)
+    ax.tick_params(labelsize=6.8, colors="#4B5563", pad=1.5)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("bottom", "left"):
+        ax.spines[side].set_color("#D1D5DB")
+
+    radians_axis = ax.secondary_yaxis(
+        "right",
+        functions=(np.deg2rad, np.rad2deg),
+    )
+    radians_axis.set_ylabel("θ [rad]", fontsize=7.5)
+    radians_axis.tick_params(labelsize=6.8, colors="#4B5563", pad=1.5)
+    radians_axis.spines["right"].set_color("#D1D5DB")
+
+
+def plot_neoarm_ray_diagram(
+    components: Sequence[Component],
+    trace: PositionAngleTrace,
+    *,
+    component_labels: Sequence[str] | None = None,
+    component_roles: Sequence[str] | None = None,
+    extra_elements: Sequence[ColumnElement] = (),
+    sections: Sequence[ColumnSection] | None = None,
+    comparison_traces: Mapping[str, PositionAngleTrace] | None = None,
+    title: str | None = None,
+    annotate_events: bool = True,
+    trace_semantics: str = "gaussian",
+    figsize: tuple[float, float] = (14.0, 10.0),
+) -> tuple[mpl.figure.Figure, dict[str, mpl.axes.Axes]]:
+    """Render a full-column overview, three linear details, and Larmor strip.
+
+    Every panel uses a linear physical z-axis.  Detail panels deliberately use
+    independent, explicitly labelled transverse scales; this avoids hiding a
+    nanometre source/sample beam when the detector footprint is millimetres.
+    ``comparison_traces`` overlays fitted or +/-wobble solutions with common
+    limits and distinct line styles.  When fitted source or detector positions
+    differ, the overview uses the union of every trace's axial extent so no
+    comparison ray is silently clipped.
+
+    ``trace_semantics='calibrated_response'`` draws the independently
+    calibrated position and tilt response rays without treating their
+    root-sum-square as a Gaussian envelope or labelling its minima as waists.
+    The default ``'gaussian'`` preserves the physical Gaussian envelope.
+
+    The returned axes mapping contains ``overview``, ``detail_1`` through
+    ``detail_3``, and ``larmor``.  The compact Larmor panel shows cumulative
+    electromagnetic-lens rotation in degrees with a secondary radian scale.
+    """
+
+    if not isinstance(trace, PositionAngleTrace):
+        raise TypeError("trace must be a PositionAngleTrace.")
+    trace_semantics = str(trace_semantics).strip().lower()
+    if trace_semantics not in {"gaussian", "calibrated_response"}:
+        raise ValueError(
+            "trace_semantics must be 'gaussian' or 'calibrated_response'."
+        )
+    gaussian_semantics = trace_semantics == "gaussian"
+    z = np.asarray(trace.z, dtype=float)
+    if z.ndim != 1 or z.size < 2 or not np.all(np.isfinite(z)):
+        raise ValueError("trace.z must be a finite one-dimensional array with at least two values.")
+    primary_z_min, primary_z_max = float(np.min(z)), float(np.max(z))
+    if primary_z_max <= primary_z_min:
+        raise ValueError("trace must span a positive axial distance.")
+
+    comparisons = dict(comparison_traces or {})
+    all_traces = [trace, *comparisons.values()]
+    trace_extents = [(primary_z_min, primary_z_max)]
+    for comparison in comparisons.values():
+        if not isinstance(comparison, PositionAngleTrace):
+            raise TypeError("Every comparison trace must be a PositionAngleTrace.")
+        if comparison.coordinate != trace.coordinate:
+            raise ValueError("All traces must use the same ray coordinate.")
+        comparison_z = np.asarray(comparison.z, dtype=float)
+        if (
+            comparison_z.ndim != 1
+            or comparison_z.size < 2
+            or not np.all(np.isfinite(comparison_z))
+        ):
+            raise ValueError(
+                "Every comparison trace.z must be a finite one-dimensional "
+                "array with at least two values."
+            )
+        comparison_z_min = float(np.min(comparison_z))
+        comparison_z_max = float(np.max(comparison_z))
+        if comparison_z_max <= comparison_z_min:
+            raise ValueError("Every comparison trace must span a positive axial distance.")
+        trace_extents.append((comparison_z_min, comparison_z_max))
+    z_min = min(extent[0] for extent in trace_extents)
+    z_max = max(extent[1] for extent in trace_extents)
+
+    elements = list(
+        column_elements_from_components(
+            components,
+            labels=component_labels,
+            roles=component_roles,
+            extra_elements=extra_elements,
+        )
+    )
+    if not any(element.role == "source" for element in elements):
+        elements.append(
+            ColumnElement(z=primary_z_min, label="Source", role="source")
+        )
+        elements.sort(key=lambda element: (element.z, element.label))
+
+    if sections is None:
+        sections_use = infer_neoarm_sections(elements, z_min, z_max)
+    else:
+        sections_use = tuple(sections)
+        if len(sections_use) != 3:
+            raise ValueError("sections must contain exactly three ColumnSection objects.")
+        for section in sections_use:
+            if section.z_max <= section.z_min:
+                raise ValueError("Each section must have z_max > z_min.")
+
+    with mpl.rc_context(
+        {
+            "font.family": "DejaVu Sans",
+            "axes.titlesize": 10.5,
+            "axes.labelsize": 9,
+            "savefig.facecolor": "white",
+        }
+    ):
+        fig = plt.figure(figsize=figsize, facecolor="white", constrained_layout=False)
+        grid = fig.add_gridspec(
+            4,
+            2,
+            left=0.055,
+            right=0.985,
+            bottom=0.065,
+            top=0.865,
+            width_ratios=(1.04, 2.35),
+            height_ratios=(1.0, 1.0, 1.0, 0.30),
+            hspace=0.46,
+            wspace=0.10,
+        )
+        axes: dict[str, mpl.axes.Axes] = {
+            "overview": fig.add_subplot(grid[:, 0]),
+            "detail_1": fig.add_subplot(grid[0, 1]),
+            "detail_2": fig.add_subplot(grid[1, 1]),
+            "detail_3": fig.add_subplot(grid[2, 1]),
+            "larmor": fig.add_subplot(grid[3, 1]),
+        }
+
+        overview_section = ColumnSection("Full column", z_min, z_max)
+        overview_limit, overview_factor, overview_unit = _section_scale(
+            all_traces, overview_section
+        )
+        _configure_column_axis(
+            axes["overview"],
+            section=overview_section,
+            limit_m=overview_limit,
+            factor=overview_factor,
+            unit=overview_unit,
+            coordinate=trace.coordinate,
+            title="Full column — true linear z",
+        )
+        _plot_trace_layer(
+            axes["overview"],
+            trace,
+            z_min=z_min,
+            z_max=z_max,
+            factor=overview_factor,
+            linestyle="-",
+            alpha=0.95,
+            linewidth=1.35,
+            fill_envelope=True,
+            scenario_label=trace.label,
+            show_envelope=gaussian_semantics,
+        )
+        comparison_linestyles = ("--", ":", "-.")
+        for idx, (comparison_label, comparison) in enumerate(comparisons.items()):
+            _plot_trace_layer(
+                axes["overview"],
+                comparison,
+                z_min=z_min,
+                z_max=z_max,
+                factor=overview_factor,
+                linestyle=comparison_linestyles[idx % len(comparison_linestyles)],
+                alpha=0.75,
+                linewidth=1.1,
+                fill_envelope=False,
+                scenario_label=str(comparison_label),
+                show_envelope=gaussian_semantics,
+            )
+        _draw_elements(
+            axes["overview"],
+            elements,
+            z_min=z_min,
+            z_max=z_max,
+            label_fontsize=6.6,
+            label_x=0.975,
+            max_label_characters=22,
+            label_line_height_fraction=0.015,
+            label_horizontal_alignment="right",
+        )
+
+        for panel_idx, section in enumerate(sections_use, start=1):
+            ax = axes[f"detail_{panel_idx}"]
+            limit_m, factor, unit = _section_scale(all_traces, section)
+            _configure_column_axis(
+                ax,
+                section=section,
+                limit_m=limit_m,
+                factor=factor,
+                unit=unit,
+                coordinate=trace.coordinate,
+                title=section.title,
+            )
+            _plot_trace_layer(
+                ax,
+                trace,
+                z_min=section.z_min,
+                z_max=section.z_max,
+                factor=factor,
+                linestyle="-",
+                alpha=0.98,
+                linewidth=1.7,
+                fill_envelope=True,
+                scenario_label=trace.label,
+                show_envelope=gaussian_semantics,
+            )
+            for idx, (comparison_label, comparison) in enumerate(comparisons.items()):
+                _plot_trace_layer(
+                    ax,
+                    comparison,
+                    z_min=section.z_min,
+                    z_max=section.z_max,
+                    factor=factor,
+                    linestyle=comparison_linestyles[idx % len(comparison_linestyles)],
+                    alpha=0.78,
+                    linewidth=1.25,
+                    fill_envelope=False,
+                    scenario_label=str(comparison_label),
+                    show_envelope=gaussian_semantics,
+                )
+            _draw_elements(
+                ax,
+                elements,
+                z_min=section.z_min,
+                z_max=section.z_max,
+                label_fontsize=7.3,
+                label_x=0.975,
+                max_label_characters=27,
+                label_line_height_fraction=0.050,
+                label_horizontal_alignment="right",
+            )
+            if annotate_events:
+                _annotate_trace_events(
+                    ax,
+                    trace,
+                    z_min=section.z_min,
+                    z_max=section.z_max,
+                    factor=factor,
+                    unit=unit,
+                    include_waists=gaussian_semantics,
+                )
+
+        _plot_larmor_strip(
+            axes["larmor"],
+            components,
+            trace,
+            component_labels=component_labels,
+            z_min=z_min,
+            z_max=z_max,
+        )
+
+        # A compact figure-level legend keeps labels consistent across panels.
+        if gaussian_semantics:
+            handles = [
+                mpl.lines.Line2D([], [], color=NEOARM_RAY_COLORS["position"], lw=1.8, label="height basis (A·h)"),
+                mpl.lines.Line2D([], [], color=NEOARM_RAY_COLORS["angle"], lw=1.8, label="angle basis (B·α)"),
+                mpl.patches.Patch(facecolor=NEOARM_RAY_COLORS["envelope"], alpha=0.14, label="Gaussian ±w"),
+                mpl.lines.Line2D([], [], color="#374151", lw=1.5, linestyle="-", label=str(trace.label)),
+            ]
+        else:
+            handles = [
+                mpl.lines.Line2D([], [], color=NEOARM_RAY_COLORS["position"], lw=1.8, label="calibrated sample-position response"),
+                mpl.lines.Line2D([], [], color=NEOARM_RAY_COLORS["angle"], lw=1.8, label="calibrated sample-tilt response"),
+                mpl.lines.Line2D([], [], color="#374151", lw=1.5, linestyle="-", label=str(trace.label)),
+            ]
+        for idx, comparison_label in enumerate(comparisons):
+            handles.append(
+                mpl.lines.Line2D(
+                    [],
+                    [],
+                    color="#374151",
+                    lw=1.3,
+                    linestyle=comparison_linestyles[idx % len(comparison_linestyles)],
+                    label=str(comparison_label),
+                )
+            )
+        fig.legend(
+            handles=handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.925),
+            ncols=min(len(handles), 5),
+            frameon=False,
+            fontsize=8,
+        )
+        fig.suptitle(
+            title or "NEOARM paraxial ray solution",
+            x=0.52,
+            y=0.975,
+            fontsize=13,
+            fontweight="bold",
+        )
+        fig.text(
+            0.995,
+            0.004,
+            "All z axes are linear; detail panels use independent labelled transverse scales.",
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color="#6B7280",
+        )
+    return fig, axes
+
+
+def _scenario_setting(setting, scenario: str, default=None):
+    if isinstance(setting, Mapping):
+        return setting.get(scenario, default)
+    return setting
+
+
+def plot_neoarm_ray_small_multiples(
+    components_by_label: Mapping[str, Sequence[Component]] | Sequence[Component],
+    traces_by_label: Mapping[str, PositionAngleTrace],
+    *,
+    component_labels: Mapping[str, Sequence[str]] | Sequence[str] | None = None,
+    component_roles: Mapping[str, Sequence[str]] | Sequence[str] | None = None,
+    extra_elements: (
+        Mapping[str, Sequence[ColumnElement]] | Sequence[ColumnElement]
+    ) = (),
+    sections: Sequence[ColumnSection] | None = None,
+    title: str | None = None,
+    annotate_events: bool = False,
+    figsize: tuple[float, float] | None = None,
+) -> tuple[mpl.figure.Figure, dict[str, dict[str, mpl.axes.Axes]]]:
+    """Plot scenarios as shared-scale full-column and detail small multiples.
+
+    The mapping order defines the columns, making the helper suitable for
+    ``truth / initial / fitted`` and ``nominal / -wobble / +wobble`` figures.
+    Every row has one shared physical z extent, transverse unit, and transverse
+    limit across scenarios.  The full-column row uses the union of all trace
+    extents, while an automatically supplied source glyph remains at each
+    scenario's own trace start.  Unlike an overlay, this keeps each solution
+    fully visible while preserving direct geometric comparability.
+    """
+
+    scenarios = tuple(str(key) for key in traces_by_label)
+    if not scenarios:
+        raise ValueError("traces_by_label must contain at least one scenario.")
+    traces = {str(key): value for key, value in traces_by_label.items()}
+    if len(traces) != len(traces_by_label):
+        raise ValueError("Scenario labels must remain unique when converted to strings.")
+    for scenario, trace in traces.items():
+        if not isinstance(trace, PositionAngleTrace):
+            raise TypeError(f"Trace for {scenario!r} must be a PositionAngleTrace.")
+
+    if isinstance(components_by_label, Mapping):
+        missing = [scenario for scenario in scenarios if scenario not in components_by_label]
+        if missing:
+            raise ValueError(f"components_by_label is missing scenarios: {missing}")
+        components_map = {
+            scenario: tuple(components_by_label[scenario]) for scenario in scenarios
+        }
+    else:
+        common_components = tuple(components_by_label)
+        components_map = {scenario: common_components for scenario in scenarios}
+
+    reference = traces[scenarios[0]]
+    trace_extents: dict[str, tuple[float, float]] = {}
+    for scenario in scenarios:
+        trace = traces[scenario]
+        trace_z = np.asarray(trace.z, dtype=float)
+        if trace_z.ndim != 1 or trace_z.size < 2 or not np.all(np.isfinite(trace_z)):
+            raise ValueError("Each trace.z must be finite, one-dimensional, and non-empty.")
+        if trace.coordinate != reference.coordinate:
+            raise ValueError("All scenario traces must use the same ray coordinate.")
+        scenario_z_min = float(np.min(trace_z))
+        scenario_z_max = float(np.max(trace_z))
+        if scenario_z_max <= scenario_z_min:
+            raise ValueError("Traces must span a positive axial distance.")
+        trace_extents[scenario] = (scenario_z_min, scenario_z_max)
+    z_min = min(extent[0] for extent in trace_extents.values())
+    z_max = max(extent[1] for extent in trace_extents.values())
+
+    elements_map: dict[str, tuple[ColumnElement, ...]] = {}
+    for scenario in scenarios:
+        labels_use = _scenario_setting(component_labels, scenario)
+        roles_use = _scenario_setting(component_roles, scenario)
+        extras_use = _scenario_setting(extra_elements, scenario, ())
+        elements = list(
+            column_elements_from_components(
+                components_map[scenario],
+                labels=labels_use,
+                roles=roles_use,
+                extra_elements=tuple(extras_use or ()),
+            )
+        )
+        if not any(element.role == "source" for element in elements):
+            elements.append(
+                ColumnElement(trace_extents[scenario][0], "Source", "source")
+            )
+            elements.sort(key=lambda element: (element.z, element.label))
+        elements_map[scenario] = tuple(elements)
+
+    if sections is None:
+        detail_sections = infer_neoarm_sections(
+            elements_map[scenarios[0]], z_min, z_max
+        )
+    else:
+        detail_sections = tuple(sections)
+        if len(detail_sections) != 3:
+            raise ValueError("sections must contain exactly three ColumnSection objects.")
+        if any(section.z_max <= section.z_min for section in detail_sections):
+            raise ValueError("Each section must have z_max > z_min.")
+    rows = (
+        ColumnSection("Full column — true linear z", z_min, z_max),
+        *detail_sections,
+    )
+    row_keys = ("overview", "detail_1", "detail_2", "detail_3")
+
+    n_scenarios = len(scenarios)
+    if figsize is None:
+        figsize = (max(5.0, 4.15 * n_scenarios), 10.0)
+    with mpl.rc_context(
+        {
+            "font.family": "DejaVu Sans",
+            "axes.titlesize": 9.0,
+            "axes.labelsize": 8.0,
+            "savefig.facecolor": "white",
+        }
+    ):
+        fig, axes_array = plt.subplots(
+            4,
+            n_scenarios,
+            figsize=figsize,
+            squeeze=False,
+            facecolor="white",
+        )
+        fig.subplots_adjust(
+            left=0.065,
+            right=0.985,
+            bottom=0.075,
+            top=0.855,
+            wspace=0.12,
+            hspace=0.38,
+        )
+        axes: dict[str, dict[str, mpl.axes.Axes]] = {
+            scenario: {} for scenario in scenarios
+        }
+        all_traces = [traces[scenario] for scenario in scenarios]
+
+        for row_index, (row_key, section) in enumerate(zip(row_keys, rows)):
+            limit_m, factor, unit = _section_scale(all_traces, section)
+            for column_index, scenario in enumerate(scenarios):
+                ax = axes_array[row_index, column_index]
+                axes[scenario][row_key] = ax
+                _configure_column_axis(
+                    ax,
+                    section=section,
+                    limit_m=limit_m,
+                    factor=factor,
+                    unit=unit,
+                    coordinate=reference.coordinate,
+                    title=section.title,
+                )
+                if column_index > 0:
+                    ax.set_ylabel("")
+                    ax.tick_params(labelleft=False)
+                _plot_trace_layer(
+                    ax,
+                    traces[scenario],
+                    z_min=section.z_min,
+                    z_max=section.z_max,
+                    factor=factor,
+                    linestyle="-",
+                    alpha=0.98,
+                    linewidth=1.45 if row_index == 0 else 1.65,
+                    fill_envelope=True,
+                    scenario_label=scenario,
+                )
+                _draw_elements(
+                    ax,
+                    elements_map[scenario],
+                    z_min=section.z_min,
+                    z_max=section.z_max,
+                    label_fontsize=5.9 if row_index == 0 else 6.2,
+                    label_x=0.975,
+                    max_label_characters=20,
+                    label_line_height_fraction=0.050,
+                    label_horizontal_alignment="right",
+                )
+                if annotate_events:
+                    _annotate_trace_events(
+                        ax,
+                        traces[scenario],
+                        z_min=section.z_min,
+                        z_max=section.z_max,
+                        factor=factor,
+                        unit=unit,
+                        max_per_kind=2,
+                    )
+
+        for column_index, scenario in enumerate(scenarios):
+            box = axes_array[0, column_index].get_position()
+            fig.text(
+                0.5 * (box.x0 + box.x1),
+                0.885,
+                scenario,
+                ha="center",
+                va="bottom",
+                fontsize=11,
+                fontweight="bold",
+                color="#1F2937",
+            )
+        handles = [
+            mpl.lines.Line2D(
+                [],
+                [],
+                color=NEOARM_RAY_COLORS["position"],
+                lw=1.8,
+                label="height basis (A·h)",
+            ),
+            mpl.lines.Line2D(
+                [],
+                [],
+                color=NEOARM_RAY_COLORS["angle"],
+                lw=1.8,
+                label="angle basis (B·α)",
+            ),
+            mpl.patches.Patch(
+                facecolor=NEOARM_RAY_COLORS["envelope"],
+                alpha=0.14,
+                label="Gaussian ±w",
+            ),
+        ]
+        fig.legend(
+            handles=handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.945),
+            ncols=3,
+            frameon=False,
+            fontsize=8,
+        )
+        fig.suptitle(
+            title or "NEOARM ray-solution comparison",
+            y=0.985,
+            fontsize=13,
+            fontweight="bold",
+        )
+        fig.text(
+            0.995,
+            0.006,
+            "Each row uses identical linear z and transverse scales across scenarios.",
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color="#6B7280",
+        )
+    return fig, axes
+
+
+def _json_safe(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return repr(value)
+
+
+def export_ray_figure(
+    fig: mpl.figure.Figure,
+    path_stem: str | Path,
+    *,
+    formats: Sequence[str] = ("png", "svg", "pdf"),
+    dpi: int = 300,
+    metadata: Mapping[str, object] | None = None,
+) -> dict[str, Path]:
+    """Export a ray figure to vector/raster formats plus JSON metadata.
+
+    A conservative subset of metadata is embedded in each image.  The complete
+    JSON-safe mapping is written to ``<stem>.metadata.json`` for lossless,
+    format-independent provenance.
+    """
+
+    if not isinstance(fig, mpl.figure.Figure):
+        raise TypeError("fig must be a matplotlib Figure.")
+    dpi = int(dpi)
+    if dpi <= 0:
+        raise ValueError("dpi must be positive.")
+    formats_use = tuple(str(fmt).lower().lstrip(".") for fmt in formats)
+    if not formats_use:
+        raise ValueError("formats must not be empty.")
+    supported = {"png", "svg", "pdf"}
+    unknown = set(formats_use) - supported
+    if unknown:
+        raise ValueError(f"Unsupported export format(s): {sorted(unknown)}")
+
+    stem = Path(path_stem)
+    if stem.suffix.lower().lstrip(".") in supported:
+        stem = stem.with_suffix("")
+    stem.parent.mkdir(parents=True, exist_ok=True)
+
+    metadata_safe = _json_safe(dict(metadata or {}))
+    payload = {
+        "renderer": "temgym_core.plotting.export_ray_figure",
+        "formats": list(formats_use),
+        "dpi": dpi,
+        "figure_size_inches": [float(v) for v in fig.get_size_inches()],
+        "metadata": metadata_safe,
+    }
+    title = str(metadata_safe.get("title", "NEOARM paraxial ray diagram"))
+    author = str(metadata_safe.get("author", "TemGymCore"))
+    description = json.dumps(metadata_safe, sort_keys=True, ensure_ascii=False)
+
+    outputs: dict[str, Path] = {}
+    for fmt in formats_use:
+        output = stem.with_suffix(f".{fmt}")
+        if fmt == "png":
+            embedded = {
+                "Title": title,
+                "Author": author,
+                "Description": description,
+                "Software": "TemGymCore",
+            }
+        elif fmt == "svg":
+            embedded = {
+                "Title": title,
+                "Creator": author,
+                "Description": description,
+            }
+        else:  # PDF
+            embedded = {
+                "Title": title,
+                "Author": author,
+                "Subject": description,
+                "Creator": "TemGymCore",
+            }
+        fig.savefig(
+            output,
+            format=fmt,
+            dpi=dpi,
+            bbox_inches="tight",
+            facecolor=fig.get_facecolor(),
+            transparent=False,
+            metadata=embedded,
+        )
+        outputs[fmt] = output
+
+    metadata_path = stem.with_suffix(".metadata.json")
+    metadata_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    outputs["metadata"] = metadata_path
+    return outputs

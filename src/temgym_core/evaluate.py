@@ -501,7 +501,7 @@ def evaluate_gaussians_gpu(
     fallback_batch_size: int | None = 128,
 ):
     """Evaluate with the Pallas GPU kernel, falling back to JAX scan on CPU."""
-    if not _gpu_kernel_available():
+    if not gpu_kernel_available():
         return evaluate_gaussians_jax_scan(
             gaussian_ray,
             grid,
@@ -516,27 +516,101 @@ def evaluate_gaussians_gpu(
 
 
 @lru_cache(maxsize=1)
-def _gpu_kernel_available() -> bool:
-    """Probe the optional Pallas backend once before selecting it automatically."""
-    if jax.default_backend() != "gpu":
-        return False
+def gpu_kernel_available() -> bool:
+    """Return whether the Pallas Gaussian kernel is usable on a real GPU.
+
+    This is a numerical execution probe rather than a package-presence check.
+    It requires JAX x64 on a real GPU, exercises the production 16x16 tiles
+    with both beam and pixel padding, and compares the result with an
+    independent NumPy evaluation before caching success.  Call
+    ``gpu_kernel_available.cache_clear()`` after changing JAX backend
+    configuration in a long-lived process.
+    """
     try:
-        one = jnp.ones((1,), dtype=jnp.float64)
-        zero = jnp.zeros((1,), dtype=jnp.float64)
-        coords = jnp.zeros((1, 2), dtype=jnp.float64)
-        q_inv = 1j * jnp.eye(2, dtype=jnp.complex128)[None, ...]
-        field = _evaluate_gaussians_gpu_kernel_impl(
-            coords,
-            coords,
-            one.astype(jnp.complex128),
-            zero,
-            q_inv,
-            one,
-            coords,
-            tile_pixels=1,
-            tile_beams=1,
+        if jax.default_backend() != "gpu" or not bool(jax.config.x64_enabled):
+            return False
+        gpu_devices = tuple(jax.devices("gpu"))
+        if not gpu_devices or any(
+            device.platform != "gpu" for device in gpu_devices
+        ):
+            return False
+
+        n_beams = 17
+        n_pixels = 19
+        beam_index = np.arange(n_beams, dtype=np.float64)
+        pixel_index = np.arange(n_pixels, dtype=np.float64)
+        r_centre = np.column_stack(
+            (
+                0.025 * (beam_index - 8.0),
+                0.018 * (np.mod(5.0 * beam_index, 17.0) - 8.0),
+            )
         )
-        jax.block_until_ready(field)
+        dr = np.column_stack(
+            (
+                0.015 * np.sin(0.37 * beam_index),
+                -0.012 * np.cos(0.29 * beam_index),
+            )
+        )
+        amplitude = (0.4 + 0.03 * beam_index) * np.exp(
+            1j * (0.17 * beam_index - 0.4)
+        )
+        pathlength = 0.007 * np.sin(0.23 * beam_index)
+        k = 1.7 + 0.025 * beam_index
+        q_inv = np.zeros((n_beams, 2, 2), dtype=np.complex128)
+        q_inv[:, 0, 0] = (
+            0.08 + 0.01 * np.cos(0.13 * beam_index)
+            + 1j * (0.20 + 0.01 * beam_index)
+        )
+        q_inv[:, 1, 1] = (
+            -0.05 + 0.008 * np.sin(0.19 * beam_index)
+            + 1j * (0.24 + 0.006 * beam_index)
+        )
+        q_cross = (
+            0.025 * np.sin(0.11 * beam_index)
+            + 1j * 0.015 * np.cos(0.07 * beam_index)
+        )
+        q_inv[:, 0, 1] = q_cross
+        q_inv[:, 1, 0] = q_cross
+        coords = np.column_stack(
+            (
+                0.031 * (pixel_index - 9.0),
+                0.027 * (np.mod(7.0 * pixel_index, 19.0) - 9.0),
+            )
+        )
+
+        field = _evaluate_gaussians_gpu_kernel_impl(
+            jnp.asarray(r_centre),
+            jnp.asarray(dr),
+            jnp.asarray(amplitude),
+            jnp.asarray(pathlength),
+            jnp.asarray(q_inv),
+            jnp.asarray(k),
+            jnp.asarray(coords),
+            tile_pixels=16,
+            tile_beams=16,
+        )
+        actual = np.asarray(jax.block_until_ready(field))
+
+        # Keep the reference independent of the Pallas packing and reduction.
+        delta = coords[:, None, :] - r_centre[None, :, :]
+        linear = np.einsum("pbi,bi->pb", delta, dr)
+        quadratic = np.einsum("pbi,bij,pbj->pb", delta, q_inv, delta)
+        expected = np.sum(
+            amplitude[None, :]
+            * np.exp(
+                1j
+                * k[None, :]
+                * (pathlength[None, :] + linear + 0.5 * quadratic)
+            ),
+            axis=1,
+        )
+        if (
+            actual.shape != (n_pixels,)
+            or actual.dtype != np.dtype(np.complex128)
+            or not np.all(np.isfinite(actual))
+            or not np.allclose(actual, expected, rtol=2e-11, atol=2e-12)
+        ):
+            return False
     except Exception:
         return False
     return True
@@ -554,10 +628,13 @@ def evaluate_gaussians(
     """Evaluate a Gaussian bundle with a stable public backend dispatcher.
 
     ``auto`` selects the Pallas implementation on GPU and the portable JAX
-    scan elsewhere. ``loop`` is primarily useful as a reference evaluator.
+    scan elsewhere. ``gpu_kernel`` retains the historical CPU fallback.
+    ``gpu_kernel_required`` is fail-closed: it raises unless the probed Pallas
+    kernel is available on a real GPU. ``loop`` is primarily useful as a
+    reference evaluator.
     """
     if method == "auto":
-        method = "gpu_kernel" if _gpu_kernel_available() else "scan"
+        method = "gpu_kernel" if gpu_kernel_available() else "scan"
     if method == "scan":
         return evaluate_gaussians_jax_scan(
             gaussian_ray,
@@ -572,6 +649,18 @@ def evaluate_gaussians(
             tile_beams=tile_beams,
             fallback_batch_size=batch_size,
         )
+    if method == "gpu_kernel_required":
+        if not gpu_kernel_available():
+            raise RuntimeError(
+                "Gaussian evaluation method 'gpu_kernel_required' requires "
+                "a working JAX Pallas GPU backend; CPU fallback is disabled."
+            )
+        return evaluate_gaussians_gpu_kernel_wrapper(
+            gaussian_ray,
+            grid,
+            tile_pixels=tile_pixels,
+            tile_beams=tile_beams,
+        )
     if method == "loop":
         return evaluate_gaussians_for(gaussian_ray, grid)
     raise ValueError(f"Unknown Gaussian evaluation method {method!r}.")
@@ -585,5 +674,6 @@ __all__ = [
     "evaluate_gaussians_gpu_kernel_wrapper",
     "evaluate_gaussians_cuda_gpu_kernel_wrapper_opt",
     "evaluate_gaussians_jax_scan",
+    "gpu_kernel_available",
     "map_reduce",
 ]

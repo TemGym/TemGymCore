@@ -1,7 +1,11 @@
+import importlib
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+
+evaluate_module = importlib.import_module("temgym_core.evaluate")
 
 from temgym_core.components import (
     ABCDTransfer,
@@ -17,6 +21,7 @@ from temgym_core.evaluate import (
     evaluate_gaussians,
     evaluate_gaussians_for,
     evaluate_gaussians_jax_scan,
+    gpu_kernel_available,
     map_reduce,
 )
 from temgym_core.gaussian import FreeSpacePropagator, make_gaussian
@@ -270,6 +275,169 @@ def test_public_evaluator_rejects_unknown_method():
 
     with pytest.raises(ValueError, match="Unknown Gaussian evaluation method"):
         evaluate_gaussians(beam, grid, method="mystery")
+
+
+def test_public_gpu_availability_probe_returns_bool():
+    assert isinstance(gpu_kernel_available(), bool)
+
+
+def test_gpu_availability_probe_exercises_production_tiles(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(evaluate_module.jax, "default_backend", lambda: "gpu")
+    monkeypatch.setattr(
+        evaluate_module.jax,
+        "devices",
+        lambda backend=None: [type("FakeGpu", (), {"platform": "gpu"})()],
+    )
+
+    def reference_kernel(
+        r_centre,
+        dr,
+        amplitude,
+        pathlength,
+        q_inv,
+        k,
+        coords,
+        *,
+        tile_pixels,
+        tile_beams,
+    ):
+        calls.append((r_centre.shape, coords.shape, tile_pixels, tile_beams))
+        delta = coords[:, None, :] - r_centre[None, :, :]
+        linear = jnp.einsum("pbi,bi->pb", delta, dr)
+        quadratic = jnp.einsum("pbi,bij,pbj->pb", delta, q_inv, delta)
+        return jnp.sum(
+            amplitude[None, :]
+            * jnp.exp(
+                1j
+                * k[None, :]
+                * (pathlength[None, :] + linear + 0.5 * quadratic)
+            ),
+            axis=1,
+        )
+
+    monkeypatch.setattr(
+        evaluate_module,
+        "_evaluate_gaussians_gpu_kernel_impl",
+        reference_kernel,
+    )
+    gpu_kernel_available.cache_clear()
+    try:
+        assert gpu_kernel_available()
+        assert calls == [((17, 2), (19, 2), 16, 16)]
+    finally:
+        gpu_kernel_available.cache_clear()
+
+
+def test_gpu_availability_probe_requires_x64(monkeypatch):
+    monkeypatch.setattr(evaluate_module.jax, "default_backend", lambda: "gpu")
+    monkeypatch.setattr(
+        type(evaluate_module.jax.config),
+        "x64_enabled",
+        property(lambda _config: False),
+    )
+    monkeypatch.setattr(
+        evaluate_module,
+        "_evaluate_gaussians_gpu_kernel_impl",
+        lambda *_args, **_kwargs: pytest.fail("kernel ran without JAX x64"),
+    )
+    gpu_kernel_available.cache_clear()
+    try:
+        assert not gpu_kernel_available()
+    finally:
+        gpu_kernel_available.cache_clear()
+
+
+@pytest.mark.parametrize("failure", ("wrong", "nonfinite", "downcast"))
+def test_gpu_availability_probe_rejects_bad_numerics(monkeypatch, failure):
+    monkeypatch.setattr(evaluate_module.jax, "default_backend", lambda: "gpu")
+    monkeypatch.setattr(
+        evaluate_module.jax,
+        "devices",
+        lambda backend=None: [type("FakeGpu", (), {"platform": "gpu"})()],
+    )
+
+    def bad_kernel(
+        r_centre,
+        dr,
+        amplitude,
+        pathlength,
+        q_inv,
+        k,
+        coords,
+        **_kwargs,
+    ):
+        delta = coords[:, None, :] - r_centre[None, :, :]
+        linear = jnp.einsum("pbi,bi->pb", delta, dr)
+        quadratic = jnp.einsum("pbi,bij,pbj->pb", delta, q_inv, delta)
+        result = jnp.sum(
+            amplitude[None, :]
+            * jnp.exp(
+                1j
+                * k[None, :]
+                * (pathlength[None, :] + linear + 0.5 * quadratic)
+            ),
+            axis=1,
+        )
+        if failure == "wrong":
+            return result.at[0].add(1e-5)
+        if failure == "nonfinite":
+            return result.at[0].set(jnp.nan + 1j * jnp.nan)
+        return result.astype(jnp.complex64)
+
+    monkeypatch.setattr(
+        evaluate_module,
+        "_evaluate_gaussians_gpu_kernel_impl",
+        bad_kernel,
+    )
+    gpu_kernel_available.cache_clear()
+    try:
+        assert not gpu_kernel_available()
+    finally:
+        gpu_kernel_available.cache_clear()
+
+
+def test_required_gpu_evaluator_fails_closed_without_backend(monkeypatch):
+    beam = make_gaussian(voltage=200e3)
+    grid = Detector(z=0.0, pixel_size=(1.0, 1.0), shape=(2, 2))
+    monkeypatch.setattr(evaluate_module, "gpu_kernel_available", lambda: False)
+
+    with pytest.raises(RuntimeError, match="CPU fallback is disabled"):
+        evaluate_module.evaluate_gaussians(
+            beam,
+            grid,
+            method="gpu_kernel_required",
+        )
+
+
+def test_required_gpu_evaluator_dispatches_directly_to_kernel(monkeypatch):
+    beam = make_gaussian(voltage=200e3)
+    grid = Detector(z=0.0, pixel_size=(1.0, 1.0), shape=(2, 3))
+    expected = jnp.full(grid.shape, 2.0 + 3.0j)
+
+    monkeypatch.setattr(evaluate_module, "gpu_kernel_available", lambda: True)
+    monkeypatch.setattr(
+        evaluate_module,
+        "evaluate_gaussians_gpu_kernel_wrapper",
+        lambda *_args, **_kwargs: expected,
+    )
+
+    def forbidden_fallback(*_args, **_kwargs):
+        raise AssertionError("portable scan fallback was called")
+
+    monkeypatch.setattr(
+        evaluate_module,
+        "evaluate_gaussians_jax_scan",
+        forbidden_fallback,
+    )
+    result = evaluate_module.evaluate_gaussians(
+        beam,
+        grid,
+        method="gpu_kernel_required",
+    )
+
+    np.testing.assert_array_equal(np.asarray(result), np.asarray(expected))
 
 
 def test_map_reduce_accepts_array_and_pytree_inputs():
