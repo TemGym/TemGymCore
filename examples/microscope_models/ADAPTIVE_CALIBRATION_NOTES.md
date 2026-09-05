@@ -1,7 +1,8 @@
 # Adaptive projector calibration
 
-The [companion notebook](projector_adaptive_calibration.ipynb) continues the
-MAGICAL/tilt/beam-shift experiment. It keeps the specimen visible and uses
+This records the earlier MAGICAL/tilt/beam-shift experiment.
+The current [single fitting notebook](projector_calibration_pipeline.ipynb)
+uses the smaller protocol described in [the reduction study](DATASET_REDUCTION_NOTES.md). It keeps the specimen visible and uses
 calibrated beam displacements and tilts to measure the positional response of
 the column. The [numerical summary](calibration_results/adaptive_summary.json)
 records all 19 parameter errors, controls, seeds and independent checks.
@@ -78,8 +79,9 @@ has standard deviation 0.003 detector pixels. The specimen intensity template
 is known. Coherent contrast, hysteresis, saturation, hardware limits, and real
 illumination changes during objective adjustment are not validated here.
 
-Run the original calibration notebook first, then the companion notebook.
-`reuse_completed=True` opens the recorded experiment. Set it to `False` to
-regenerate the candidate designs, images, fits, prediction checks and noise
-repeats. Helpers in `projector_adaptive_experiments.py` keep those steps separate.
-The generating microscope is read only by image simulation and final scoring.
+The original two executed notebooks and their supporting code are preserved
+in commit `985f7e4`. The current checkout deliberately has one fitting notebook.
+Use that checkpoint to reproduce the historical acquisition sequence; the
+versioned [numerical summary](calibration_results/adaptive_summary.json) preserves
+its results. The current notebook generates its smaller experiment directly,
+without first generating or fitting all 334 images.

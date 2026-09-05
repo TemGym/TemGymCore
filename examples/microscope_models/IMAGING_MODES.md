@@ -139,43 +139,15 @@ its own geometry assumptions; use this driver to regenerate these modes.
 
 ## From focused modes to an unknown-geometry fit
 
-The [projector calibration notebook](projector_calibration_pipeline.ipynb)
-now follows one short experiment: synthetic MAGICAL images at 40k and 60k,
-with a 100 nm illumination radius and ±2.5% lens wobbles, followed by image
-measurements and two microscope fits.
-Both use the original 18 images. The second also uses displacements measured
-from eight images with calibrated ±1 mrad specimen tilts along x and y at one
-wobbled setting per magnification. The fits receive the controls, measurements, known
-specimen/detector values, named starting guesses, and
-[editable position priors](projector_position_priors.json). It returns named
-positions, lengths, strengths, and beam parameters, which are compared with
-the generating model. The notebook adds ±5% and ±10% wobbles at 40k and
-compares both data sets using 20 common starting models and detector-position
-profiles. Each profile point refits the other 18 parameters, with fixed prior
-centres and two sweeps to look for competing branches. The plots show the
-total error and its data contribution at those same fitted models. These
-finite searches do not count all minima or establish full uncertainty
-intervals. A further experiment adds ±3 mrad tilt pairs to the existing ±1 mrad
-pairs at all four measured lens settings, then repeats the fits and compares
-B accuracy and detector profiles. The final experiment adds calibrated ±10 nm
-beam shifts at those same four settings. Sixteen extra images retain the fixed
-MAGICAL specimen while moving the circular illumination across it. Pixel
-analysis separates the specimen-pattern motion from illumination-boundary
-motion to measure A through the beam centre. The microscope fit then sees the
-paired displacements and their uncertainties. The comparison repeats the same
-searches and reports A, B, curvature, geometry and detector profiles. This assumes
-the beam and its wavefront move together with calibrated position and mean angle;
-a specimen-stage translation would be a different measurement.
-The prior ranges are engineering assumptions.
-Its finite-lens reference controls are generated separately from the
-thin-lens table above.
+Use the single [projector fitting notebook](projector_calibration_pipeline.ipynb).
+It generates and analyses 99 MAGICAL images at eleven selected lens settings,
+fits all 19 parameters using calibrated shifts and tilts, and predicts 72 new
+images without refitting. Both fitting stages use hard bounds and no soft
+penalties. It runs independently of the earlier exploratory notebooks.
 
-The [adaptive calibration continuation](projector_adaptive_calibration.ipynb)
-uses those measurements to select mixed-lens and compensated objective settings,
-predicts new images before acquisition, then refits. Its final synthetic test
-recovers all 19 parameters within 0.11%, with independent noise repeats within
-0.22% and successful predictions at new settings. The final fitting procedure
-first estimates 16 optical parameters from calibrated beam/tilt displacements,
-then fits all 19 jointly; all 20 tested starts reach the same solution.
-The [notes and limitations](ADAPTIVE_CALIBRATION_NOTES.md) document the large
-excitation range and distinguish this model test from validation on real hardware.
+The [reduction notes](DATASET_REDUCTION_NOTES.md) compare dataset sizes and
+multiple starting guesses. The [adaptive study notes](ADAPTIVE_CALIBRATION_NOTES.md)
+preserve the earlier 334-image experiment. The finite-lens calibration controls
+are separate from the thin-lens focused-mode table above. Their large excitation
+range, exact input calibration and known intensity template remain simulation
+assumptions.

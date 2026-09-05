@@ -377,7 +377,7 @@ def fit_column_from_measurements(*, lens_controls, measured_values, measurement_
 def prepare_column_fit(*, lens_controls, measured_values, measurement_covariances,
                        specimen_and_detector, prior_parameters,
                        position_priors=None, prior_weight=1., tilt_measurements=None,
-                       beam_shift_measurements=None):
+                       beam_shift_measurements=None, use_soft_priors=True):
     """Compile a fixed measurement/prior objective. This function reads no files.
 
     Controls have shape (frames, 4), ordered IL1, IL2, IL3, PL1, or (frames, 5)
@@ -386,6 +386,8 @@ def prepare_column_fit(*, lens_controls, measured_values, measurement_covariance
     Covariances have shape (frames, 3, 3), in those same coordinates.
     Prior parameters use the 19-element vector defined by PARAMETERS and stay
     fixed across all optimizer starts and detector-position profiles.
+    use_soft_priors=False removes ALL penalty residuals, including positions.
+    The declared hard bounds and numerical coordinate scaling remain unchanged.
     Optional tilt_measurements supplies independent image-pair displacements
     (pixels), their 2x2 covariances, controls, and angle changes (radians).
     Optional beam_shift_measurements adds calibrated position changes (metres)
@@ -488,6 +490,10 @@ def prepare_column_fit(*, lens_controls, measured_values, measurement_covariance
         prior_residual = lambda p: jnp.r_[encode(p)[:6], regularization * (p[6:] - initial[6:])]
     if np.any(solver_initial < lower) or np.any(solver_initial > upper):
         raise ValueError("The starting geometry is outside the declared prior bounds; revise it explicitly.")
+
+    if not use_soft_priors:
+        regularization = 0.
+        prior_residual = lambda p: jnp.empty((0,), dtype=p.dtype)
 
     def full_residual(p):
         return jnp.r_[residual(p), prior_residual(p)]

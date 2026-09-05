@@ -82,13 +82,14 @@ def load_existing_measurements(directory):
     return measurements
 
 
-def prepare_fit(*, measurements, specimen_and_detector, prior_model, position_priors):
+def prepare_fit(*, measurements, specimen_and_detector, prior_model, position_priors,
+                use_soft_priors=True):
     return prepare_column_fit(
         lens_controls=measurements.controls, measured_values=measurements.values,
         measurement_covariances=measurements.covariance,
         tilt_measurements=measurements.tilts, beam_shift_measurements=measurements.shifts,
         specimen_and_detector=specimen_and_detector, prior_parameters=model_to_parameters(prior_model),
-        position_priors=position_priors,
+        position_priors=position_priors, use_soft_priors=use_soft_priors,
     )
 
 
@@ -334,8 +335,9 @@ def fit_displacements_then_all(*, problem, starting_parameters, ordinary_image_c
     Signed detector displacements avoid the log-scale and angle-wrap barriers
     encountered by a poor initial image model. The first stage ignores every
     ordinary scale/rotation/blur observation and all soft priors. It keeps the
-    same hard parameter bounds. The final stage restores the original complete
-    objective, including its fixed priors, with every measurement used once.
+    same hard parameter bounds. The final stage uses the supplied problem's
+    complete objective, with every measurement used once. Its use_soft_priors
+    option determines whether that final stage includes penalty residuals.
     """
     skip=3*ordinary_image_count
     cache=getattr(problem,'_displacement_initialization_functions',{})

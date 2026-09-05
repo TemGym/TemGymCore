@@ -383,3 +383,27 @@ def test_extra_wobbles_preserve_reference_controls_and_add_sixteen_images(tmp_pa
     assert (extra.output_directory/'tilt_images_3mrad.npz').exists()
     np.testing.assert_array_equal(three.lens_controls, one.lens_controls)
     np.testing.assert_allclose(three.input_tilts_rad, 3*one.input_tilts_rad)
+
+
+def test_disabling_soft_priors_removes_position_penalties_but_keeps_bounds():
+    priors = json.loads((_path.parent / 'projector_position_priors.json').read_text())
+    p = pipeline.initial_guess()
+    controls = np.array([[1., .9, .8, .7, .9], [1.001, .8, .9, .8, 1.]])
+    spec = pipeline.public_specification()
+    arguments = dict(lens_controls=controls,
+        measured_values=np.array([pipeline.predict_observables(p, c, spec) for c in controls]),
+        measurement_covariances=np.tile(np.eye(3), (2, 1, 1)), specimen_and_detector=spec,
+        prior_parameters=p, position_priors=priors)
+    regularized = pipeline.prepare_column_fit(**arguments)
+    data_only = pipeline.prepare_column_fit(**arguments, use_soft_priors=False)
+    probe = p.copy()
+    probe[6] += .02
+    probe[16] = .1
+    encoded = data_only.encode(probe)
+    np.testing.assert_allclose(data_only.residual(encoded), data_only.data_residual(probe), atol=1e-12)
+    assert len(regularized.residual(encoded)) == len(data_only.residual(encoded)) + 19
+    assert np.linalg.norm(regularized.residual(encoded)[-19:-13]) > 0
+    np.testing.assert_array_equal(data_only.lower, regularized.lower)
+    np.testing.assert_array_equal(data_only.upper, regularized.upper)
+    np.testing.assert_allclose(data_only.jacobian(encoded),
+        data_only.data_jacobian(probe) @ jax.jacfwd(data_only.decode)(encoded), rtol=1e-10, atol=1e-10)
