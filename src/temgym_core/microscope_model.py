@@ -8,6 +8,7 @@ import numpy as np
 
 from .components import DoubleDeflector, ElectromagneticLens
 from .constants import compute_Rc_from_voltage, effective_accelerating_potential, voltage_scaling_ratio
+from .imaging_modes import ConjugateImagingConstraint, refine_conjugate_imaging_currents
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class OperatingMode:
     full_scale_current: float
     allow_signed_currents: bool = False
     gc_scales: np.ndarray | None = None
+    conjugate_imaging: ConjugateImagingConstraint | None = None
 
     def __post_init__(self):
         control_values = np.asarray(self.control_values, dtype=float)
@@ -202,6 +204,10 @@ def _mode_from_toml_table(
         normalized_currents=normalized,
         full_scale_current=full_scale,
         allow_signed_currents=allow_signed,
+        conjugate_imaging=(
+            ConjugateImagingConstraint(**table["conjugate_imaging"])
+            if "conjugate_imaging" in table else None
+        ),
     )
 
 
@@ -310,6 +316,12 @@ class MicroscopeModel:
             mode = self.modes[m_name]
             currents = mode.interpolate_currents(float(c_value))
             gc_scales = mode.interpolate_gc_scales(float(c_value))
+            if mode.conjugate_imaging is not None:
+                if not np.isfinite(c_value) or not mode.control_values[0] <= c_value <= mode.control_values[-1]:
+                    raise ValueError("Conjugate imaging magnification is outside the configured range.")
+                currents = refine_conjugate_imaging_currents(
+                    self, currents, float(c_value), mode.conjugate_imaging, gc_scales,
+                )
 
             for i in range(n_lenses):
                 if abs(currents[i]) > abs(combined_currents[i]):

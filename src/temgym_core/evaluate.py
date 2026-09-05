@@ -24,27 +24,8 @@ try:
 except ModuleNotFoundError:
     cuda = None
 
-def _evaluate_gaussians_gpu_kernel_impl(
-    r_centre: jnp.ndarray,      # (N,2) float64
-    dr: jnp.ndarray,            # (N,2) float64
-    amplitude: jnp.ndarray,     # (N,) complex128
-    pathlength: jnp.ndarray,    # (N,) float64
-    Q_inv: jnp.ndarray,         # (N,2,2) complex128
-    k: jnp.ndarray,             # (N,) float64
-    r2: jnp.ndarray,            # (P,2) float64
-    *,
-    tile_pixels: int = 16,
-    tile_beams: int = 16,
-):
-    """
-    Evaluate sum_b amp_b * exp(i*k_b*(path_b + d·dr_b + 0.5*d^T Q_inv_b d))
-    where d = r2 - r_centre_b, using a tiled Pallas/Triton kernel.
-
-    All per-beam quantities are packed into a single (N, 12) array on the host
-    with k folded into every phase coefficient, so the inner kernel loop
-    contains no per-beam k multiplications.
-    """
-    N, P = r_centre.shape[0], r2.shape[0]
+def _pack_gaussian_params(r_centre, dr, amplitude, pathlength, Q_inv, k):
+    """Pack phase coefficients identically for dense and spatial GPU kernels."""
     f = jnp.float64
 
     # Symmetrize Q_inv: after this Qxy == Qyx
@@ -64,7 +45,7 @@ def _evaluate_gaussians_gpu_kernel_impl(
     # combined with the 0.5 prefactor: 0.5*k*2*Qxy = k*Qxy.
     rc = jnp.asarray(r_centre, f)
     drf = jnp.asarray(dr, f)
-    beams = jnp.column_stack([
+    return jnp.column_stack([
         rc[:, 0],                           # 0  mx
         rc[:, 1],                           # 1  my
         kf * drf[:, 0],                     # 2  k·drx
@@ -78,6 +59,31 @@ def _evaluate_gaussians_gpu_kernel_impl(
         jnp.real(amp),                      # 10 Re(amp)
         jnp.imag(amp),                      # 11 Im(amp)
     ])
+
+
+def _evaluate_gaussians_gpu_kernel_impl(
+    r_centre: jnp.ndarray,      # (N,2) float64
+    dr: jnp.ndarray,            # (N,2) float64
+    amplitude: jnp.ndarray,     # (N,) complex128
+    pathlength: jnp.ndarray,    # (N,) float64
+    Q_inv: jnp.ndarray,         # (N,2,2) complex128
+    k: jnp.ndarray,             # (N,) float64
+    r2: jnp.ndarray,            # (P,2) float64
+    *,
+    tile_pixels: int = 16,
+    tile_beams: int = 16,
+):
+    """
+    Evaluate sum_b amp_b * exp(i*k_b*(path_b + d·dr_b + 0.5*d^T Q_inv_b d))
+    where d = r2 - r_centre_b, using a tiled Pallas/Triton kernel.
+
+    All per-beam quantities are packed into a single (N, 12) array on the device
+    with k folded into every phase coefficient, so the inner kernel loop
+    contains no per-beam k multiplications.
+    """
+    N, P = r_centre.shape[0], r2.shape[0]
+    f = jnp.float64
+    beams = _pack_gaussian_params(r_centre, dr, amplitude, pathlength, Q_inv, k)
 
     # Column indices
     MX, MY = 0, 1
@@ -116,7 +122,7 @@ def _evaluate_gaussians_gpu_kernel_impl(
             dy = y[:, None] - beams_ref[b, MY][None, :]
             dx2, dy2, dxdy = dx * dx, dy * dy, dx * dy
 
-            # Phase — k already folded into all coefficients on host
+            # Phase — k already folded into all coefficients before the kernel
             phase = (dx   * beams_ref[b, KDX][None, :]
                    + dy   * beams_ref[b, KDY][None, :]
                    + dx2  * beams_ref[b, QR_XX][None, :]
@@ -624,6 +630,8 @@ def evaluate_gaussians(
     batch_size: int | None = 128,
     tile_pixels: int = 16,
     tile_beams: int = 16,
+    spatial_cutoff: float = 1e-12,
+    spatial_bins: int = 64,
 ):
     """Evaluate a Gaussian bundle with a stable public backend dispatcher.
 
@@ -631,10 +639,20 @@ def evaluate_gaussians(
     scan elsewhere. ``gpu_kernel`` retains the historical CPU fallback.
     ``gpu_kernel_required`` is fail-closed: it raises unless the probed Pallas
     kernel is available on a real GPU. ``loop`` is primarily useful as a
-    reference evaluator.
+    reference evaluator. ``spatial`` rebuilds Gaussian support bins on GPU for
+    each forward call, using an envelope cutoff and an exact dense fallback for
+    broad beams. It is forward-only; use ``scan`` for automatic differentiation.
     """
     if method == "auto":
         method = "gpu_kernel" if gpu_kernel_available() else "scan"
+    if method == "spatial":
+        from .spatial_evaluate import evaluate_gaussians_spatial
+
+        return evaluate_gaussians_spatial(
+            gaussian_ray, grid, cutoff=spatial_cutoff,
+            bins_per_axis=spatial_bins, tile_beams=tile_beams,
+            batch_size=batch_size,
+        )
     if method == "scan":
         return evaluate_gaussians_jax_scan(
             gaussian_ray,

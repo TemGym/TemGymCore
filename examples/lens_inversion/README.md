@@ -199,10 +199,35 @@ basis, with its actual specimen region and identical comparison extents.
 
 ## Current implementation boundary
 
-The cleaned notebook executes only the recorded-control audit. The next
-bounded implementation is a downstream model fitted to that trajectory and
-measured calibration responses; no new recovery or hardware readiness is
-asserted by this cleanup. The general cubic sample, GPU field evaluation,
+The simulator now has a separately verified
+[40k–600k focused imaging mode](../microscope_models/IMAGING_MODES.md): ten
+stored states and refinement between them satisfy specimen conjugacy,
+magnification, and zero net rotation in the existing thin-round-lens model.
+This supplies a consistent simulation baseline; it is not a fit to measured
+NEOARM optical responses or a calibration of the recorded raw controls.
+
+The section-wise notebook executes the recorded-control audit. A separate
+[projector calibration pipeline](../microscope_models/projector_calibration_pipeline.ipynb)
+now executes a synthetic image-to-measurement-to-fit experiment with unknown
+finite-lens geometry. The short notebook uses only the clean synthetic
+MAGICAL sample at 40k and 150k. Each setting supplies one reference image
+and ±2.5% wobbles of IL1, IL2, IL3, and PL1: 18 images, all used in one fit.
+The notebook shows what each function receives and returns, with named
+starting and fitted parameters in mm, mrad, and degrees. It fits six gaps,
+five effective lengths, five excitation parameters, and three specimen/beam
+parameters from measured scale, rotation, and blur. The final table compares
+the fitted geometry with the generating values.
+
+The MAGICAL intensity model retains the nominal 13 nm Si and 10 nm SiGe
+widths; coherent phase contrast remains a separate forward-model check.
+The fit includes bounded priors on lens-centre and detector positions,
+and hard bounds on effective lens lengths. The
+[position-prior file](../microscope_models/projector_position_priors.json)
+records illustrative engineering estimates around the approximate layout;
+they are not measured NEOARM positions. A good image fit alone does not
+establish unique physical geometry.
+
+The general cubic sample, GPU field evaluation,
 finite-lens optics, detector likelihoods, covariance tools, and ray plotting
 remain in `src/temgym_core`, with their regression tests. The historical
 synthetic column is now explicitly a test fixture in
