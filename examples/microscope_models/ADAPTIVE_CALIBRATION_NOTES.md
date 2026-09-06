@@ -1,7 +1,9 @@
 # Adaptive projector calibration
 
+**Current full-microscope workflow:** [one two-voltage notebook](microscope_calibration_pipeline.ipynb). The results and standalone procedures below are historical.
+
 This records the earlier MAGICAL/tilt/beam-shift experiment.
-The current [single fitting notebook](projector_calibration_pipeline.ipynb)
+The later [standalone projector notebook](old/projector_calibration_pipeline.ipynb)
 uses the smaller protocol described in [the reduction study](DATASET_REDUCTION_NOTES.md). It keeps the specimen visible and uses
 calibrated beam displacements and tilts to measure the positional response of
 the column. The [numerical summary](calibration_results/adaptive_summary.json)

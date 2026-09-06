@@ -139,11 +139,12 @@ its own geometry assumptions; use this driver to regenerate these modes.
 
 ## From focused modes to an unknown-geometry fit
 
-Use the single [projector fitting notebook](projector_calibration_pipeline.ipynb).
-It generates and analyses 99 MAGICAL images at eleven selected lens settings,
-fits all 19 parameters using calibrated shifts and tilts, and predicts 72 new
-images without refitting. Both fitting stages use hard bounds and no soft
-penalties. It runs independently of the earlier exploratory notebooks.
+Use the single [full microscope fitting notebook](microscope_calibration_pipeline.ipynb).
+It generates MAGICAL images at 200 and 195 kV, calibrates the projector at both
+voltages, fits the condenser with projector uncertainty included, and tests
+new images and aperture currents. Objective current stays fixed. Both fitting
+stages use hard bounds without soft penalties. It runs independently of the
+archived exploratory notebooks.
 
 The [reduction notes](DATASET_REDUCTION_NOTES.md) compare dataset sizes and
 multiple starting guesses. The [adaptive study notes](ADAPTIVE_CALIBRATION_NOTES.md)

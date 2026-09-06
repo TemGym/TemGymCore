@@ -206,8 +206,10 @@ magnification, and zero net rotation in the existing thin-round-lens model.
 This supplies a consistent simulation baseline; it is not a fit to measured
 NEOARM optical responses or a calibration of the recorded raw controls.
 
-The section-wise notebook executes the recorded-control audit. The single
-[projector fitting notebook](../microscope_models/projector_calibration_pipeline.ipynb)
+Start the full synthetic calibration in the [two-voltage microscope notebook](../microscope_models/microscope_calibration_pipeline.ipynb). It fits both halves with objective current fixed and carries projector uncertainty into the condenser fit. The standalone projector study described below is historical.
+
+The section-wise notebook executes the recorded-control audit. The archived
+[projector fitting notebook](../microscope_models/old/projector_calibration_pipeline.ipynb)
 runs a separate synthetic experiment: make MAGICAL images, measure their
 responses, fit an unknown microscope, and check predictions at new settings.
 It works without running another notebook.

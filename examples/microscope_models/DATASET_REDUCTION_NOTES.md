@@ -1,6 +1,8 @@
 # A smaller calibration experiment
 
-Use the single [fitting notebook](projector_calibration_pipeline.ipynb). It
+**Current full-microscope workflow:** [one two-voltage notebook](microscope_calibration_pipeline.ipynb). The results and standalone procedures below are historical.
+
+The [archived standalone fitting notebook](old/projector_calibration_pipeline.ipynb)
 runs independently: generate images, measure them, fit from independent guesses,
 and check new predictions. The earlier two notebooks are preserved in commit
 `985f7e4`; their history is summarized in [the adaptive notes](ADAPTIVE_CALIBRATION_NOTES.md).
@@ -124,7 +126,7 @@ cover a finite set of starts, not every possible model.
 
 ## Reproduce and interpret
 
-Run [the notebook](projector_calibration_pipeline.ipynb) from top to bottom.
+Run [the notebook](old/projector_calibration_pipeline.ipynb) from top to bottom.
 `reuse_completed=True` reopens completed results; `False` regenerates and
 remeasures the images, then refits. The [workflow helper](projector_calibration_workflow.py)
 keeps these steps separate. A separate noise repeat uses the same functions

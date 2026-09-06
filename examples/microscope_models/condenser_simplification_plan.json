@@ -1,0 +1,78 @@
+{
+  "purpose": "Simplify the measurement recipe and single notebook, while testing practical uniqueness of physical geometry.",
+  "accepted_tolerances": {
+    "lens_axial_position_mm": 0.1,
+    "aperture_axial_position_mm": 0.1,
+    "lens_thickness_fraction": 0.05,
+    "source_axial_position_mm": 1.0,
+    "aperture_lateral_position_um": 0.2
+  },
+  "operational_priority": "Prefer fixed objective current. User confirms nonlinear image changes, history dependence, unknown coupled pre/post response and potentially changing aberrations. The earlier objective-sweep result is conditional on a response law that is not established experimentally.",
+  "requirements": [
+    "One short notebook: acquire/simulate, analyse, fit, assess.",
+    "Reduce actual microscope operations where measured information permits; do not merely hide the old acquisition complexity.",
+    "Retain the physical-geometry objective and declare any remaining ambiguity.",
+    "Search varied physically valid starts; keep all acceptable distinct geometries and all failures.",
+    "Profile all four lens positions and thicknesses, source position, aperture axial position and both lateral coordinates; refit remaining unknowns from multiple starts.",
+    "Repeat the entire selected pixel/count experiment with independent noise, including image analysis; do not substitute noise added to fitted descriptors.",
+    "Introduce modest lens-response or calibration mismatch and assess geometry and prediction errors.",
+    "Assess all acceptable solutions against the accepted physical tolerances and prediction checks. Do not infer global uniqueness from local rank or frequency of convergence."
+  ],
+  "initial_simplification_candidates": [
+    "Remove the separate elliptical-illumination measurement.",
+    "Replace old aperture scans with one sweep through focus, initially testing one aperture diameter plus an open reference.",
+    "Reduce condenser settings and projector views, reanalysing selected pixels before claiming an acquisition reduction.",
+    "Keep objective current fixed where possible; quantify the remaining exact physical ambiguity and investigate an independent constraint rather than asserting it has disappeared.",
+    "Challenge the earlier objective-sweep fit with pre/post response mismatch and changing blur before treating that axis as useful experimentally."
+  ],
+  "status": "Completed synthetic study: all four experiments pass practical geometry agreement, full individual profile-width tolerances, truth-error tolerances and frozen image/current predictions. The single notebook executed successfully.",
+  "voltage_candidate": {
+    "user_confirmed_feasible": true,
+    "objective_current": "fixed",
+    "synthetic_voltages_v": [
+      200000,
+      195000
+    ],
+    "source": "independent waist position and six beam parameters per voltage",
+    "initial_recipe": "Three calibrated projector views, one 4 micrometre aperture plus open references, and a 25-position aperture-centering scan.",
+    "status": "Validated in the finite-solenoid simulation with three full noise repetitions and a 20 V readback-error challenge."
+  },
+  "next_work": [
+    "Before hardware acquisition, confirm the 5 kV voltage separation and repeatability of aperture positioning.",
+    "Check the finite-solenoid field-profile and calibrated-projector assumptions against real data; the synthetic result does not prove mechanical geometry or global uniqueness."
+  ],
+  "previous_voltage_evidence": {
+    "notebook": "condenser_calibration_pipeline.ipynb: 11 cells, four stages; executed successfully",
+    "voltage_noise_repetitions": 3,
+    "nominal_acquisition": {
+      "images": 144,
+      "current_readings": 156,
+      "voltages_v": [
+        200000,
+        198000
+      ],
+      "objective_current": "fixed"
+    },
+    "new_image_pixel_rms": [
+      0.9839655751,
+      0.984906344,
+      0.9883930139
+    ],
+    "aperture_centre_alternative_separation_um": 0.3788,
+    "native_geometry_profiles": "All 12 quantities sampled from two likelihood branches; most near-confidence-limit points resolved, some aperture endpoints unresolved.",
+    "voltage_readback_challenge": "20 V hidden error rejected by fixed-voltage model. Independent image analysis estimates 20.1598 +/- 0.1138 V; joint fit including calibration covariance returns noise-scale residuals."
+  },
+  "completed_evidence": {
+    "authoritative_summary": "calibration_results/condenser_voltage_summary.json",
+    "notebook": "condenser_calibration_pipeline.ipynb",
+    "notebook_cells": 11,
+    "notebook_executed": true,
+    "targeted_tests_passed": 23,
+    "calibration_images": 144,
+    "calibration_current_readings": 206,
+    "profile_quantities": 13,
+    "initial_guesses_per_experiment": 12,
+    "complete_noise_repetitions": 3,
+    "all_practical_checks_pass": true
+  }
+}
