@@ -1,24 +1,19 @@
 """Check energy scaling and independent source geometry against physical invariants."""
 
-import sys
-from pathlib import Path
-
 import jax
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "examples/microscope_models"))
 jax.config.update("jax_enable_x64", True)
-
-from condenser_calibration_model import initial_parameters, matrix5
-from condenser_simplification_design import physical_geometry
-from condenser_voltage_experiment import (
+from temgym_core.calibration.condenser_model import (
     condenser_at_voltage,
+    initial_parameters,
     magnetic_strength_ratio,
+    matrix5,
+    physical_geometry,
     projector_at_voltage,
 )
-from finite_projector_pipeline import initial_guess
-from finite_projector_pipeline import matrix5 as projector_matrix5
-
+from temgym_core.calibration.projector_model import initial_guess
+from temgym_core.calibration.projector_model import matrix5 as projector_matrix5
 from temgym_core.constants import energy2wavelength
 
 
@@ -26,7 +21,7 @@ def test_strength_ratio_matches_relativistic_de_broglie_wavelength():
     for voltage in [100000.0, 200000.0, 202000.0, 300000.0]:
         expected = energy2wavelength(voltage) / energy2wavelength(200000.0)
         np.testing.assert_allclose(
-            magnetic_strength_ratio(voltage), expected, rtol=2e-8
+            magnetic_strength_ratio(voltage), expected, rtol=2e-08
         )
 
 
@@ -60,8 +55,6 @@ def test_reference_voltage_and_symplectic_transport():
         projector_at_voltage(projector, controls, 202000.0),
     ]:
         m = np.asarray(transfer)[:4, :4]
-        # High magnification causes cancellation of large products. Bound the
-        # multiplication roundoff element by element rather than in raw units.
         error = np.abs(m.T @ symplectic @ m - symplectic)
         roundoff = (
             32

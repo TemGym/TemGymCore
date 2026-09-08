@@ -1,42 +1,50 @@
 # Microscope calibration
 
-Use [microscope_calibration_pipeline.ipynb](microscope_calibration_pipeline.ipynb).
-It contains one procedure for fitting both halves of the microscope at two voltages.
+Start with [microscope_calibration_pipeline.ipynb](microscope_calibration_pipeline.ipynb).
+It uses one procedure for both halves of the microscope:
 
-1. **Generate images.** TemGym propagates Gaussian beams through its lens components and sums complex fields, including interference.
-2. **Measure the images.** Extract centroids and second moments with their covariance; measure aperture-current ratios separately.
-3. **Fit the microscope.** Estimate the projector and specimen beams, initialize the condenser from independent guesses, then jointly fit the original measurements with TemGym matrices and JAX least squares.
-4. **Check predictions.** Freeze the recovered geometry, render new Gaussian images, and compare them with a separate acquisition. Open the generating parameters only for scoring.
+**Gaussian images → image measurements → matrix fitting → new-image checks.**
 
-The acquisition uses 200/195 kV with objective current fixed, 198 projector
-calibration images, 144 condenser calibration images and 234 current readings.
-The prediction set contains 72 images and 48 current readings. Camera images
-are 256×256; the display crops around the illuminated region.
+The notebook imports `from temgym_core import calibration`. No example scripts
+or `sys.path` changes are needed. Install the notebook dependencies with
+`pip install -e '.[inversion]'`; on a supported CUDA system use `.[inversion,gpu]`.
+Enable JAX 64-bit arithmetic as shown in the notebook.
 
-The 4/10 µm apertures have independent centres and a declared 0.2 µm centring
-uncertainty per axis. They are retracted for imaging. The specimen's complex
-transmission, detector response, voltages and specimen-plane tilt/shift changes
-are known. Lens positions, effective field lengths and strengths, source states
-at each voltage, and aperture geometry are fitted. The model is coaxial and
-paraxial. Engineering bounds and the stated centring accuracy are used, without additional
-lens-position or thickness penalties.
+| Call | Supply | Receive |
+|---|---|---|
+| `simulate_experiment` | Voltages, aperture diameters, output folder | Recorded images, currents and controls |
+| `measure_projector` | Experiment folder | Saved image measurements and covariance |
+| `fit_projector` | Measurements; optional starting guesses and bounds | Projector parameters and uncertainty |
+| `measure_condenser` | Experiment and fitted projector | Specimen-beam estimates with shared uncertainty |
+| `fit_microscope` | Saved measurements; optional condenser guesses | Both fitted halves and joint covariance |
+| `check_full_microscope` | Experiment and fitted microscope | New-image, current and geometry checks |
 
-`full_microscope_workflow.py` supplies the notebook's staged API.
-`coherent_microscope_workflow.py` handles Gaussian acquisition and numerical
-checks. Fitting uses TemGym components, moment propagation and its JAX solvers;
-it does not render Gaussian images inside the optimization loop. The final
-joint fit avoids treating weak, nonlinear beam estimates as Gaussian data.
+The default [presets](../../src/temgym_core/calibration/presets) contain the
+acquisition controls, independent guesses and engineering bounds. They are
+included in the installed package. Pass your own JSON files to the fitting
+calls to replace the guesses or bounds.
 
-On a supported GPU, rendering uses the nearby-Gaussian grouping code and its
-dense fallback. The CPU scan path remains available. FFT propagation is not
-part of the active pipeline. Saved stages are reused when their inputs match;
-logs and numerical checks live beside the generated data.
+To refit an existing acquisition in a separate folder, use
+`copy_recorded_experiment(source_directory=..., output_directory=...)`, then
+start at `measure_projector`. This copies known specimen data and recorded
+controls, without previous measurements or fitted answers. Simulated truth is
+copied for the final geometry score; fitting does not read it.
 
-The full synthetic fit recovers lens positions within 0.0101 mm; new-image
-RMS in the illuminated region is 0.9819 noise units. The second
-aperture centre retains two acceptable solutions. See the
-[full Gaussian recovery](calibration_results/full_gaussian_recovery.json) and
-[results and limits](COHERENT_INTEGRATION.md). The earlier
-[intensity recovery](calibration_results/intensity_jax_recovery.json) and
-[Gaussian GPU benchmarks](calibration_results/gaussian_gpu_256.json) remain
-separate reference results.
+The full demonstration uses 200/195 kV with objective current fixed: 198
+projector images, 144 condenser images and 234 current readings. A separate
+set supplies 72 prediction images and 48 current readings. Images are 256×256.
+The specimen's complex transmission, detector response and calibrated specimen
+tilts/shifts are known. Apertures have known 4/10 µm diameters and an assumed
+0.2 µm centering accuracy. These assumptions matter when interpreting recovery.
+
+The Gaussian model includes interference. The matrix fitter predicts the
+measured statistics, including specimen phase and diffraction, without rendering
+pixels on every iteration. `image_model="intensity"` remains a faster option
+within the same procedure; it also supplies initial beam estimates.
+
+See the [code map and audit](../../src/temgym_core/calibration/README.md),
+[results and limits](COHERENT_INTEGRATION.md), and
+[saved reference result](calibration_results/full_gaussian_recovery.json).
+Earlier calibration experiments are preserved in Git checkpoint `61457c3`.
+The other notebooks here concern microscope design and visualization, not
+alternative fitting procedures.

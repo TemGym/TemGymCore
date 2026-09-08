@@ -82,8 +82,7 @@ Gaussian-basis, pixel-integration and known-specimen quadrature checks are separ
 The image basis uses 0.5 nm spacing; moment integrals use 0.25 nm spacing with a
 0.0625 nm local grid for very small beams. Adaptive pixel refinement and its
 history remain beside the recorded images. This audit tests the fitted image
-quantities; detailed forward convergence checks are retained in the earlier
-[Gaussian benchmark](calibration_results/gaussian_gpu_256.json).
+quantities; earlier detailed forward convergence checks are preserved in checkpoint `61457c3`.
 
 Full-residual directional finite differences agree with JAX derivatives to
 2.2e-06 relative error; an additional weak-direction check agrees to
@@ -95,8 +94,9 @@ alternatives and numerical moment propagation.
 The recorded dataset was assembled during numerical validation and then adopted
 into the notebook cache after its physics, residuals and covariance were checked
 against the final code. The portable report includes raw-data hashes and this
-provenance. The executed notebook reuses those verified stages. Setting
-`reuse_completed=False` regenerates or refits the relevant stage.
+provenance. The executed notebook reuses those verified stages. The cleanup moved this procedure into `temgym_core.calibration`; source changes
+invalidate stage caches. Setting `reuse_completed=False` regenerates or refits
+the relevant stage. The portable result records the original validated run.
 
 This validates the stated ideal model. Real field profiles, aberrations, specimen
 uncertainty, voltage readback errors and repeated-noise confidence coverage remain

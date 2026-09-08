@@ -1,25 +1,23 @@
 """The split fit must agree with a full linear likelihood, without hidden maps."""
 
 import json
-import sys
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "examples/microscope_models"))
-import full_microscope_inference as inference
-from finite_projector_pipeline import initial_guess, matrix5
-from full_microscope_projector import at_voltage
+import temgym_core.calibration.inference as inference
+from temgym_core.calibration.projector import at_voltage
+from temgym_core.calibration.projector_model import initial_guess, matrix5
 
 
 def test_shared_projector_covariance_matches_full_pixel_fisher():
     rng = np.random.default_rng(184)
-    full = np.zeros((31, 11))  # Three local beams and a two-parameter calibration.
-    covariances, responses, projected = [], [], []
+    full = np.zeros((31, 11))
+    covariances, responses, projected = ([], [], [])
     for index in range(3):
-        local, common = rng.normal(size=(9, 3)), rng.normal(size=(9, 2))
+        local, common = (rng.normal(size=(9, 3)), rng.normal(size=(9, 2)))
         full[9 * index : 9 * (index + 1), 3 * index : 3 * (index + 1)] = local
         full[9 * index : 9 * (index + 1), -2:] = common
         inverse = np.linalg.pinv(local)
@@ -38,14 +36,13 @@ def test_shared_projector_covariance_matches_full_pixel_fisher():
     keep = [0, 1, 3, 4, 6, 7, 9, 10]
     expected = np.linalg.inv(full.T @ full)[np.ix_(keep, keep)]
     np.testing.assert_allclose(actual, expected, rtol=1e-11, atol=1e-13)
-    assert abs(actual[0, 2]) > 1e-5
+    assert abs(actual[0, 2]) > 1e-05
 
 
 def test_conditioned_split_fit_matches_dense_joint_solution():
     rng = np.random.default_rng(581)
     raw = rng.normal(size=(8, 8))
     covariance = raw @ raw.T + np.eye(8)
-    # Measurements consist of five beam values and three projector parameters.
     beam_map = rng.normal(size=(5, 2))
     design = np.zeros((8, 5))
     design[:5, 3:] = beam_map
@@ -77,8 +74,7 @@ def test_conditioned_split_fit_matches_dense_joint_solution():
 
 def test_voltage_changes_strength_without_changing_geometry():
     p = np.asarray(initial_guess())
-    voltage, reference = 195000.0, 200000.0
-    # Electron rest energy in eV, matching the physical constants in the model.
+    voltage, reference = (195000.0, 200000.0)
     from scipy.constants import electron_mass, elementary_charge, speed_of_light
 
     rest = electron_mass * speed_of_light**2 / elementary_charge
@@ -89,7 +85,10 @@ def test_voltage_changes_strength_without_changing_geometry():
     adjusted = np.asarray(at_voltage(p, voltage, reference))
     np.testing.assert_array_equal(adjusted[:11], p[:11])
     np.testing.assert_allclose(
-        matrix5(adjusted, commands), matrix5(p, commands * ratio), rtol=1e-11, atol=1e-8
+        matrix5(adjusted, commands),
+        matrix5(p, commands * ratio),
+        rtol=1e-11,
+        atol=1e-08,
     )
     assert commands[0] == 1.0
 
@@ -119,7 +118,6 @@ def test_analysis_replaces_hidden_projector_maps(tmp_path, monkeypatch):
         )
         for filename in ["detector.json", "aperture.json"]:
             (folder / filename).write_text("{}")
-    # Neither a scoring-truth file nor a generating-projector file exists.
     monkeypatch.setattr(inference, "measure_images", lambda **kwargs: None)
     monkeypatch.setattr(
         inference,
@@ -138,7 +136,7 @@ def test_analysis_replaces_hidden_projector_maps(tmp_path, monkeypatch):
 
 
 def test_condenser_starts_use_literal_engineering_model():
-    root = Path(__file__).parents[1] / "examples/microscope_models"
+    root = Path(__file__).parents[1] / "src/temgym_core/calibration/presets"
     path = root / "microscope_condenser_starting_guess.json"
     guesses, lower, upper = inference.condenser_starting_guesses(
         starting_guess_path=path
@@ -226,6 +224,7 @@ def test_gaussian_analysis_copies_known_sample_and_replaces_generating_maps(
 
 
 def test_beam_surrogate_refinement_matches_original_nonlinear_likelihood():
+
     def beam(x):
         return jnp.array([x[0] * x[1], x[1] ** 2, x[0], x[1]])
 
@@ -258,9 +257,9 @@ def test_beam_surrogate_refinement_matches_original_nonlinear_likelihood():
     )
     exact = inference.least_squares(residual, start, bounds=bounds, x_scale="jac")
     assert fit.success, fit.message
-    np.testing.assert_allclose(fit.x, exact.x, atol=1e-6)
+    np.testing.assert_allclose(fit.x, exact.x, atol=1e-06)
     np.testing.assert_allclose(fit.jacobian, jax.jacfwd(residual)(fit.x), rtol=1e-12)
-    assert all(r["actual_reduction"] >= 0 for r in fit.history if r["accepted"])
+    assert all((r["actual_reduction"] >= 0 for r in fit.history if r["accepted"]))
 
 
 def test_surrogate_iteration_budget_does_not_imply_convergence():
@@ -286,7 +285,6 @@ def test_aperture_centre_search_retains_distinct_current_solutions():
     )
 
     def currents(p):
-        # A symmetric current measurement admits two separated x centres.
         return jnp.array(
             [p[20] - 0.2, p[21] + 0.3, 30 * (p[29] ** 2 - 0.15**2), p[30] + 0.1]
         )
@@ -300,6 +298,6 @@ def test_aperture_centre_search_retains_distinct_current_solutions():
     second = [r for r in branches if r["indices"] == [29, 30]]
     assert len(second) == 2
     np.testing.assert_allclose(
-        sorted(r["centre_um"][0] for r in second), [-0.15, 0.15], atol=1e-6
+        sorted((r["centre_um"][0] for r in second)), [-0.15, 0.15], atol=1e-06
     )
-    assert all(abs(r["conditional_delta_chi_squared"]) < 1e-10 for r in second)
+    assert all((abs(r["conditional_delta_chi_squared"]) < 1e-10 for r in second))
