@@ -68,8 +68,17 @@ specimen map as before, without building unused regional maps or pyramids.
 The old atlas, certificates and automatic field selection have been removed;
 Git revision `5aa2ae7` retains them. This fixed map is an overview target, not an
 atomic-resolution model. Refine specimen sampling and the Gaussian approximation
-separately when changing the scene. The component's `sampling_diagnostic` still
-flags beams for which the local quadratic sample approximation is inadequate.
+separately when changing the scene.
+
+Gaussian approximation diagnostics now live only in `tests/gaussian_sampling.py`.
+One helper compares explicit optical-path and log-amplitude functions with their
+local quadratic expansions at eight points around each beam. Tests cover smooth
+lenses, aperture edges and unresolved sample structure. It does not modify beams,
+guess component arguments or prescribe new widths. The 40k notebook's Gaussian
+refinement remains the check of resulting image error. The former production
+`gaussian_corrections.py` module and sample `sampling_diagnostic()` method have
+been removed; Git revision `822cb5c` retains the old API. The simplified test
+helper is 69 lines; 29 targeted sampling, sample and coherent-image tests passed.
 
 ## Why keep local optimization code?
 
@@ -112,7 +121,7 @@ Older APIs and experiments remain in Git: `fc992bc` precedes the first core
 cleanup and `31adfc3` precedes this consolidation. The current calibration
 notebook's public calls are unchanged.
 
-The core and calibration now contain 35 Python files. The sample cleanup removes
+The core and calibration now contain 34 Python files. The sample cleanup removes
 about 2,200 source lines. At both 200 and 195 kV, the fixed specimen maps, spline
 coefficients, sampled action values/gradients/Hessians and Gaussian updates match
 the previous implementation exactly. The calibration intensity template, sampled

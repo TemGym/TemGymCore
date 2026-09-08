@@ -4,6 +4,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from gaussian_sampling import sampling_error
+
 from temgym_core.components import InterpolatedSample2D
 from temgym_core.gaussian import make_gaussian
 
@@ -182,7 +184,7 @@ def test_sample_uses_explicit_jet_in_scalar_and_batched_gaussian_action():
     np.testing.assert_allclose(output.dy, 0.0, atol=1e-17)
 
 
-def test_sampling_diagnostic_accepts_constant_sample_action():
+def test_constant_sample_has_zero_quadratic_error():
     view = InterpolatedSample2D.from_action_maps(**_constant_maps())
     beam = make_gaussian(
         x=jnp.array([-0.1e-6, 0.1e-6]),
@@ -192,11 +194,12 @@ def test_sampling_diagnostic_accepts_constant_sample_action():
         waist_y=20e-9,
     )
 
-    diagnostic = view.sampling_diagnostic(
-        beam, phase_tol=1e-10, amplitude_tol=1e-10
+    diagnostic = sampling_error(
+        beam, pathlength=lambda xy, b: view.phase_shift(xy),
+        log_amplitude=lambda xy, b: view.log_transmission(xy),
     )
 
-    assert not np.asarray(diagnostic.needs_refinement).any()
+    assert np.all(np.asarray(diagnostic.phase_max_abs) < 1e-10)
     np.testing.assert_allclose(diagnostic.phase_max_abs, 0.0, atol=1e-10)
     np.testing.assert_allclose(diagnostic.amplitude_max_abs, 0.0, atol=1e-10)
 
@@ -218,8 +221,10 @@ def test_diagnostic_flags_a_gaussian_too_wide_for_the_sample():
         waist_y=15e-9,
     )
 
-    diagnostic = view.sampling_diagnostic(beam, phase_tol=0.1, support_radius=2.0)
-    assert np.asarray(diagnostic.needs_refinement).all()
+    diagnostic = sampling_error(
+        beam, pathlength=lambda xy, b: view.phase_shift(xy), support_radius=2.0,
+    )
+    assert np.all(np.asarray(diagnostic.phase_max_abs) > 0.1)
 
 
 

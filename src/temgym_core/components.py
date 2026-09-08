@@ -1904,13 +1904,6 @@ class InterpolatedSample2D(GaussianActionComponent):
             return jax.vmap(self._call_gaussian_single)(ray.to_vector())
         return self._call_gaussian_single(ray)
 
-    def sampling_diagnostic(self, ray: GaussianBeam, **kwargs):
-        """Run the repository's local quadratic-action adequacy diagnostic."""
-
-        from .gaussian_corrections import diagnose_gaussian_action_sampling
-
-        return diagnose_gaussian_action_sampling(self, ray, **kwargs)
-
     @classmethod
     def from_array(
         cls,
