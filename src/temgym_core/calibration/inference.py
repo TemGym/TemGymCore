@@ -11,9 +11,8 @@ import numpy as np
 from scipy.linalg import block_diag
 from scipy.stats import chi2, qmc
 
-from temgym_core.jax_least_squares import LeastSquaresResult, least_squares
-from temgym_core.jax_least_squares import least_squares as jax_least_squares
-from temgym_core.shared_least_squares import LocalResidual, fit_shared_least_squares
+from temgym_core.optimization import LeastSquaresResult, least_squares
+from temgym_core.optimization import LocalResidual, fit_shared_least_squares
 
 from .apertures import (
     alignment_residual,
@@ -1071,7 +1070,7 @@ def make_condenser_moment_predictor(*, folder):
 
 def _condenser_moment_predictor_from_material(*, material, detector):
     """Seven specimen-beam coordinates and supplied matrices -> measured moments."""
-    from temgym_core.coherent_moments import (
+    from temgym_core.image import (
         detector_moments,
         gaussian_image_characteristic,
         pixel_bin_correction,
@@ -1133,7 +1132,7 @@ def _condenser_moment_predictor_from_material(*, material, detector):
 
 def measure_condenser_moments(*, folder):
     """Measure pixels and initialize independent beams using fitted projector maps."""
-    from temgym_core.coherent_moments import measure_detector_moments, moment_regions
+    from temgym_core.image import measure_detector_moments, moment_regions
     from temgym_core.constants import energy2wavelength
 
     folder = Path(folder)
@@ -1242,7 +1241,7 @@ def search_alternatives(
             raise ValueError(
                 "Starting guesses must be strictly inside declared physical bounds."
             )
-        fit = jax_least_squares(
+        fit = least_squares(
             residual,
             guess,
             jac=derivative,

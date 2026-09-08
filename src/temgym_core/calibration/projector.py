@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.stats import chi2
 
-from temgym_core.jax_least_squares import least_squares
+from temgym_core.optimization import least_squares
 
 from .condenser_model import magnetic_strength_ratio, projector_at_voltage
 from .projector_images import (
@@ -442,7 +442,7 @@ def fit_projector_block(
 
 def measure_projector_moments(*, images_directory):
     """Extract shape and paired centroid measurements from recorded pixels."""
-    from temgym_core.coherent_moments import measure_detector_moments, moment_regions
+    from temgym_core.image import measure_detector_moments, moment_regions
 
     root = Path(images_directory)
     for folder in sorted(root.glob("voltage_*")):
@@ -480,7 +480,7 @@ def make_projector_moment_predictor(*, folder, controls, positions, angles):
     The lens geometry, illumination curvature/spread and specimen rotation are
     supplied by the trial model. This function never reads generating parameters.
     """
-    from temgym_core.coherent_moments import detector_moments
+    from temgym_core.image import detector_moments
     from temgym_core.constants import energy2wavelength
 
     from .gaussian import load_known_transmission

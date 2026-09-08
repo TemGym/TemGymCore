@@ -1,4 +1,5 @@
 from functools import lru_cache
+from dataclasses import replace
 import math
 
 import jax
@@ -13,6 +14,55 @@ except ImportError:
     plgpu = None
 
 from .grid import Grid
+
+
+def gaussian_image(
+    beam, detector, *, samples_per_pixel=2, blur_sigma_m=None,
+    padding_pixels=4, method="scan", tile_beams=32,
+):
+    """Integrate coherent Gaussian intensity over a native Detector's pixels.
+
+    The beam must already be at the detector plane. Fields interfere before
+    taking their squared magnitude. Optional isotropic Gaussian blur represents
+    source angular spread and/or detector PSF; its pixel integral is analytic.
+    Refine quadrature and padding separately to check convergence. The result
+    retains absolute flux, including losses outside the detector.
+    """
+    from jax.scipy.special import ndtr
+
+    if not isinstance(samples_per_pixel, int) or samples_per_pixel < 1:
+        raise ValueError("samples_per_pixel must be a positive integer.")
+    if not isinstance(padding_pixels, int) or padding_pixels < 0:
+        raise ValueError("padding_pixels must be a nonnegative integer.")
+    if len(detector.shape) != 2 or any(int(n) != n or n <= 0 for n in detector.shape):
+        raise ValueError("Detector shape must contain two positive integers.")
+    n = samples_per_pixel
+    ny, nx = detector.shape
+    dy, dx = detector.pixel_size
+    pad = padding_pixels * n if blur_sigma_m is not None else 0
+    grid = replace(
+        detector,
+        shape=(ny * n + 2 * pad, nx * n + 2 * pad),
+        pixel_size=(dy / n, dx / n),
+    )
+    field = evaluate_gaussians(beam, grid, method=method, tile_beams=tile_beams)
+    intensity = jnp.abs(field) ** 2
+    if blur_sigma_m is None:
+        return intensity.reshape(ny, n, nx, n).mean(axis=(1, 3)) * dy * dx
+
+    # Work along the detector axes, so rectangular pixels, pose and flips use
+    # the same Grid transform as ordinary TemGym field evaluation.
+    sigma = jnp.maximum(blur_sigma_m, 1e-30)
+
+    def response(count, pitch):
+        positions = (
+            jnp.arange(count * n + 2 * pad) + 0.5 - (count * n + 2 * pad) / 2
+        ) * pitch / n
+        edges = (jnp.arange(count + 1) - count / 2) * pitch
+        values = ndtr((edges[:, None] - positions[None, :]) / sigma)
+        return values[1:] - values[:-1]
+
+    return response(ny, dy) @ intensity @ response(nx, dx).T * (dy * dx / n**2)
 
 try:
     import cupy as cp
@@ -685,6 +735,7 @@ def evaluate_gaussians(
 
 
 __all__ = [
+    "gaussian_image",
     "evaluate_gaussians",
     "evaluate_gaussians_for",
     "evaluate_gaussians_gpu",

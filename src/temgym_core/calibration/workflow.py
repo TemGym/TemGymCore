@@ -1,5 +1,6 @@
 """Public acquisition, measurement, fitting and prediction steps."""
 
+import hashlib
 import json
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -23,7 +24,6 @@ from .projector import (
     simulate_projector_block,
 )
 from .projector_model import _generator_parameters, choose_objective_projector_views
-from .storage import input_signature as _input_signature
 
 HERE = Path(__file__).parent
 PRESETS = HERE / "presets"
@@ -32,7 +32,19 @@ PRESETS = HERE / "presets"
 def input_signature(*, paths, settings):
     """Invalidate saved stages when the shared TemGym physics changes too."""
     source = [*sorted(HERE.parent.glob("*.py")), *sorted(HERE.glob("*.py"))]
-    return _input_signature(paths=[*paths, *source], settings=settings)
+    digest = hashlib.sha256(json.dumps(settings, sort_keys=True).encode())
+    for filename in [*paths, *source]:
+        path = Path(filename)
+        if path.suffix == ".npz":
+            with np.load(path) as data:
+                for key in sorted(data.files):
+                    value = np.asarray(data[key])
+                    digest.update(key.encode())
+                    digest.update(str((value.shape, value.dtype)).encode())
+                    digest.update(value.tobytes())
+        else:
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 def _record_step(
@@ -611,7 +623,7 @@ def show_images(*, experiment_directory, fitted_predictions=False):
     """Display the recorded beam region; saved acquisitions retain the full camera."""
     import matplotlib.pyplot as plt
 
-    from temgym_core.coherent_moments import moment_regions
+    from temgym_core.image import moment_regions
 
     root = Path(experiment_directory)
     frames, titles = [], []

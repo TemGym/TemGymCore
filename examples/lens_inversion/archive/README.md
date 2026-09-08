@@ -1,5 +1,10 @@
 # Research checkpoint and cleanup
 
+This is a historical report. The later core cleanup also removed the NEOARM
+notebook and synthetic TOML fixture; recover the fixture from `31adfc3`.
+Use the [current notebook](../../microscope_models/microscope_calibration_pipeline.ipynb)
+for the maintained procedure.
+
 The complete pre-cleanup source tree is preserved in git commit **3d51e0e**
 (`Checkpoint NEOARM inversion research before section-wise cleanup`). This
 checkpoint records work in progress, including unresolved fits and historical

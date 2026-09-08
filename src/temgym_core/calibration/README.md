@@ -1,72 +1,40 @@
 # Reading the calibration code
 
-Start with `workflow.py`, which implements the notebook's public calls.
-Read each stage as **inputs → saved measurements → fitted result**.
-The package is a coaxial, two-voltage calibration procedure, not a general
-replacement for TemGym's component API.
+Start with `workflow.py`, which implements the notebook's public calls:
+**generate images → measure images → fit the microscope → check predictions**.
+Each stage receives explicit inputs and saves its outputs. The workflow also
+checks input contents and source changes before reusing saved results.
 
 | File | Responsibility |
 |---|---|
-| `workflow.py` | Public steps, defaults and stage reuse |
-| `acquisition.py` | Recorded condenser controls and synthetic acquisition |
-| `gaussian.py` | Known specimen, coherent Gaussian images and numerical convergence |
-| `projector_images.py` | Projector image records, calibrated pairs and intensity initialization |
-| `condenser_images.py` | Independent beam estimates for initialization |
-| `projector_model.py`, `condenser_model.py` | Physical parameters mapped into native TemGym components |
-| `projector.py` | Projector image moments and fitting |
-| `apertures.py` | Transmission, current uncertainties and independent aperture centres |
-| `inference.py` | Shared beam uncertainty, multiple starts and final joint fit |
-| `checks.py` | Frozen predictions, geometry scoring and display |
-| `storage.py` | Hash recorded array contents for cache validation |
-| `presets/` | Demonstration controls, guesses and bounds |
+| `workflow.py` | Public steps, defaults and cache validation |
+| `acquisition.py` | Condenser controls and synthetic acquisition |
+| `gaussian.py` | Known specimen, Gaussian image generation and convergence checks |
+| `projector_images.py`, `condenser_images.py` | Image records and intensity-based initialization |
+| `projector_model.py`, `condenser_model.py` | Physical parameters mapped to native components |
+| `projector.py` | Projector measurements and fitting |
+| `apertures.py` | Transmission, current uncertainty and aperture centres |
+| `inference.py` | Shared uncertainty, multiple starts and joint microscope fit |
+| `checks.py` | New predictions, geometry comparison and display |
+| `presets/` | Demonstration controls, independent guesses and bounds |
 
-The underlying physics stays in the existing library: `components.py`, `run.py`,
-`source.py`, `coherent_image.py`, `coherent_moments.py` and `intensity.py`. Optimization uses `jax_least_squares.py` and
-`shared_least_squares.py`. The calibration code does not define another lens
-matrix or Gaussian summation engine.
+Reusable physics stays in the parent package: `components.py`, `run.py`,
+`source.py`, `evaluate.py`, `image.py` and `multiscale_sample.py`. Numerical
+fitting uses `optimization.py`. See the [core code map](../README.md).
 
-## Audit decisions
+Image analysis receives the known specimen and detector calibration. Fitting
+receives the measured quantities and uncertainties. Generating parameters are
+reserved for scoring the recovered geometry. The final refinement returns to
+the original image moments; it does not double-count the intermediate fits.
 
-Checkpoint `61457c3` preserves the complete state before cleanup. The maintained
-functions were extracted from the older experiment scripts, keeping their
-numerical operations and consolidating their imports. Superseded acquisition
-studies, alternate fitting workflows, the direct-pixel fitting prototype,
-archived fitting notebooks and intermediate reports were removed. The final
-Gaussian recovery report remains as a reference result.
+Coherent sampling, detector integration and correlated measurements need their
+existing numerical checks. The saved Gaussian solution still has two acceptable
+second-aperture centres; successful predictions and local rank do not prove
+that the physical geometry is globally unique.
 
-The cleanup also fixes incomplete copying of known-specimen files, rejects
-nested acquisition-copy folders, includes the presets in the installed wheel,
-and removes unused beam Jacobians. Stage signatures now cover all TemGym
-Python source, including the low-level Gaussian renderer. A source change
-invalidates saved stages rather than silently reusing an older calculation.
-
-Some complexity is necessary: coherent sampling and detector integration need
-convergence checks; correlated measurements need shared covariance; the final
-fit must return to the original image measurements; alternative aperture
-centres must remain visible. Removing these would change the experiment or
-make its uncertainty misleading. The intensity approximation remains useful
-for initialization and the explicit faster acquisition option.
-
-The saved solution still has two acceptable second-aperture centres. Local
-rank and successful prediction checks do not prove global uniqueness.
-
-## Validation at checkpoint `fc992bc`
-
-- 70 targeted tests pass, covering matrix/Gaussian agreement, image moments,
-  correlated currents, shared covariance, nonlinear refinement and stage reuse.
-- The full 200/195 kV acquisition completes through the new API using the
-  intensity option. The moved Gaussian camera separately matches analytic
-  pixel integrals; the complete Gaussian batch was not regenerated for this audit.
-- On the recorded Gaussian dataset, the full 52-parameter residual reproduces
-  the reference chi-squared of 1650.0543239. Directional finite differences agree
-  with JAX to 2.3e-6 relative or better. Recomputed covariance differs by 1.6e-12
-  relative. This check forbids generating-parameter reads and Gaussian rendering
-  during fitting. It re-evaluates the saved solution, rather than repeating the
-  multiple-start search.
-- The built wheel imports outside the repository and includes all seven presets.
-  Notebook schema and code cells validate; old execution outputs were cleared.
-
-Calibration Python shrank from 39 files / 17,159 lines to 13 files / 6,984 lines
-(59% fewer lines). The underlying reusable TemGym physics remains separately tested.
-
-The subsequent core cleanup is described in the [core code map](../README.md).
+The saved reference result is
+[full_gaussian_recovery.json](../../../examples/microscope_models/calibration_results/full_gaussian_recovery.json).
+At checkpoint `fc992bc`, its residual was independently re-evaluated at
+chi-squared 1650.0543239, with JAX directional derivatives agreeing with finite
+differences to 2.3e-6 relative or better. The later structural cleanups preserve
+the numerical algorithms; they do not repeat the full multiple-start search.

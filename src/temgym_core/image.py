@@ -1,15 +1,18 @@
-"""Coherent wave moments and their transport through TemGym ray matrices.
+"""Measure image moments and predict them with TemGym ray matrices.
 
 The specimen integrals include its phase gradient and amplitude-gradient
 diffraction. They predict image measurements without rendering detector pixels.
+The final section provides the faster intensity approximation for initialization.
 Coordinates are [x, y, theta_x, theta_y], with optical path measured in metres.
 """
 
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.nn import softmax
+from jax.scipy.special import ndtr
 
 
 @dataclass(frozen=True)
@@ -312,3 +315,153 @@ def propagate_gaussian_mixture(source, components, extra_covariance):
     mean, covariance = gaussian_phase_space_moments(output)
     matrix = column_matrix(components, source_z=source.z)[:4, :4]
     return mean, covariance + matrix @ extra_covariance @ matrix.T
+
+
+# Fast intensity approximation used for initialization.
+
+
+@dataclass(frozen=True)
+class GaussianIntensitySample:
+    """Positive Gaussian-mixture specimen with a common round kernel."""
+
+    centres: object
+    transmission: object
+    kernel_variance: object
+
+    def illuminate(self, mean_position, spatial_variance):
+        combined = spatial_variance + self.kernel_variance
+        centres = (
+            spatial_variance * self.centres + self.kernel_variance * mean_position
+        ) / combined
+        variance = spatial_variance * self.kernel_variance / combined
+        log_weights = jnp.log(self.transmission) - jnp.sum(
+            (self.centres - mean_position) ** 2, axis=-1
+        ) / (2 * combined)
+        return centres, variance, jax.nn.softmax(log_weights)
+
+
+def gaussian_intensity_image(
+    centres,
+    variance,
+    weights,
+    dose=1.0,
+    background=0.0,
+    *,
+    shape_yx,
+    psf_sigma_pixels=0.0,
+):
+    """Fast intensity approximation: integrate independent round Gaussian spots.
+
+    Centres, variance and PSF use pixel units. Weights are integrated spot
+    intensities. Off-detector flux is lost; no field interference is included.
+    """
+    ny, nx = shape_yx
+    xe, ye = jnp.arange(nx + 1) - nx / 2, jnp.arange(ny + 1) - ny / 2
+    width = jnp.sqrt(variance + psf_sigma_pixels**2)
+    px = normal_interval_probability(
+        (xe[:-1, None] - centres[:, 0]) / width,
+        (xe[1:, None] - centres[:, 0]) / width,
+    )
+    py = normal_interval_probability(
+        (ye[:-1, None] - centres[:, 1]) / width,
+        (ye[1:, None] - centres[:, 1]) / width,
+    )
+    return dose * ((py * weights) @ px.T) + background
+
+
+def radial_aperture_transmission(
+    *,
+    radii_m,
+    edge_width_m,
+    voltage_v,
+    order=256,
+    edge_samples=256,
+    beamlet_waist_m=0.5e-9,
+):
+    """Round Gaussian phase-space flux through TemGym sigmoid apertures.
+
+    The radial quadrature follows the beam support, retaining narrow crossovers.
+    Component beamlet powers are tabulated once; interpolation and quadrature
+    use JAX. Refine both orders separately when using a new physical regime.
+    """
+    import numpy as np
+    from jax.scipy.special import i0e
+
+    from .components import SigmoidAperture
+    from .gaussian import make_gaussian
+
+    nodes, weights = map(jnp.asarray, np.polynomial.legendre.leggauss(order))
+    tables = []
+    for radius in radii_m:
+        limit = radius + 12 * edge_width_m
+        grid = jnp.linspace(
+            1e-15, limit, int(np.ceil(limit / edge_width_m * edge_samples)) + 1
+        )
+        beam = make_gaussian(
+            x=grid,
+            y=0.0,
+            voltage=voltage_v,
+            waist_x=beamlet_waist_m,
+            waist_y=beamlet_waist_m,
+        )
+        out = SigmoidAperture(
+            radius=radius, edge_width=edge_width_m, sharpness=1.0, z=0.0
+        )(beam)
+        power = jnp.abs(out.amplitude / beam.amplitude) ** 2 * jnp.sqrt(
+            jnp.linalg.det(jnp.imag(beam.Q_inv)) / jnp.linalg.det(jnp.imag(out.Q_inv))
+        )
+        tables.append((grid, power, limit))
+
+    def transmission(mean, variance):
+        variance = variance - beamlet_waist_m**2 / 4
+        sigma = jnp.sqrt(variance)
+        offset = jnp.sqrt(jnp.dot(mean, mean) + 1e-40)
+        results = []
+        for grid, power, limit in tables:
+            lower = jnp.maximum(0.0, offset - 10 * sigma)
+            upper = jnp.minimum(limit, offset + 10 * sigma)
+            width = jnp.maximum(upper - lower, 0.0)
+            radial = lower + (nodes + 1) * width / 2
+            density = (
+                radial
+                / variance
+                * jnp.exp(-((radial - offset) ** 2) / (2 * variance))
+                * i0e(radial * offset / variance)
+            )
+            results.append(
+                jnp.sum(weights * width / 2 * density * jnp.interp(radial, grid, power))
+            )
+        return jnp.stack(results)
+
+    return jax.jit(transmission)
+
+
+@jax.jit
+def fit_intensity_scale_and_background(shape, image, noise):
+    """Exact two-variable nonnegative least squares for exposure and background."""
+    design = (
+        jnp.stack((shape.ravel(), jnp.ones(shape.size)), axis=1)
+        / noise.ravel()[:, None]
+    )
+    target = image.ravel() / noise.ravel()
+    norms = jnp.linalg.norm(design, axis=0)
+    matrix = design / jnp.where(norms > 0, norms, 1.0)
+    solution = jnp.linalg.lstsq(matrix, target, rcond=None)[0]
+    single = jnp.maximum(matrix.T @ target, 0.0)
+    candidates = jnp.stack(
+        (
+            jnp.zeros(2),
+            jnp.array([single[0], 0.0]),
+            jnp.array([0.0, single[1]]),
+            solution,
+        )
+    )
+    costs = jnp.sum((matrix @ candidates.T - target[:, None]) ** 2, axis=0)
+    costs = costs.at[3].set(jnp.where(jnp.all(solution >= 0), costs[3], jnp.inf))
+    return candidates[jnp.argmin(costs)] / jnp.where(norms > 0, norms, 1.0)
+
+
+def normal_interval_probability(lower, upper):
+    """Stable standard-normal probability on an ordered interval."""
+    # Positive tails use symmetry to avoid subtracting two numbers near one.
+    return jnp.where(lower > 0, ndtr(-lower) - ndtr(-upper), ndtr(upper) - ndtr(lower))

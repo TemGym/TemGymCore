@@ -9,8 +9,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from temgym_core.intensity import GaussianIntensityDetector, GaussianIntensitySample
-from temgym_core.jax_least_squares import least_squares
+from temgym_core.image import GaussianIntensitySample, gaussian_intensity_image
+from temgym_core.optimization import least_squares
 
 from .condenser_model import specimen_moments
 
@@ -68,9 +68,6 @@ def make_image_operator(*, projector_matrices, template, detector):
     kernel_variance = detector["sample_kernel_sigma_m"] ** 2
     pitch = detector["pixel_pitch_m"]
     sample = GaussianIntensitySample(centres, transmission, kernel_variance)
-    sensor = GaussianIntensityDetector(
-        tuple(detector["shape_yx"]), pitch, detector["psf_sigma_pixels"]
-    )
 
     def render(parameters, projector_matrices_override=None):
         # A known magnetic projector model can supply a differentiable voltage
@@ -98,8 +95,10 @@ def make_image_operator(*, projector_matrices, template, detector):
         exposures = parameters[7:].reshape(-1, 2)
 
         def frame(xy, variance, exposure):
-            return sensor.image_pixels(
-                xy, variance, weights, jnp.exp(exposure[0]), jnp.exp(exposure[1])
+            return gaussian_intensity_image(
+                xy, variance, weights, jnp.exp(exposure[0]), jnp.exp(exposure[1]),
+                shape_yx=tuple(detector["shape_yx"]),
+                psf_sigma_pixels=detector["psf_sigma_pixels"],
             )
 
         return jax.vmap(frame)(detector_centres, variance, exposures)

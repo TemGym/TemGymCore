@@ -2,13 +2,19 @@
 
 import jax.numpy as jnp
 import numpy as np
+from scipy.special import ndtr
 
-from temgym_core.source import gaussian_waist
-from temgym_core.coherent_moments import propagate_gaussian_mixture
-from temgym_core.coherent_moments import SampledTransmission
-from temgym_core.constants import energy2wavelength
-from temgym_core.run import column_matrix
 from temgym_core.components import solenoid_column
+from temgym_core.constants import energy2wavelength
+from temgym_core.image import (
+    GaussianIntensitySample,
+    SampledTransmission,
+    gaussian_intensity_image,
+    normal_interval_probability,
+    propagate_gaussian_mixture,
+)
+from temgym_core.run import column_matrix
+from temgym_core.source import gaussian_waist
 
 
 def test_transparent_sample_preserves_mixed_gaussian_and_phase_lens():
@@ -69,7 +75,7 @@ def test_native_gaussian_mixture_matches_matrix_transport():
 
 
 def test_measured_moment_covariance_matches_repeated_detector_noise():
-    from temgym_core.coherent_moments import measure_detector_moments
+    from temgym_core.image import measure_detector_moments
 
     y, x = np.indices((24, 24), dtype=float) - 11.5
     signal = np.exp(-((x - 0.7) ** 2 / 8 + (y + 0.4) ** 2 / 12))
@@ -94,7 +100,7 @@ def test_measured_moment_covariance_matches_repeated_detector_noise():
 def test_pixel_bin_correction_matches_exact_integrated_gaussian_pixels():
     from scipy.special import ndtr
 
-    from temgym_core.coherent_moments import pixel_bin_correction
+    from temgym_core.image import pixel_bin_correction
 
     mean = jnp.array([0.17, -0.22])
     variance = jnp.array([0.52**2, 0.67**2])
@@ -118,7 +124,7 @@ def test_pixel_bin_correction_matches_exact_integrated_gaussian_pixels():
 
 
 def test_characteristic_integral_agrees_with_gaussian_matrix_transport():
-    from temgym_core.coherent_moments import gaussian_image_characteristic
+    from temgym_core.image import gaussian_image_characteristic
 
     wavelength = 2.5e-12
     axis = jnp.linspace(-180e-9, 180e-9, 361)
@@ -162,3 +168,57 @@ def test_characteristic_integral_agrees_with_gaussian_matrix_transport():
             - 0.5 * frequency @ expected_covariance @ frequency
         )
         np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-12)
+
+
+def test_detector_matches_independent_pixel_integrals_and_loses_offscreen_flux():
+    centres = jnp.array([[1.0, -0.5], [20.0, 0.0]])
+    weights = jnp.array([0.4, 0.6])
+    actual = gaussian_intensity_image(
+        centres, 0.7**2, weights, shape_yx=(8, 10), psf_sigma_pixels=0.3
+    )
+    x, y = np.arange(11) - 5, np.arange(9) - 4
+    width = np.sqrt(0.7**2 + 0.3**2)
+    px = np.diff(ndtr((x[:, None] - np.asarray(centres)[:, 0]) / width), axis=0)
+    py = np.diff(ndtr((y[:, None] - np.asarray(centres)[:, 1]) / width), axis=0)
+    np.testing.assert_allclose(actual, (py * weights) @ px.T, atol=1e-16)
+    assert 0.399 < float(actual.sum()) < 0.4
+
+
+def test_specimen_gaussian_product_matches_direct_product():
+    sample = GaussianIntensitySample(jnp.array([[1.0, -2.0]]), jnp.array([0.7]), 0.5)
+    mean = jnp.array([-0.3, 0.1])
+    centres, variance, weights = sample.illuminate(mean, 1.2)
+    points = jnp.array([[0.0, 0.0], [1.0, -1.0], [2.0, -3.0]])
+    direct = -0.5 * jnp.sum((points - mean) ** 2, axis=1) / 1.2
+    direct += -0.5 * jnp.sum((points - sample.centres[0]) ** 2, axis=1) / 0.5
+    product = -0.5 * jnp.sum((points - centres[0]) ** 2, axis=1) / variance
+    np.testing.assert_allclose(direct - direct[0], product - product[0], atol=2e-14)
+    np.testing.assert_allclose(weights, [1.0])
+
+
+def test_nonnegative_exposure_background_matches_active_set_reference():
+    from scipy.optimize import nnls
+
+    from temgym_core.image import fit_intensity_scale_and_background
+
+    shape = np.array([[0.0, 0.1], [0.5, 1.0]])
+    noise = np.array([[1.0, 2.0], [1.0, 3.0]])
+    for coefficients in ([3.0, 2.0], [-2.0, 4.0], [3.0, -1.0]):
+        observed = coefficients[0] * shape + coefficients[1]
+        design = np.stack((shape.ravel(), np.ones(4)), axis=1) / noise.ravel()[:, None]
+        expected = nnls(design, observed.ravel() / noise.ravel())[0]
+        np.testing.assert_allclose(
+            fit_intensity_scale_and_background(
+                jnp.asarray(shape), jnp.asarray(observed), jnp.asarray(noise)
+            ),
+            expected,
+            atol=1e-12,
+        )
+
+
+def test_normal_interval_preserves_small_positive_tail_probability():
+    probability = float(
+        normal_interval_probability(jnp.asarray(9.0), jnp.asarray(10.0))
+    )
+    assert probability > 0.0
+    np.testing.assert_allclose(probability, ndtr(-9.0) - ndtr(-10.0), rtol=1e-13)

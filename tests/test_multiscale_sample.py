@@ -1,6 +1,3 @@
-import copy
-from pathlib import Path
-import tomllib
 
 import jax
 import jax.numpy as jnp
@@ -643,61 +640,19 @@ def test_global_wide_and_compact_tiles_are_registered_views_of_one_scene(
         )
 
 
-def test_toml_factory_consumes_certificate_pose_halo_and_vacuum_perforation():
-    config_path = (
-        Path(__file__).resolve().parents[1]
-        / "tests"
-        / "fixtures"
-        / "neoarm_synthetic_column.toml"
-    )
-    with config_path.open("rb") as stream:
-        config = tomllib.load(stream)
-    atlas = MAGICALSampleAtlas.from_toml(
-        config_path,
+def test_native_atlas_preserves_pose_halo_and_vacuum_perforation():
+    atlas = MAGICALSampleAtlas.nominal(
         shape_yx=(128, 128),
         region_shape_yx=(64, 64),
         authoritative_multilayer_shape_yx=(128, 128),
         max_levels=2,
         global_support_margin_m=0.0,
+        pose_translation_xy_m=(2e-9, -1e-9),
+        pose_rotation_rad=np.deg2rad(3.25),
+        pose_tilt_xy_rad=(1.2e-3, -0.8e-3),
+        interpolation_halo_knots=4,
     )
     certificate = atlas.certificate
-
-    assert certificate.certificate_source == config["sample"]["certificate"]["source"]
-    assert certificate.silicon_layer_width_m == pytest.approx(13e-9)
-    assert certificate.silicon_germanium_layer_width_m == pytest.approx(10e-9)
-    assert certificate.silicon_layer_width_uncertainty_m == pytest.approx(0.25e-9)
-    assert certificate.silicon_germanium_layer_width_uncertainty_m == pytest.approx(
-        0.25e-9
-    )
-    assert certificate.interface_width_m == pytest.approx(1e-9)
-    assert certificate.layer_phase_step_rad == pytest.approx(0.06)
-    assert certificate.layer_log_field_amplitude_step == pytest.approx(0.035)
-    assert certificate.silicon_lattice_metadata == {
-        "spacing_m": pytest.approx(0.31356e-9),
-        "spacing_standard_uncertainty_m": pytest.approx(0.00005e-9),
-        "plane_hkl": (1, 1, 1),
-        "zone_axis_uvw": (1, -1, 0),
-        "certificate_source": config["sample"]["certificate"]["source"],
-    }
-    assert len(certificate.layer_boundaries) == 16
-    first, second = certificate.layer_boundaries[:2]
-    assert (first.index, first.left_material, first.right_material) == (
-        1,
-        "SiGe",
-        "Si",
-    )
-    assert first.coordinate_m == pytest.approx(10e-9)
-    assert first.standard_uncertainty_m == pytest.approx(0.25e-9)
-    assert second.coordinate_m == pytest.approx(23e-9)
-    assert second.standard_uncertainty_m == pytest.approx(np.sqrt(2) * 0.25e-9)
-    assert certificate.layer_boundary_coordinates_m[-1] == pytest.approx(184e-9)
-    assert atlas.perforation.centre_xy_m == pytest.approx((0.0, 0.0))
-    assert certificate.perforation_diameter_m == pytest.approx(40e-9)
-    assert atlas.pose_translation_xy_m == pytest.approx((2e-9, -1e-9))
-    assert atlas.pose_rotation_rad == pytest.approx(np.deg2rad(3.25))
-    assert atlas.pose_tilt_xy_rad == pytest.approx((1.2e-3, -0.8e-3))
-    assert atlas.boundary_default == "vacuum"
-    assert atlas.interpolation_halo_knots == 4
 
     finest = atlas.pyramid.levels[0]
     xx, yy = np.meshgrid(finest.x_coords_m, finest.y_coords_m, indexing="xy")
@@ -767,51 +722,6 @@ def test_toml_factory_consumes_certificate_pose_halo_and_vacuum_perforation():
     )
     assert periodic_view.selection.crop_halo_knots == 0
     assert periodic_view.selection.interpolation_halo_knots == 1
-
-    shifted_boundaries = copy.deepcopy(config)
-    shifted_boundaries["sample"]["certificate"][
-        "layer_boundary_coordinates_m"
-    ][0] = 6e-9
-    shifted_atlas = MAGICALSampleAtlas.from_config(
-        shifted_boundaries,
-        shape_yx=(32, 32),
-        region_shape_yx=(64, 64),
-        authoritative_multilayer_shape_yx=(16, 16),
-        max_levels=1,
-        global_support_margin_m=0.0,
-    )
-    region = atlas.multilayer_region_1
-    probe = jnp.asarray(
-        (
-            region.centre_xy_m[0] - 0.5 * region.size_xy_m[0] + 8e-9,
-            region.centre_xy_m[1],
-        )
-    )
-    baseline_action = SampleView.from_level(
-        atlas.pyramid_for_region(region.name).levels[0]
-    ).evaluate_actions(probe)
-    shifted_action = SampleView.from_level(
-        shifted_atlas.pyramid_for_region(region.name).levels[0]
-    ).evaluate_actions(probe)
-    assert abs(float(shifted_action[1] - baseline_action[1])) > 1e-3
-
-    unpaired_boundaries = copy.deepcopy(config)
-    del unpaired_boundaries["sample"]["certificate"][
-        "layer_boundary_standard_uncertainties_m"
-    ]
-    with pytest.raises(ValueError, match="provided together"):
-        MAGICALSampleAtlas.from_config(unpaired_boundaries)
-
-    incompatible = copy.deepcopy(config)
-    incompatible["sample"]["certificate"]["perforation_diameter_m"] = 0.1e-3
-    with pytest.raises(ValueError, match="incompatible"):
-        MAGICALSampleAtlas.from_config(
-            incompatible,
-            shape_yx=(32, 32),
-            region_shape_yx=(16, 16),
-            authoritative_multilayer_shape_yx=(16, 16),
-            max_levels=1,
-        )
 
 
 def test_rotated_anisotropic_views_cover_all_nominal_acquisition_bands(

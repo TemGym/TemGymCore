@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from temgym_core.intensity import GaussianIntensityDetector
-from temgym_core.jax_least_squares import least_squares
+from temgym_core.image import gaussian_intensity_image
+from temgym_core.optimization import least_squares
 from temgym_core.multiscale_sample import MAGICALSampleAtlas, SampleView
 
 from .projector_model import (
@@ -104,14 +104,14 @@ def make_magical_image_operator(spec, template):
     """Seven fitted quantities: log scale, angle, log width_px, dx, dy, log dose, log background."""
     centres = jnp.asarray(template["centres_m"]) / spec["pixel_pitch_m"]
     weights = jnp.asarray(template["weights"])
-    detector = GaussianIntensityDetector(tuple(spec["shape_yx"]))
 
     def image(p):
         c, s = jnp.cos(p[1]), jnp.sin(p[1])
         rotation = jnp.array([[c, -s], [s, c]])
         xy = jnp.exp(p[0]) * (centres @ rotation.T) + p[3:5]
-        return detector.image_pixels(
-            xy, jnp.exp(2 * p[2]), weights, jnp.exp(p[5]), jnp.exp(p[6])
+        return gaussian_intensity_image(
+            xy, jnp.exp(2 * p[2]), weights, jnp.exp(p[5]), jnp.exp(p[6]),
+            shape_yx=tuple(spec["shape_yx"]),
         )
 
     return jax.jit(image)
@@ -719,7 +719,6 @@ def make_beam_shift_image_operator(spec, template):
     intensity = jnp.asarray(template["intensity"]).ravel()
     radius = spec["specimen"]["illumination_radius_m"]
     edge_width = spec["specimen"]["illumination_edge_m"]
-    sensor = GaussianIntensityDetector(tuple(spec["shape_yx"]))
 
     def image(p):
         c, s = jnp.cos(p[1]), jnp.sin(p[1])
@@ -730,8 +729,9 @@ def make_beam_shift_image_operator(spec, template):
         distance = jnp.sqrt(jnp.sum((centres - p[7:9] * 1e-9) ** 2, axis=1) + 1e-40)
         weights = intensity * jax.nn.sigmoid((radius - distance) / edge_width)
         weights = weights / weights.sum()
-        return sensor.image_pixels(
-            xy, jnp.exp(2 * p[2]), weights, jnp.exp(p[5]), jnp.exp(p[6])
+        return gaussian_intensity_image(
+            xy, jnp.exp(2 * p[2]), weights, jnp.exp(p[5]), jnp.exp(p[6]),
+            shape_yx=tuple(spec["shape_yx"]),
         )
 
     return jax.jit(image)

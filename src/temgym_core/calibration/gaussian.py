@@ -53,7 +53,7 @@ def prepare_known_transmission(
     """
     import jax
 
-    from temgym_core.coherent_moments import SampledTransmission
+    from temgym_core.image import SampledTransmission
 
     half = int(np.ceil(half_width_nm / step_nm))
     axis = np.arange(-half, half + 1) * step_nm * 1e-9
@@ -174,7 +174,7 @@ def condenser_gaussian_state(
 ):
     """Generate the specimen state by native Gaussian source/lens propagation."""
     from temgym_core.source import gaussian_waist
-    from temgym_core.coherent_moments import propagate_gaussian_mixture
+    from temgym_core.image import propagate_gaussian_mixture
     from temgym_core.constants import energy2wavelength
     from temgym_core.components import solenoid_column
 
@@ -221,7 +221,7 @@ def save_known_transmission(path, transmission):
 
 
 def load_known_transmission(path):
-    from temgym_core.coherent_moments import SampledTransmission
+    from temgym_core.image import SampledTransmission
 
     data = dict(np.load(path))
     sampled = SampledTransmission(
@@ -264,8 +264,8 @@ def make_gaussian_renderer(
     """
     import jax
 
-    from temgym_core.coherent_image import CoherentDetector, blurred_gaussian_image
-    from temgym_core.evaluate import gpu_kernel_available
+    from temgym_core.components import Detector
+    from temgym_core.evaluate import gaussian_image, gpu_kernel_available
     from temgym_core.gaussian import FreeSpacePropagator
     from temgym_core.run import run_to_end
 
@@ -281,7 +281,7 @@ def make_gaussian_renderer(
                 "Use a centred region with even padding inside the camera."
             )
         if shape not in compiled:
-            sensor = CoherentDetector(shape, pixel_pitch_m, 0.0, samples_per_pixel)
+            sensor = Detector(z=0.0, shape=shape, pixel_size=(pixel_pitch_m, pixel_pitch_m))
 
             def evaluate(source, components, angular_variance, offset_pixels):
                 output = run_to_end(
@@ -298,9 +298,10 @@ def make_gaussian_renderer(
                     angular_variance * jnp.sum(matrix[:2, 2] ** 2)
                     + (psf_sigma_pixels * pixel_pitch_m) ** 2
                 )
-                return blurred_gaussian_image(
+                return gaussian_image(
                     output,
                     sensor,
+                    samples_per_pixel=samples_per_pixel,
                     blur_sigma_m=blur,
                     padding_pixels=padding_pixels,
                     method=method,
@@ -492,7 +493,7 @@ def replace_condenser_with_gaussian_images(
 
     import jax
 
-    from temgym_core.coherent_moments import detector_moments
+    from temgym_core.image import detector_moments
     from temgym_core.constants import energy2wavelength
 
     from .condenser_images import beam_coordinates
@@ -816,7 +817,7 @@ def refine_condenser_pixel_integration(
     """
     import jax
 
-    from temgym_core.coherent_moments import detector_moments
+    from temgym_core.image import detector_moments
     from temgym_core.constants import energy2wavelength
 
     from .condenser_images import beam_coordinates
@@ -1036,7 +1037,7 @@ def check_gaussian_moment_numerics(
     """
     import jax
 
-    from temgym_core.coherent_moments import measure_detector_moments, moment_regions
+    from temgym_core.image import measure_detector_moments, moment_regions
 
     from .condenser_images import beam_coordinates
     from .condenser_model import condenser_at_voltage, projector_at_voltage

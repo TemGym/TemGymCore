@@ -205,7 +205,7 @@ def make_radial_transmission(*, specification, order=256, edge_samples=256):
     miss a nanometre crossover in a micrometre aperture. A tabulated component
     power curve keeps differentiation inexpensive; its convergence is tested.
     """
-    from temgym_core.intensity import radial_aperture_transmission
+    from temgym_core.image import radial_aperture_transmission
 
     return radial_aperture_transmission(
         radii_m=specification["radii_m"],

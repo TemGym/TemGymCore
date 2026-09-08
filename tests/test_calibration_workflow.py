@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from temgym_core import calibration
-from temgym_core.calibration.storage import input_signature
+from temgym_core.calibration.workflow import input_signature
 from temgym_core.calibration.workflow import _record_step
 
 
