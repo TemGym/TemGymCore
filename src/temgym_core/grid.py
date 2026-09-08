@@ -1,10 +1,10 @@
 from typing import Union
 import numpy as np
+from numba import njit
 import jax.numpy as jnp
 
 from . import Degrees, ShapeYX, CoordsXY, ScaleYX, PixelsYX
 from .ray import Ray
-from .utils import inplace_sum, try_ravel, try_reshape
 from .coordinate_transforms import pixels_to_metres_transform, apply_transformation
 
 
@@ -158,12 +158,12 @@ class Grid:
         coords_x, coords_y = coords
         metres_to_pixels_mat = self.metres_to_pixels_mat
         pixels_y, pixels_x = apply_transformation(
-            try_ravel(coords_y), try_ravel(coords_x), metres_to_pixels_mat
+            _try_ravel(coords_y), _try_ravel(coords_x), metres_to_pixels_mat
         )
         if cast:
             pixels_y = jnp.round(pixels_y).astype(jnp.int32)
             pixels_x = jnp.round(pixels_x).astype(jnp.int32)
-        return try_reshape(pixels_y, coords_y), try_reshape(pixels_x, coords_x)
+        return _try_reshape(pixels_y, coords_y), _try_reshape(pixels_x, coords_x)
 
     def pixels_to_metres(self, pixels: PixelsYX) -> CoordsXY:
         """Convert pixel indices to metric coordinates.
@@ -187,9 +187,9 @@ class Grid:
         pixels_y, pixels_x = pixels
         pixels_to_metres_mat = self.pixels_to_metres_mat
         metres_y, metres_x = apply_transformation(
-            try_ravel(pixels_y), try_ravel(pixels_x), pixels_to_metres_mat
+            _try_ravel(pixels_y), _try_ravel(pixels_x), pixels_to_metres_mat
         )
-        return try_reshape(metres_x, pixels_x), try_reshape(metres_y, pixels_y)
+        return _try_reshape(metres_x, pixels_x), _try_reshape(metres_y, pixels_y)
 
     def ray_at_grid(
         self, px_y: float, px_x: float, dx: float = 0., dy: float = 0., z: float | None = None
@@ -280,7 +280,7 @@ class Grid:
             yy, xx = ray
         if acc is None:
             acc = np.zeros(self.shape, dtype=int)
-        inplace_sum(
+        _inplace_sum(
             np.asarray(yy),
             np.asarray(xx),
             np.ones(yy.shape, dtype=bool),
@@ -288,3 +288,31 @@ class Grid:
             acc,
         )
         return acc
+
+
+@njit
+def _inplace_sum(px_y, px_x, mask, frame, buffer):
+    """Add masked samples into existing detector pixels, ignoring out-of-bounds coordinates."""
+    h, w = buffer.shape
+    n = px_y.size
+    for i in range(n):
+        py = px_y[i]
+        px = px_x[i]
+        if mask[i] and (0 <= px_y[i] < h) and (0 <= px_x[i] < w):
+            buffer[py, px] += frame[i]
+
+
+def _try_ravel(val):
+    """Flatten array inputs; leave scalars as supplied."""
+    try:
+        return val.ravel()
+    except AttributeError:
+        return val
+
+
+def _try_reshape(val, maybe_has_shape):
+    """Restore the reference array shape; leave scalar references unchanged."""
+    try:
+        return val.reshape(maybe_has_shape.shape)
+    except AttributeError:
+        return val

@@ -172,6 +172,14 @@ def normal_interval_probability(lower, upper):
     return jnp.where(lower > 0, ndtr(-lower) - ndtr(-upper), ndtr(upper) - ndtr(lower))
 
 
+def zero_phase(u, idx_x, idx_y):
+    """Remove the uniform phase at array index (idx_x, idx_y)."""
+    u_centre = u[idx_x, idx_y]
+    phase_difference = 0 - jnp.angle(u_centre)
+    u_new = u * jnp.exp(1j * phase_difference)
+    return u_new
+
+
 def _pack_gaussian_params(r_centre, dr, amplitude, pathlength, Q_inv, k):
     """Pack phase coefficients identically for dense and spatial GPU kernels."""
     f = jnp.float64
@@ -741,6 +749,7 @@ def gpu_kernel_available() -> bool:
 __all__ = [
     "gaussian_image",
     "gaussian_intensity_image",
+    "zero_phase",
     "evaluate_gaussians",
     "evaluate_gaussians_for",
     "evaluate_gaussians_gpu",

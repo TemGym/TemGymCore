@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Sequence, Union, Any, Callable, Generator
 
 import jax
 import jax.numpy as jnp
-from .utils import custom_jacobian_matrix
 from .propagator import FreeSpaceParaxial, BasePropagator, Propagator
 from .components import Component
 from .source import Source
@@ -473,3 +472,12 @@ def solenoid_column_matrix(gaps, lengths, strengths):
     from .components import solenoid_column
 
     return column_matrix(solenoid_column(gaps, lengths, strengths))
+
+
+def custom_jacobian_matrix(ray_jac):
+    """Convert a Ray Jacobian to [..., 5, 5] in [x, y, dx, dy, _one] order."""
+    coordinates = ('x', 'y', 'dx', 'dy', '_one')
+    return jnp.stack([
+        jnp.stack([getattr(getattr(ray_jac, row), col) for col in coordinates], axis=-1)
+        for row in coordinates
+    ], axis=-2)

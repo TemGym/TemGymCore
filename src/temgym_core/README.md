@@ -20,6 +20,23 @@ The remaining files supply constants, coordinate transforms, aberrations and
 array/tree utilities. The [calibration code map](calibration/README.md)
 explains the experiment-specific code.
 
+The former `utils.py` helpers now live with their callers: source sampling in
+`source.py`, detector accumulation and reshaping in `grid.py`, Ray Jacobian
+conversion in `run.py`, and field phase normalization in `evaluate.py`.
+The two 2D Fresnel entry points share one kernel in `propagator.py`, retaining
+their existing NumPy/JAX interfaces and axial phase conventions. Angular-spectrum
+propagation lives there too. These sampled-field routines also provide independent
+checks of Gaussian propagation.
+
+The magnetic cube recipe and its projection helper live beside their notebooks in
+[holography_distortion/magnetic_cube.py](../../examples/holography_distortion/magnetic_cube.py).
+The unused 1D Fresnel and action-centre helpers were removed; the circular
+comparison mask and thin-lens FFT reference live in `tests/test_gaussians.py`.
+This cleanup passed 108 targeted tests with two existing skips. Before/after
+checks matched exactly for sampled coordinates, weights, detector accumulation,
+Ray Jacobians, tested FFT fields and derivatives, and the magnetic cube outputs.
+Notebook imports were checked; full notebook simulations were not repeated.
+
 `transfer_matrices.py` defines each matrix once, with a small conversion helper
 for SymPy, NumPy and JAX. The former `transfer.py` helpers live here too.
 Cumulative maps follow travel order: `M0`, `M1 @ M0`, `M2 @ M1 @ M0`.

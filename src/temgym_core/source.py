@@ -2,19 +2,13 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
+from numba import njit
 import jax_dataclasses as jdc
 
 from .tree_utils import HasParamsMixin
 from .gaussian import LENGTH, GaussianBeam, make_gaussian
 from .constants import energy2wavelength
 from .ray import Ray
-from .utils import (
-    concentric_rings,
-    fibonacci_spiral,
-    random_coords,
-    uniform_amp_from_area,
-    uniform_disk,
-)
 from . import CoordsXY
 
 if TYPE_CHECKING:
@@ -790,3 +784,234 @@ def gaussian_waist(*, z, voltage, rms_size, x=0.0, y=0.0, theta_x=0.0, theta_y=0
         amplitude=jnp.sqrt(2 / (jnp.pi * width**2)) + 0j,
         Q_inv=1j * (2 / (k * width**2)) * jnp.eye(2), pathlength=0.0,
     )
+
+
+@njit
+def _multi_cumsum_inplace(values, partitions, start):
+    """Reset and accumulate angles within each ring; modifies values in place."""
+    part_idx = 0
+    current_part_len = partitions[part_idx]
+    part_count = 0
+    values[0] = start
+    for v_idx in range(1, values.size):
+        if current_part_len == part_count:
+            part_count = 0
+            part_idx += 1
+            current_part_len = partitions[part_idx]
+            values[v_idx] = start
+        else:
+            values[v_idx] += values[v_idx - 1]
+            part_count += 1
+
+
+def concentric_rings(
+    num_points_approx: int,
+    radius: float,
+) -> np.ndarray:
+    """Return approximately num_points_approx samples as (y, x) rows inside radius."""
+    num_rings = max(
+        1, int(np.floor((-1 + np.sqrt(1 + 4 * num_points_approx / np.pi)) / 2))
+    )
+
+    # Calculate the circumference of each ring
+    num_points_kth_ring = np.round(2 * np.pi * np.arange(1, num_rings + 1)).astype(int)
+    num_rings = num_points_kth_ring.size
+    points_per_unit = num_points_approx / num_points_kth_ring.sum()
+    points_per_ring = np.round(num_points_kth_ring * points_per_unit).astype(int)
+
+    # Sample equally spaced radii, excluding the origin.
+    radii = np.linspace(
+        0,
+        radius,
+        num_rings + 1,
+        endpoint=True,
+    )[1:]
+    div_angle = 2 * np.pi / points_per_ring
+
+    params = np.stack((radii, div_angle), axis=0)
+
+    repeats = points_per_ring.tolist()
+
+    all_params = np.repeat(params, repeats, axis=-1)
+    _multi_cumsum_inplace(all_params[1, :], points_per_ring, 0.0)
+
+    all_radii = all_params[0, :]
+    all_angles = all_params[1, :]
+
+    return np.stack(
+        (
+            all_radii * np.sin(all_angles),
+            all_radii * np.cos(all_angles),
+        ),
+        axis=-1,
+    )
+
+
+def random_coords(num: int) -> np.ndarray:
+    """Return approximately num random (y, x) rows in the unit disk."""
+    yx = np.random.uniform(
+        -1,
+        1,
+        size=(int(num * 1.28), 2),  # 4 / np.pi
+    )
+    radii = np.sqrt((yx**2).sum(axis=1))
+    mask = radii < 1
+    yx = yx[mask, :]
+    return yx
+
+
+def fibonacci_spiral(
+    nb_samples: int,
+    radius: float,
+    alpha=2,
+    **_,
+):
+    # From https://github.com/matt77hias/fibpy/blob/master/src/sampling.py
+    # Fibonacci spiral sampling in a unit circle
+    # Alpha parameter determines smoothness of boundary - default of 2 means a smooth boundary
+    # 0 for a rough boundary.
+    # Returns a tuple of x, y coordinates of the samples
+
+    ga = np.pi * (3.0 - np.sqrt(5.0))
+
+    # Boundary points
+    np_boundary = np.round(alpha * np.sqrt(nb_samples))
+
+    ii = np.arange(nb_samples)
+    rr = np.where(
+        ii > nb_samples - (np_boundary + 1),
+        radius,
+        radius * np.sqrt((ii + 0.5) / (nb_samples - 0.5 * (np_boundary + 1)))
+    )
+    rr[0] = 0.
+    phi = ii * ga
+
+    x = rr * np.cos(phi)
+    y = rr * np.sin(phi)
+
+    return x, y
+
+
+def uniform_disk(
+    nb_samples: int,
+    radius: float,
+    *,
+    waist_radius: float | None = None,
+    overlap_factor: float | None = None,
+    max_iterations: int = 20,
+    **_,
+):
+    """Return exactly nb_samples as separate x/y arrays on concentric rings.
+
+    Start from the requested beam overlap or area per point, then adjust the
+    ring spacing and final ring population to obtain the requested count.
+    """
+    if nb_samples < 0:
+        raise ValueError("nb_samples must be non-negative.")
+    if radius <= 0.0 and nb_samples > 0:
+        raise ValueError("radius must be positive for non-zero samples.")
+    if nb_samples == 0:
+        empty = np.empty(0, dtype=float)
+        return empty, empty
+    if nb_samples == 1:
+        return np.array([0.0], dtype=float), np.array([0.0], dtype=float)
+
+    if overlap_factor is not None and overlap_factor <= 0.0:
+        raise ValueError("overlap_factor must be positive when provided.")
+
+    area = np.pi * radius**2
+    if area == 0.0:
+        return np.zeros(nb_samples, dtype=float), np.zeros(nb_samples, dtype=float)
+
+    if waist_radius is not None and overlap_factor is not None:
+        base_spacing = waist_radius / overlap_factor
+    else:
+        base_spacing = np.sqrt(area / nb_samples)
+    if base_spacing <= 0.0:
+        raise ValueError("Computed spacing must be positive.")
+
+    tol = 1e-12
+
+    def build_rings(spacing: float) -> list[np.ndarray]:
+        rings: list[np.ndarray] = []
+        rings.append(np.array([[0.0, 0.0]], dtype=float))
+        total = 1
+        ring_idx = 1
+        while True:
+            r = ring_idx * spacing
+            if r > radius + tol:
+                break
+            circumference = 2.0 * np.pi * r
+            points_on_ring = max(1, int(np.round(circumference / spacing)))
+            angles = np.linspace(0.0, 2.0 * np.pi, points_on_ring, endpoint=False, dtype=float)
+            coords = np.stack((r * np.cos(angles), r * np.sin(angles)), axis=1)
+            rings.append(coords)
+            total += points_on_ring
+            if total >= nb_samples:
+                break
+            ring_idx += 1
+        return rings
+
+    spacing = base_spacing
+    for _ in range(max_iterations):
+        rings = build_rings(spacing)
+        counts = [ring.shape[0] for ring in rings]
+        total_points = sum(counts)
+
+        if total_points < nb_samples:
+            ratio = total_points / nb_samples if total_points > 0 else 0.5
+            spacing *= max(0.2, np.sqrt(max(ratio, 1e-6)))
+            continue
+
+        excess = total_points - nb_samples
+        if excess > 0:
+            last_ring = rings[-1]
+            last_count = last_ring.shape[0]
+            if excess >= last_count:
+                rings.pop()
+                total_points -= last_count
+                excess = total_points - nb_samples
+                if excess > 0 and rings:
+                    last_ring = rings[-1]
+                    last_count = last_ring.shape[0]
+            if rings and excess > 0:
+                keep = last_count - excess
+                if keep <= 0:
+                    rings.pop()
+                else:
+                    idx = np.linspace(0, last_count - 1, keep, endpoint=False, dtype=float)
+                    idx = np.clip(np.round(idx).astype(int), 0, last_count - 1)
+                    rings[-1] = last_ring[idx]
+        coords = np.concatenate(rings, axis=0)
+        if coords.shape[0] == nb_samples:
+            coords = _snap_to_spacing(coords, base_spacing, radius, tol)
+            return coords[:, 0], coords[:, 1]
+        if coords.shape[0] > nb_samples:
+            coords = coords[:nb_samples]
+            coords = _snap_to_spacing(coords, base_spacing, radius, tol)
+            return coords[:, 0], coords[:, 1]
+        spacing *= 0.9
+
+    raise RuntimeError("Could not construct uniform disk sampling with the requested parameters.")
+
+
+def _snap_to_spacing(coords: np.ndarray, spacing: float, radius: float, tol: float) -> np.ndarray:
+    radii = np.linalg.norm(coords, axis=1)
+    snapped = coords.copy()
+    mask = radii > tol
+    if not np.any(mask):
+        return snapped
+
+    snap_spacing = np.round(spacing, decimals=12)
+    snap_spacing = snap_spacing if snap_spacing > 0 else spacing
+    target = np.round(radii[mask] / snap_spacing) * snap_spacing
+    max_multiple = np.floor(radius / snap_spacing)
+    target = np.clip(target, 0.0, max_multiple * snap_spacing)
+    scale = np.where(radii[mask] > 0.0, target / radii[mask], 1.0)
+    snapped[mask] *= scale[:, None]
+    return snapped
+
+
+def uniform_amp_from_area(num_gaussians: int, waist: float, area: float) -> float:
+    # area = (2*extent)^2 if you tile a square [-extent, extent]^2
+    return area / (num_gaussians * jnp.pi * waist**2)

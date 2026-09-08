@@ -20,16 +20,14 @@ from temgym_core.components import (
 )
 from temgym_core.run import run_to_end
 
-from temgym_core.utils import (
+from temgym_core.propagator import (
     fresnel_fft_2d,
-    zero_phase,
-    make_aperture,
     FresnelPropagator,
-    fresnel_lens_imaging_solution,
+    AngularSpectrumPropagator,
 )
 
 from temgym_core.constants import energy2wavelength
-from temgym_core.evaluate import evaluate_gaussians_for
+from temgym_core.evaluate import evaluate_gaussians_for, zero_phase
 from temgym_core.transfer_matrices import calculate_z1_and_z2_from_M_and_f
 
 jax.config.update("jax_enable_x64", True)
@@ -963,3 +961,62 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         atol=1e-2,
         err_msg="Phase mismatch between analytic and fresnel",
     )
+
+
+def make_aperture(X, Y, aperture_ratio=0.1):
+    """Select a disk for comparing fields; radius is a fraction of the x half-width."""
+    detector_radius_x = np.max(np.abs(X))
+    aperture_radius = detector_radius_x * aperture_ratio
+    r2 = X**2 + Y**2
+    return r2 < aperture_radius**2
+
+
+@pytest.mark.parametrize('adapter', ['meshgrid', 'jax'])
+@pytest.mark.parametrize('distance', [0., .2, -.2])
+def test_fresnel_plane_wave_phase_on_rectangular_detector(adapter, distance):
+    ny, nx = 18, 24
+    dy, dx = (.7, .4) if adapter == 'meshgrid' else (.7, .7)
+    wavelength = .1
+    x, y = np.meshgrid(np.arange(nx) * dx, np.arange(ny) * dy)
+    fx, fy = 3 / (nx * dx), -2 / (ny * dy)
+    field = np.exp(2j * np.pi * (fx * x + fy * y))
+    phase_per_distance = 2 * np.pi / wavelength - np.pi * wavelength * (fx**2 + fy**2)
+    expected = field * np.exp(1j * distance * phase_per_distance)
+    if adapter == 'meshgrid':
+        actual = fresnel_fft_2d(x, y, field, wavelength, distance)
+    else:
+        propagate = jax.jit(lambda z: FresnelPropagator(field, ny * dy, wavelength, z))
+        actual = propagate(distance)
+        np.testing.assert_allclose(
+            jax.jacfwd(propagate)(distance),
+            1j * phase_per_distance * expected,
+            rtol=1e-13, atol=1e-13,
+        )
+    np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.parametrize('xp', [np, jnp])
+def test_angular_spectrum_preserves_evanescent_decay(xp):
+    ny, nx, spacing, wavelength, distance = 16, 20, .2, 2., .3
+    fx = 5 / (nx * spacing)  # Above the propagating cutoff 1/wavelength.
+    x, _ = np.meshgrid(np.arange(nx) * spacing, np.arange(ny) * spacing)
+    field = np.exp(2j * np.pi * fx * x)
+    decay = np.sqrt((2 * np.pi * fx)**2 - (2 * np.pi / wavelength)**2)
+    actual = AngularSpectrumPropagator(field, ny * spacing, wavelength, distance, xp=xp)
+    np.testing.assert_allclose(actual, field * np.exp(-decay * distance), atol=1e-14)
+
+
+def fresnel_lens_imaging_solution(E0, Y, X, ps, lambda0, z1, f, z2):
+    k = 2*np.pi/lambda0
+    L = E0.shape[0]*ps
+
+    # 1) propagate to lens
+    E_lens = FresnelPropagator(E0, L, lambda0, z1)
+
+    # 2) thin-lens phase (no amplitude)
+    E_lens *= np.exp((-1j*k)/(2*f) * (X**2 + Y**2))
+
+    # 3) propagate lens -> image plane
+    E_final = FresnelPropagator(E_lens, L, lambda0, z2)
+
+    return E_final
