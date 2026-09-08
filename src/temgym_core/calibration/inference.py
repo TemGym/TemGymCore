@@ -1070,8 +1070,8 @@ def make_condenser_moment_predictor(*, folder):
 
 def _condenser_moment_predictor_from_material(*, material, detector):
     """Seven specimen-beam coordinates and supplied matrices -> measured moments."""
-    from temgym_core.image import (
-        detector_moments,
+    from temgym_core.moments import (
+        predict_detector_moments,
         gaussian_image_characteristic,
         pixel_bin_correction,
     )
@@ -1102,7 +1102,7 @@ def _condenser_moment_predictor_from_material(*, material, detector):
         )
 
         def predict_frame(matrix):
-            moments = detector_moments(
+            moments = predict_detector_moments(
                 matrix,
                 exit_mean,
                 exit_covariance,
@@ -1132,7 +1132,7 @@ def _condenser_moment_predictor_from_material(*, material, detector):
 
 def measure_condenser_moments(*, folder):
     """Measure pixels and initialize independent beams using fitted projector maps."""
-    from temgym_core.image import measure_detector_moments, moment_regions
+    from temgym_core.moments import measure_detector_moments, moment_regions
     from temgym_core.constants import energy2wavelength
 
     folder = Path(folder)

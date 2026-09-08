@@ -442,7 +442,7 @@ def fit_projector_block(
 
 def measure_projector_moments(*, images_directory):
     """Extract shape and paired centroid measurements from recorded pixels."""
-    from temgym_core.image import measure_detector_moments, moment_regions
+    from temgym_core.moments import measure_detector_moments, moment_regions
 
     root = Path(images_directory)
     for folder in sorted(root.glob("voltage_*")):
@@ -480,7 +480,7 @@ def make_projector_moment_predictor(*, folder, controls, positions, angles):
     The lens geometry, illumination curvature/spread and specimen rotation are
     supplied by the trial model. This function never reads generating parameters.
     """
-    from temgym_core.image import detector_moments
+    from temgym_core.moments import predict_detector_moments
     from temgym_core.constants import energy2wavelength
 
     from .gaussian import load_known_transmission
@@ -526,7 +526,7 @@ def make_projector_moment_predictor(*, folder, controls, positions, angles):
         means = means.at[:, 2:].add(angles)
         maps = jax.vmap(lambda command: matrix5(parameters, command))(controls)
         return jax.vmap(
-            lambda matrix, mean, covariance: detector_moments(
+            lambda matrix, mean, covariance: predict_detector_moments(
                 matrix,
                 mean,
                 covariance,

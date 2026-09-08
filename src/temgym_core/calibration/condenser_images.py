@@ -9,10 +9,29 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from temgym_core.image import GaussianIntensitySample, gaussian_intensity_image
+from temgym_core.evaluate import gaussian_intensity_image
 from temgym_core.optimization import least_squares
 
 from .condenser_model import specimen_moments
+
+
+def illuminate_gaussian_spots(
+    centres, transmission, kernel_variance, mean_position, spatial_variance
+):
+    """Return spot centres, variance and weights after Gaussian illumination.
+
+    Used by the intensity approximation that initializes the beam measurement.
+    All positions and variances use specimen-plane metres and metres squared.
+    """
+    combined = spatial_variance + kernel_variance
+    product_centres = (
+        spatial_variance * centres + kernel_variance * mean_position
+    ) / combined
+    variance = spatial_variance * kernel_variance / combined
+    log_weights = jnp.log(transmission) - jnp.sum(
+        (centres - mean_position) ** 2, axis=-1
+    ) / (2 * combined)
+    return product_centres, variance, jax.nn.softmax(log_weights)
 
 
 def beam_coordinates(mean, covariance):
@@ -67,7 +86,6 @@ def make_image_operator(*, projector_matrices, template, detector):
     transmission = jnp.asarray(template["intensity"]).ravel()
     kernel_variance = detector["sample_kernel_sigma_m"] ** 2
     pitch = detector["pixel_pitch_m"]
-    sample = GaussianIntensitySample(centres, transmission, kernel_variance)
 
     def render(parameters, projector_matrices_override=None):
         # A known magnetic projector model can supply a differentiable voltage
@@ -80,8 +98,8 @@ def make_image_operator(*, projector_matrices, template, detector):
         mean_position, mean_angle = parameters[:2] * 1e-7, parameters[2:4] * 1e-3
         spatial_variance = jnp.exp(2 * parameters[4])
         curvature, angular_variance = parameters[5] * 1e4, jnp.exp(2 * parameters[6])
-        product_centres, product_variance, weights = sample.illuminate(
-            mean_position, spatial_variance
+        product_centres, product_variance, weights = illuminate_gaussian_spots(
+            centres, transmission, kernel_variance, mean_position, spatial_variance
         )
         maps = a_used + curvature * b_used
         shifts = jnp.einsum("nij,j->ni", b_used, mean_angle - curvature * mean_position)

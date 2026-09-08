@@ -9,7 +9,7 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 | Optical elements, including lenses, solenoids and detector | `components.py` |
 | Rays and Gaussian beams through those elements; affine 5×5 matrix | `ray.py`, `gaussian.py`, `source.py`, `propagator.py`, `run.py` |
 | Gaussian fields and integrated detector images | `evaluate.py`, `grid.py` |
-| Image measurements, their matrix predictions and intensity initialization | `image.py` |
+| Image measurements and their matrix predictions | `moments.py` |
 | Bounded JAX least squares and fits with shared parameters | `optimization.py` |
 | Interpolated specimen component; nominal MAGICAL recipe | `components.py`; `calibration/gaussian.py` |
 | Atomic-scattering physics used by `AtomicPotential` | `potential.py` |
@@ -48,12 +48,30 @@ tests. Before/after complex fields matched exactly for scan, loop, dense GPU
 and spatial GPU evaluation on the comparison bundle. The complete 40,000×
 MAGICAL notebook also passed on GPU with unchanged image-error results.
 
-`image.py` measures image centroids and widths and predicts them from the
-specimen wave and a transfer matrix. Its phase-gradient and amplitude-gradient
-terms retain the wave contribution to those measurements. The fitter can
-therefore compare predicted and measured quantities without rendering pixels
-at every iteration. Its intensity approximation is used for initialization
-and the optional faster synthetic acquisition.
+`moments.py` replaces `image.py`. Read its first two functions together:
+
+- `measure_detector_moments(images=..., background_counts=..., read_noise_counts=...)`
+  returns five measurements per image—centre x/y, variance x, covariance xy,
+  variance y—and their measurement uncertainty.
+- `predict_detector_moments(matrix, mean, covariance, pixel_pitch_m=..., psf_sigma_pixels=...)`
+  predicts those same quantities from a 5×5 matrix and the specimen's 4D beam state.
+
+`SampledTransmission` integrates the known specimen to get that beam state,
+including phase and amplitude gradients. The last two functions handle the
+pixel-sampling correction used for narrow condenser images. The fit compares
+these predictions with measurements without rendering pixels at every iteration.
+
+Single-beam moments belong to `GaussianBeam.moments()`; mixture propagation
+lives in `run.py`. Aperture transmission stays in `calibration/apertures.py`.
+The optional intensity renderer is in `evaluate.py`, its initialization formula
+in `calibration/condenser_images.py`, and exposure/background fitting in
+`optimization.py`. There is no extra image module or Gaussian-spot sample class.
+
+This cleanup passed 36 targeted tests. Before/after checks matched exactly for
+measurements, specimen moments, rendering initialization, Gaussian propagation,
+aperture flux and the tested specimen, pixel-correction and aperture Jacobians.
+The notebook's nine public calls were checked; full acquisition and fitting
+were not repeated.
 
 `InterpolatedSample2D.from_action_maps(...)` constructs a regular component
 from optical path in metres, log field amplitude, and x/y pixel-centre arrays.

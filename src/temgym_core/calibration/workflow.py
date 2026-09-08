@@ -623,7 +623,7 @@ def show_images(*, experiment_directory, fitted_predictions=False):
     """Display the recorded beam region; saved acquisitions retain the full camera."""
     import matplotlib.pyplot as plt
 
-    from temgym_core.image import moment_regions
+    from temgym_core.moments import moment_regions
 
     root = Path(experiment_directory)
     frames, titles = [], []

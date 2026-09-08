@@ -203,6 +203,20 @@ class GaussianBeam(Ray):
         }
         return type(self)(**params)
 
+    def moments(self):
+        """Return the 4D position/angle mean and covariance of one Gaussian.
+
+        Positions use the beam's length unit; angles use radians. This is a
+        single field's state, not the moments of a coherent sum of beams.
+        """
+        q = jnp.asarray(self.Q_inv).reshape(2, 2)
+        k = jnp.asarray(self.k).reshape(())
+        spatial = jnp.linalg.inv(2 * k * q.imag)
+        correlation = spatial @ q.real.T
+        angular = q.real @ spatial @ q.real.T + jnp.linalg.inv(spatial) / (4 * k**2)
+        mean = jnp.concatenate((self.r_xy.reshape(2), self.d_xy.reshape(2)))
+        return mean, jnp.block([[spatial, correlation], [correlation.T, angular]])
+
     @property
     def wavelength(self):
         return energy2wavelength(self.voltage) / LENGTH[self.wavelength_unit]

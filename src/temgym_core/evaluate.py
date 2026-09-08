@@ -135,6 +135,43 @@ def gaussian_image(
     return response(ny, dy) @ intensity @ response(nx, dx).T * (dy * dx / n**2)
 
 
+def gaussian_intensity_image(
+    centres,
+    variance,
+    weights,
+    dose=1.0,
+    background=0.0,
+    *,
+    shape_yx,
+    psf_sigma_pixels=0.0,
+):
+    """Fast intensity approximation: integrate independent round Gaussian spots.
+
+    Centres, variance and PSF use pixel units. Weights are integrated spot
+    intensities. Off-detector flux is lost; no field interference is included.
+    """
+    ny, nx = shape_yx
+    xe, ye = jnp.arange(nx + 1) - nx / 2, jnp.arange(ny + 1) - ny / 2
+    width = jnp.sqrt(variance + psf_sigma_pixels**2)
+    px = normal_interval_probability(
+        (xe[:-1, None] - centres[:, 0]) / width,
+        (xe[1:, None] - centres[:, 0]) / width,
+    )
+    py = normal_interval_probability(
+        (ye[:-1, None] - centres[:, 1]) / width,
+        (ye[1:, None] - centres[:, 1]) / width,
+    )
+    return dose * ((py * weights) @ px.T) + background
+
+
+def normal_interval_probability(lower, upper):
+    """Stable standard-normal probability on an ordered interval."""
+    from jax.scipy.special import ndtr
+
+    # Positive tails use symmetry to avoid subtracting two numbers near one.
+    return jnp.where(lower > 0, ndtr(-lower) - ndtr(-upper), ndtr(upper) - ndtr(lower))
+
+
 def _pack_gaussian_params(r_centre, dr, amplitude, pathlength, Q_inv, k):
     """Pack phase coefficients identically for dense and spatial GPU kernels."""
     f = jnp.float64
@@ -703,6 +740,7 @@ def gpu_kernel_available() -> bool:
 
 __all__ = [
     "gaussian_image",
+    "gaussian_intensity_image",
     "evaluate_gaussians",
     "evaluate_gaussians_for",
     "evaluate_gaussians_gpu",

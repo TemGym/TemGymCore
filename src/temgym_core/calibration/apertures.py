@@ -199,21 +199,67 @@ def simulate_aligned_apertures(
 
 
 def make_radial_transmission(*, specification, order=256, edge_samples=256):
-    """Integrate actual SigmoidAperture beamlet power, including a narrow crossover.
+    """Round Gaussian phase-space flux through TemGym sigmoid apertures.
 
-    The radial interval follows the Gaussian's support. A fixed interval can
-    miss a nanometre crossover in a micrometre aperture. A tabulated component
-    power curve keeps differentiation inexpensive; its convergence is tested.
+    The radial quadrature follows the beam support, retaining narrow crossovers.
+    Component beamlet powers are tabulated once; interpolation and quadrature
+    use JAX. Refine both orders separately when using a new physical regime.
     """
-    from temgym_core.image import radial_aperture_transmission
+    from jax.scipy.special import i0e
 
-    return radial_aperture_transmission(
-        radii_m=specification["radii_m"],
-        edge_width_m=specification["edge_width_m"],
-        voltage_v=specification["voltage_v"],
-        order=order,
-        edge_samples=edge_samples,
-    )
+    from temgym_core.components import SigmoidAperture
+    from temgym_core.gaussian import make_gaussian
+
+    radii_m = specification["radii_m"]
+    edge_width_m = specification["edge_width_m"]
+    voltage_v = specification["voltage_v"]
+    # Narrow beamlets approximate the local transmission across the aperture edge.
+    beamlet_waist_m = 0.5e-9
+
+    nodes, weights = map(jnp.asarray, np.polynomial.legendre.leggauss(order))
+    tables = []
+    for radius in radii_m:
+        limit = radius + 12 * edge_width_m
+        grid = jnp.linspace(
+            1e-15, limit, int(np.ceil(limit / edge_width_m * edge_samples)) + 1
+        )
+        beam = make_gaussian(
+            x=grid,
+            y=0.0,
+            voltage=voltage_v,
+            waist_x=beamlet_waist_m,
+            waist_y=beamlet_waist_m,
+        )
+        out = SigmoidAperture(
+            radius=radius, edge_width=edge_width_m, sharpness=1.0, z=0.0
+        )(beam)
+        power = jnp.abs(out.amplitude / beam.amplitude) ** 2 * jnp.sqrt(
+            jnp.linalg.det(jnp.imag(beam.Q_inv)) / jnp.linalg.det(jnp.imag(out.Q_inv))
+        )
+        tables.append((grid, power, limit))
+
+    def transmission(mean, variance):
+        variance = variance - beamlet_waist_m**2 / 4
+        sigma = jnp.sqrt(variance)
+        offset = jnp.sqrt(jnp.dot(mean, mean) + 1e-40)
+        results = []
+        for grid, power, limit in tables:
+            lower = jnp.maximum(0.0, offset - 10 * sigma)
+            upper = jnp.minimum(limit, offset + 10 * sigma)
+            width = jnp.maximum(upper - lower, 0.0)
+            radial = lower + (nodes + 1) * width / 2
+            density = (
+                radial
+                / variance
+                * jnp.exp(-((radial - offset) ** 2) / (2 * variance))
+                * i0e(radial * offset / variance)
+            )
+            results.append(
+                jnp.sum(weights * width / 2 * density * jnp.interp(radial, grid, power))
+            )
+        return jnp.stack(results)
+
+    return jax.jit(transmission)
 
 
 def make_focus_transmission(*, specification, order=256, edge_samples=256):

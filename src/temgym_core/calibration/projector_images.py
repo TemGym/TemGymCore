@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from temgym_core.image import gaussian_intensity_image
+from temgym_core.evaluate import gaussian_intensity_image
 from temgym_core.optimization import least_squares
 from .gaussian import make_magical_sample
 

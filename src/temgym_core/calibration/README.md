@@ -19,7 +19,7 @@ checks input contents and source changes before reusing saved results.
 | `presets/` | Demonstration controls, independent guesses and bounds |
 
 Reusable physics stays in the parent package: `components.py`, `run.py`,
-`source.py`, `evaluate.py` and `image.py`. The sample is an `InterpolatedSample2D`
+`source.py`, `evaluate.py` and `moments.py`. The sample is an `InterpolatedSample2D`
 component; `gaussian.py` holds the shared nominal MAGICAL recipe. Numerical fitting
 uses `optimization.py`. See the [core code map](../README.md).
 

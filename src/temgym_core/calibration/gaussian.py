@@ -143,7 +143,7 @@ def prepare_known_transmission(
     """
     import jax
 
-    from temgym_core.image import SampledTransmission
+    from temgym_core.moments import SampledTransmission
 
     half = int(np.ceil(half_width_nm / step_nm))
     axis = np.arange(-half, half + 1) * step_nm * 1e-9
@@ -264,7 +264,7 @@ def condenser_gaussian_state(
 ):
     """Generate the specimen state by native Gaussian source/lens propagation."""
     from temgym_core.source import gaussian_waist
-    from temgym_core.image import propagate_gaussian_mixture
+    from temgym_core.run import propagate_gaussian_mixture
     from temgym_core.constants import energy2wavelength
     from temgym_core.components import solenoid_column
 
@@ -311,7 +311,7 @@ def save_known_transmission(path, transmission):
 
 
 def load_known_transmission(path):
-    from temgym_core.image import SampledTransmission
+    from temgym_core.moments import SampledTransmission
 
     data = dict(np.load(path))
     sampled = SampledTransmission(
@@ -583,7 +583,7 @@ def replace_condenser_with_gaussian_images(
 
     import jax
 
-    from temgym_core.image import detector_moments
+    from temgym_core.moments import predict_detector_moments
     from temgym_core.constants import energy2wavelength
 
     from .condenser_images import beam_coordinates
@@ -703,7 +703,7 @@ def replace_condenser_with_gaussian_images(
                         replace(c, include_axial_path=False) if hasattr(c, "q") else c
                         for c in projector_components(pp, jnp.asarray(command))
                     )
-                    moments = detector_moments(
+                    moments = predict_detector_moments(
                         column_matrix(column),
                         exit_mean,
                         exit_covariance,
@@ -907,7 +907,7 @@ def refine_condenser_pixel_integration(
     """
     import jax
 
-    from temgym_core.image import detector_moments
+    from temgym_core.moments import predict_detector_moments
     from temgym_core.constants import energy2wavelength
 
     from .condenser_images import beam_coordinates
@@ -989,7 +989,7 @@ def refine_condenser_pixel_integration(
                         replace(c, include_axial_path=False) if hasattr(c, "q") else c
                         for c in projector_components(pp, jnp.asarray(command))
                     )
-                    moments = detector_moments(
+                    moments = predict_detector_moments(
                         column_matrix(column),
                         exit_mean,
                         exit_cov,
@@ -1127,7 +1127,7 @@ def check_gaussian_moment_numerics(
     """
     import jax
 
-    from temgym_core.image import measure_detector_moments, moment_regions
+    from temgym_core.moments import measure_detector_moments, moment_regions
 
     from .condenser_images import beam_coordinates
     from .condenser_model import condenser_at_voltage, projector_at_voltage

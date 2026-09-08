@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.linalg import block_diag
 
-from temgym_core.image import fit_intensity_scale_and_background
+from temgym_core.optimization import fit_intensity_scale_and_background
 
 from .apertures import (
     current_fractions,
@@ -350,7 +350,7 @@ def predict_gaussian_condenser_pixels(*, images_directory, fitted, prediction=Fa
     """Freeze the recovered microscope and render new coherent Gaussian images."""
     from dataclasses import replace
 
-    from temgym_core.image import detector_moments, moment_regions
+    from temgym_core.moments import predict_detector_moments, moment_regions
     from temgym_core.constants import energy2wavelength
     from temgym_core.run import column_matrix
 
@@ -433,7 +433,7 @@ def predict_gaussian_condenser_pixels(*, images_directory, fitted, prediction=Fa
                     replace(c, include_axial_path=False) if hasattr(c, "q") else c
                     for c in projector_components(p, jnp.asarray(controls))
                 )
-                moments = detector_moments(
+                moments = predict_detector_moments(
                     column_matrix(column),
                     exit_mean,
                     exit_covariance,

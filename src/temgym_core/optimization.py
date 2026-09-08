@@ -479,3 +479,28 @@ def fit_shared_least_squares(
     return SharedLeastSquaresResult(
         shared, local, cov, local_cov, response, success, message, tuple(history), rms
     )
+
+
+@jax.jit
+def fit_intensity_scale_and_background(shape, image, noise):
+    """Exact two-variable nonnegative least squares for exposure and background."""
+    design = (
+        jnp.stack((shape.ravel(), jnp.ones(shape.size)), axis=1)
+        / noise.ravel()[:, None]
+    )
+    target = image.ravel() / noise.ravel()
+    norms = jnp.linalg.norm(design, axis=0)
+    matrix = design / jnp.where(norms > 0, norms, 1.0)
+    solution = jnp.linalg.lstsq(matrix, target, rcond=None)[0]
+    single = jnp.maximum(matrix.T @ target, 0.0)
+    candidates = jnp.stack(
+        (
+            jnp.zeros(2),
+            jnp.array([single[0], 0.0]),
+            jnp.array([0.0, single[1]]),
+            solution,
+        )
+    )
+    costs = jnp.sum((matrix @ candidates.T - target[:, None]) ** 2, axis=0)
+    costs = costs.at[3].set(jnp.where(jnp.all(solution >= 0), costs[3], jnp.inf))
+    return candidates[jnp.argmin(costs)] / jnp.where(norms > 0, norms, 1.0)

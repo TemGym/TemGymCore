@@ -14,6 +14,26 @@ if TYPE_CHECKING:
     from .tree_utils import PathBuilder
 
 
+def propagate_gaussian_mixture(source, components, extra_covariance):
+    """Transport a Gaussian field plus Gaussian-distributed ray-centre offsets.
+
+    The coherent component traverses the actual lens components. First-order
+    transport maps the incoherent centre distribution through the same column.
+    Their covariances add; no ray/intensity replacement of field interference
+    is made when the resulting state is later decomposed at the specimen.
+    """
+    from .gaussian import FreeSpacePropagator
+
+    output = run_to_end(
+        source,
+        components,
+        propagator=FreeSpacePropagator(include_axial_path=False),
+    )
+    mean, covariance = output.moments()
+    matrix = column_matrix(components, source_z=source.z)[:4, :4]
+    return mean, covariance + matrix @ extra_covariance @ matrix.T
+
+
 def jacobian_and_value(fn, argnums: int = 0, **jac_kwargs):
 
     def inner(*args, **kwargs):
