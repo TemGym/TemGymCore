@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from temgym_core.solenoid import solenoid_column_matrix
+from temgym_core.run import solenoid_column_matrix
 
 from .condenser_model import condenser_at_voltage, equivalent_parameters, source_moments
 

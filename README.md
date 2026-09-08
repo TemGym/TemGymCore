@@ -18,6 +18,8 @@ The location of images on the detector in 4D STEM experiments can also suffer fr
 This work is a continuation of a non-differentiable ray tracing library designed for visualisation published in 2023
 TemGym: Landers, D., Clancy, I., Weber, D., Dunin-Borkowski, R. & Stewart, A. (2023). J. Appl. Cryst. 56, https://doi.org/10.1107/S1600576723005174
 
+For microscope calibration, start with the [fitting notebook](examples/microscope_models/microscope_calibration_pipeline.ipynb) and the [core code map](src/temgym_core/README.md).
+
 ## Gaussian beam optics
 
 TemGymCore also propagates coherent Gaussian beamlets through the same component

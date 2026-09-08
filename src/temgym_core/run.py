@@ -431,3 +431,25 @@ def run_with_grads(
         k: grads[i] for i, k in enumerate(chain(grad_ray_idxs.keys(), grad_idxs.keys()))
     }
     return value, grads
+
+
+def column_matrix(components, *, source_z=0.):
+    """Affine 5×5 map in [x,y,theta_x,theta_y,1] order.
+
+    Execute five basis rays through the same components and drift machinery
+    used by normal TemGym runs. Valid for affine paraxial components only.
+    Offsets are measured with the fifth (on-axis) ray.
+    """
+    basis = jnp.eye(5)
+    ray = Ray(x=basis[0], y=basis[1], dx=basis[2], dy=basis[3],
+              z=source_z, pathlength=0.)
+    out = run_to_end(ray, components)
+    values = jnp.stack((out.x, out.y, out.dx, out.dy))
+    linear = values[:, :4] - values[:, 4, None]
+    return jnp.eye(5).at[:4, :4].set(linear).at[:4, 4].set(values[:, 4])
+
+
+def solenoid_column_matrix(gaps, lengths, strengths):
+    from .components import solenoid_column
+
+    return column_matrix(solenoid_column(gaps, lengths, strengths))

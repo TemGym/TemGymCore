@@ -494,3 +494,14 @@ def test_interpolated_sample_converts_physical_phase_to_pathlength():
         rtol=1e-11,
         atol=1e-11,
     )
+
+
+def test_envelope_regularizer_has_finite_derivative_for_round_gaussian():
+    from temgym_core.components import _regularize_L2k
+
+    def regularize(width):
+        return _regularize_L2k(jnp.zeros((2, 2)), width * jnp.eye(2))
+
+    np.testing.assert_allclose(regularize(3.0), 0.0)
+    np.testing.assert_allclose(jax.jacfwd(regularize)(3.0), 0.0)
+    np.testing.assert_allclose(jax.jacfwd(jax.jacfwd(regularize))(3.0), 0.0)

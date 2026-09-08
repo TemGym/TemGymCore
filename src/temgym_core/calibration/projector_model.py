@@ -5,7 +5,8 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.optimize import brentq, least_squares
 
-from temgym_core.solenoid import column_matrix, solenoid_column
+from temgym_core.run import column_matrix
+from temgym_core.components import solenoid_column
 
 
 def round_matrix(vector):

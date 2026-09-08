@@ -2,7 +2,11 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.special import ndtr
 
-from temgym_core.intensity import GaussianIntensityDetector, GaussianIntensitySample
+from temgym_core.intensity import (
+    GaussianIntensityDetector,
+    GaussianIntensitySample,
+    normal_interval_probability,
+)
 
 
 def test_detector_matches_independent_pixel_integrals_and_loses_offscreen_flux():
@@ -48,3 +52,9 @@ def test_nonnegative_exposure_background_matches_active_set_reference():
             expected,
             atol=1e-12,
         )
+
+
+def test_normal_interval_preserves_small_positive_tail_probability():
+    probability = float(normal_interval_probability(jnp.asarray(9.0), jnp.asarray(10.0)))
+    assert probability > 0.0
+    np.testing.assert_allclose(probability, ndtr(-9.0) - ndtr(-10.0), rtol=1e-13)

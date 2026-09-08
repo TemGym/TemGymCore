@@ -3,7 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from temgym_core.gaussian import FreeSpacePropagator, make_gaussian
-from temgym_core.solenoid import HardEdgeSolenoid, solenoid_column_matrix
+from temgym_core.components import HardEdgeSolenoid
+from temgym_core.run import solenoid_column_matrix
 
 
 def reference_column(gaps, lengths, strengths):

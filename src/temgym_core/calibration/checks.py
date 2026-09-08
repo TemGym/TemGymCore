@@ -352,7 +352,7 @@ def predict_gaussian_condenser_pixels(*, images_directory, fitted, prediction=Fa
 
     from temgym_core.coherent_moments import detector_moments, moment_regions
     from temgym_core.constants import energy2wavelength
-    from temgym_core.solenoid import column_matrix
+    from temgym_core.run import column_matrix
 
     from .condenser_images import beam_coordinates
     from .gaussian import (

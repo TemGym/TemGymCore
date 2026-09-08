@@ -20,9 +20,8 @@ replacement for TemGym's component API.
 | `storage.py` | Hash recorded array contents for cache validation |
 | `presets/` | Demonstration controls, guesses and bounds |
 
-The underlying physics stays in the existing library: `solenoid.py`,
-`coherent_image.py`, `coherent_moments.py`, `coherent_microscope.py` and
-`intensity.py`. Optimization uses `jax_least_squares.py` and
+The underlying physics stays in the existing library: `components.py`, `run.py`,
+`source.py`, `coherent_image.py`, `coherent_moments.py` and `intensity.py`. Optimization uses `jax_least_squares.py` and
 `shared_least_squares.py`. The calibration code does not define another lens
 matrix or Gaussian summation engine.
 
@@ -51,7 +50,7 @@ for initialization and the explicit faster acquisition option.
 The saved solution still has two acceptable second-aperture centres. Local
 rank and successful prediction checks do not prove global uniqueness.
 
-## Validation of this cleanup
+## Validation at checkpoint `fc992bc`
 
 - 70 targeted tests pass, covering matrix/Gaussian agreement, image moments,
   correlated currents, shared covariance, nonlinear refinement and stage reuse.
@@ -69,3 +68,5 @@ rank and successful prediction checks do not prove global uniqueness.
 
 Calibration Python shrank from 39 files / 17,159 lines to 13 files / 6,984 lines
 (59% fewer lines). The underlying reusable TemGym physics remains separately tested.
+
+The subsequent core cleanup is described in the [core code map](../README.md).

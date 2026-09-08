@@ -3,13 +3,12 @@
 import jax.numpy as jnp
 import numpy as np
 
-from temgym_core.coherent_microscope import (
-    GaussianSourceState,
-    propagate_gaussian_mixture,
-)
+from temgym_core.source import gaussian_waist
+from temgym_core.coherent_moments import propagate_gaussian_mixture
 from temgym_core.coherent_moments import SampledTransmission
 from temgym_core.constants import energy2wavelength
-from temgym_core.solenoid import column_matrix, solenoid_column
+from temgym_core.run import column_matrix
+from temgym_core.components import solenoid_column
 
 
 def test_transparent_sample_preserves_mixed_gaussian_and_phase_lens():
@@ -45,9 +44,7 @@ def test_native_gaussian_mixture_matches_matrix_transport():
 
     voltage = 200000.0
     size, spread = 8e-9, 8e-5
-    source = GaussianSourceState(0.2, x=2e-9, theta_x=1e-5, rms_size=size).beam(
-        0.0, voltage, jnp.zeros(2)
-    )
+    source = gaussian_waist(z=0.0, voltage=voltage, x=2e-9, theta_x=1e-5, rms_size=size)
     column = tuple(
         replace(c, include_axial_path=False) if hasattr(c, "q") else c
         for c in solenoid_column(

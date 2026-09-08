@@ -636,6 +636,78 @@ class ThickLens(Component):
         return self.z_po
 
 
+@jdc.pytree_dataclass(kw_only=True)
+class HardEdgeSolenoid(Component):
+    """Entrance at ``z``, body length in metres, signed Larmor integral ``q``.
+
+    Includes both edges and propagation through the body. Rotation is -q;
+    q is proportional to current / relativistic momentum. This ideal uniform
+    field is distinct from the principal-plane ``ThickLens`` approximation.
+    Coherent transport includes the quadratic action and Gouy factor. The
+    coherent branch covers the first radial half-period, abs(q) < pi;
+    longer fields must be split into shorter bodies to continue the phase.
+    """
+
+    z: float
+    length: float
+    q: float
+    include_axial_path: jdc.Static[bool] = True
+
+    @property
+    def matrix(self):
+        q, length = jnp.asarray(self.q), jnp.asarray(self.length)
+        cosine, sine = jnp.cos(q), jnp.sin(q)
+        rotation = jnp.array([[cosine, sine], [-sine, cosine]])
+        drift = length * jnp.sinc(q / jnp.pi)
+        power = -q * sine / length
+        return jnp.block([
+            [cosine * rotation, drift * rotation],
+            [power * rotation, cosine * rotation],
+        ])
+
+    def _call_ray(self, ray):
+        m = self.matrix
+        out = ABCDTransfer(A=m[:2, :2], B=m[:2, 2:],
+                           C=m[2:, :2], D=m[2:, 2:])(ray)
+        return out.derive(z=ray.z + self.length,
+                          pathlength=ray.pathlength + self.length)
+
+    def _call_gaussian(self, ray):
+        m = self.matrix
+        out = ABCDTransfer(A=m[:2, :2], B=m[:2, 2:],
+                           C=m[2:, :2], D=m[2:, 2:])(ray)
+        # Remove the real rotation from A+BQ before following its phase.
+        # For |q|<pi, b>0 and both modal factors lie in the upper half-plane.
+        b = self.length * jnp.sinc(self.q / jnp.pi)
+        denominator = jnp.cos(self.q) * jnp.eye(2) + b * ray.Q_inv
+        determinant = jnp.linalg.det(denominator)
+        root = jnp.sqrt(determinant)
+        root = jnp.where(jnp.imag(determinant) < 0., -root, root)
+        # Homogeneous quadratic canonical action, including magnetic rotation.
+        action = .5 * (jnp.sum(out.r_xy * out.d_xy, axis=-1)
+                       - jnp.sum(ray.r_xy * ray.d_xy, axis=-1))
+        valid = (jnp.abs(self.q) < jnp.pi) & (self.length > 0)
+        return out.derive(
+            z=ray.z + self.length,
+            pathlength=ray.pathlength + (self.length if self.include_axial_path else 0.) + action,
+            amplitude=jnp.where(valid, ray.amplitude / root, jnp.nan + 0j),
+        )
+
+
+def solenoid_column(gaps, lengths, strengths, *, source_z=0.):
+    """Build lenses and a final plane; gaps run before/between/after bodies."""
+    if len(gaps) != len(lengths) + 1 or len(strengths) != len(lengths):
+        raise ValueError("Supply N lengths/strengths and N+1 free-space gaps.")
+    entrance = source_z
+    components = []
+    for i in range(len(lengths)):
+        entrance = entrance + gaps[i]
+        components.append(HardEdgeSolenoid(z=entrance, length=lengths[i], q=strengths[i]))
+        entrance = entrance + lengths[i]
+    components.append(Plane(z=entrance + gaps[-1]))
+    return tuple(components)
+
+
 @jdc.pytree_dataclass
 class Deflector(Component):
     z: float

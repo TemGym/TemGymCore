@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.constants import c, electron_mass, elementary_charge
 
-from temgym_core.solenoid import solenoid_column_matrix
+from temgym_core.run import solenoid_column_matrix
 
 from .projector_model import matrix5 as projector_matrix5
 

@@ -83,7 +83,7 @@ def microscope_image(source, components, detector, *, method="scan"):
     """
     from .components import Plane
     from .gaussian import FreeSpacePropagator
-    from .solenoid import HardEdgeSolenoid
+    from .components import HardEdgeSolenoid
 
     # Drop the common axial carrier before adding tiny path differences. This
     # changes no intensity or relative phase within an equal-voltage mode.

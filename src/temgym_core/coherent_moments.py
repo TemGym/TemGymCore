@@ -280,3 +280,35 @@ def pixel_bin_correction(moments, characteristic):
     ).real / (2 * jnp.pi**2)
     mixed -= moments[0] * shift[1] + moments[1] * shift[0] + shift[0] * shift[1]
     return moments + jnp.array([shift[0], shift[1], diagonal[0], mixed, diagonal[1]])
+
+
+def gaussian_phase_space_moments(beam):
+    """Exact position/angle moments of a single coherent Gaussian beam."""
+    q = jnp.asarray(beam.Q_inv).reshape(2, 2)
+    k = jnp.asarray(beam.k).reshape(())
+    spatial = jnp.linalg.inv(2 * k * q.imag)
+    correlation = spatial @ q.real.T
+    angular = q.real @ spatial @ q.real.T + jnp.linalg.inv(spatial) / (4 * k**2)
+    mean = jnp.concatenate((beam.r_xy.reshape(2), beam.d_xy.reshape(2)))
+    return mean, jnp.block([[spatial, correlation], [correlation.T, angular]])
+
+
+def propagate_gaussian_mixture(source, components, extra_covariance):
+    """Transport a Gaussian field plus Gaussian-distributed ray-centre offsets.
+
+    The coherent component traverses the actual lens components. First-order
+    transport maps the incoherent centre distribution through the same column.
+    Their covariances add; no ray/intensity replacement of field interference
+    is made when the resulting state is later decomposed at the specimen.
+    """
+    from .gaussian import FreeSpacePropagator
+    from .run import column_matrix, run_to_end
+
+    output = run_to_end(
+        source,
+        components,
+        propagator=FreeSpacePropagator(include_axial_path=False),
+    )
+    mean, covariance = gaussian_phase_space_moments(output)
+    matrix = column_matrix(components, source_z=source.z)[:4, :4]
+    return mean, covariance + matrix @ extra_covariance @ matrix.T

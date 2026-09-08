@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from temgym_core.multiscale_sample import MAGICALSampleAtlas, SampleView
-from temgym_core.solenoid import column_matrix
+from temgym_core.run import column_matrix
 
 
 def make_magical_sample(voltage=200000.0):
@@ -173,25 +173,23 @@ def condenser_gaussian_state(
     *, parameters, controls, voltage_v, aperture_fraction=None
 ):
     """Generate the specimen state by native Gaussian source/lens propagation."""
-    from temgym_core.coherent_microscope import (
-        GaussianSourceState,
-        propagate_gaussian_mixture,
-    )
+    from temgym_core.source import gaussian_waist
+    from temgym_core.coherent_moments import propagate_gaussian_mixture
     from temgym_core.constants import energy2wavelength
-    from temgym_core.solenoid import solenoid_column
+    from temgym_core.components import solenoid_column
 
     p = jnp.asarray(parameters)
     gaps, lengths = jnp.exp(p[:5]), jnp.exp(p[5:9])
     strengths = jnp.exp(p[9:13]) * jnp.r_[jnp.asarray(controls), -1.0]
     z = -(jnp.sum(gaps) + jnp.sum(lengths))
-    source = GaussianSourceState(
-        upstream_distance=gaps[0],
+    source = gaussian_waist(
+        z=z, voltage=voltage_v,
         x=p[13] * 1e-8,
         y=p[14] * 1e-8,
         theta_x=p[15] * 1e-4,
         theta_y=p[16] * 1e-4,
         rms_size=jnp.exp(p[17]),
-    ).beam(z, voltage_v, jnp.zeros(2))
+    )
     floor = (energy2wavelength(voltage_v) / (4 * jnp.pi * jnp.exp(p[17]))) ** 2
     extra = jnp.eye(4).at[:2, :2].set(0) * (jnp.exp(2 * p[18]) - floor)
     column = tuple(
@@ -689,7 +687,7 @@ def replace_aperture_with_gaussian_counts(
     import jax
     from numpy.polynomial.legendre import leggauss
 
-    from temgym_core.coherent_microscope import GaussianSourceState
+    from temgym_core.source import gaussian_waist
     from temgym_core.components import SigmoidAperture
     from temgym_core.evaluate import evaluate_gaussians
 
@@ -726,9 +724,10 @@ def replace_aperture_with_gaussian_counts(
             )
             # The transported mixture has an exact Gaussian intensity at this
             # plane. Its phase does not affect an integrated aperture current.
-            incident = GaussianSourceState(
-                0.0, x=mean[0], y=mean[1], rms_size=jnp.sqrt(covariance[0, 0])
-            ).beam(0.0, voltage, jnp.zeros(2))
+            incident = gaussian_waist(
+                z=0.0, voltage=voltage, x=mean[0], y=mean[1],
+                rms_size=jnp.sqrt(covariance[0, 0])
+            )
             fractions = []
             for radius, centre in zip(spec["radii_m"], centres):
                 aperture = SigmoidAperture(

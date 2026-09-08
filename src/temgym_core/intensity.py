@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
-from .gaussian_image_likelihood import normal_interval_probability
+from jax.scipy.special import ndtr
 
 
 @dataclass(frozen=True)
@@ -160,3 +160,10 @@ def fit_intensity_scale_and_background(shape, image, noise):
     costs = jnp.sum((matrix @ candidates.T - target[:, None]) ** 2, axis=0)
     costs = costs.at[3].set(jnp.where(jnp.all(solution >= 0), costs[3], jnp.inf))
     return candidates[jnp.argmin(costs)] / jnp.where(norms > 0, norms, 1.0)
+
+
+def normal_interval_probability(lower, upper):
+    """Stable standard-normal probability on an ordered interval."""
+    # Positive tails use symmetry to avoid subtracting two numbers near one.
+    return jnp.where(lower > 0, ndtr(-lower) - ndtr(-upper),
+                     ndtr(upper) - ndtr(lower))

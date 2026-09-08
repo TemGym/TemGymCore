@@ -778,3 +778,15 @@ def sample_input_wave(
         wavelength_unit=wavelength_unit,
     )
     return beam
+
+
+def gaussian_waist(*, z, voltage, rms_size, x=0.0, y=0.0, theta_x=0.0, theta_y=0.0):
+    """Unit-flux round Gaussian waist; positions and RMS size in metres, slopes in radians."""
+    width = 2 * rms_size
+    k = 2 * jnp.pi / energy2wavelength(voltage)
+    return GaussianBeam(
+        x=jnp.asarray(x), y=jnp.asarray(y), dx=theta_x, dy=theta_y,
+        z=z, voltage=voltage,
+        amplitude=jnp.sqrt(2 / (jnp.pi * width**2)) + 0j,
+        Q_inv=1j * (2 / (k * width**2)) * jnp.eye(2), pathlength=0.0,
+    )

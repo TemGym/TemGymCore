@@ -580,14 +580,10 @@ def test_double_deflector_jacobian_matches_analytic_matrix():
 
     T = double_deflector_matrix_5x5(
         dd.spacing,
-        shift_x=dd.shift_x,
-        shift_y=dd.shift_y,
-        tilt_x=dd.tilt_x,
-        tilt_y=dd.tilt_y,
-        shift_balance_x=dd.shift_balance_x,
-        shift_balance_y=dd.shift_balance_y,
-        tilt_balance_x=dd.tilt_balance_x,
-        tilt_balance_y=dd.tilt_balance_y,
+        drive_x=dd.shift_x,
+        drive_y=dd.shift_y,
+        balance_x=dd.shift_balance_x,
+        balance_y=dd.shift_balance_y,
         xp=jnp,
     )
 

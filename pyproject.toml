@@ -57,8 +57,8 @@ inversion = [
   'nbformat>=5.9',
 ]
 gpu = [
-  # Linux CUDA 13 wheels support both x86_64 and aarch64. The NEOARM notebook
-  # requires this extra for accepted large forward renders.
+  # Linux CUDA 13 wheels support both x86_64 and aarch64. Install this extra
+  # for GPU Gaussian forward renders.
   'jax[cuda13]==0.10.2; sys_platform == "linux"',
 ]
 
