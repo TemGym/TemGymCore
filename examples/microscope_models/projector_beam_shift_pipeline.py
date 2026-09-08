@@ -4,19 +4,21 @@ Image analysis separately fits specimen-pattern motion and illumination motion.
 The geometric centre of the illumination then supplies A ds + B dtheta.
 Only simulation and final scoring receive the generating microscope.
 """
-from dataclasses import dataclass
+import functools
 import json
+import operator
+from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from scipy.optimize import least_squares
-
-from temgym_core.gaussian_image_likelihood import normal_interval_probability
 from finite_projector_pipeline import LENSES, matrix5, predict_observables
-from projector_notebook_helpers import model_to_parameters, _table
-from projector_tilt_pipeline import pair_tilt_measurements
 from projector_landscape import compare_fit_landscapes
+from projector_notebook_helpers import _table, model_to_parameters
+from projector_tilt_pipeline import pair_tilt_measurements
+
+from temgym_core.intensity import GaussianIntensityDetector
+from temgym_core.jax_least_squares import least_squares
 
 
 @dataclass
@@ -46,8 +48,7 @@ def make_beam_shift_image_operator(spec, template):
     intensity = jnp.asarray(template['intensity']).ravel()
     radius = spec['specimen']['illumination_radius_m']
     edge_width = spec['specimen']['illumination_edge_m']
-    ny, nx = spec['shape_yx']
-    xe, ye = jnp.arange(nx+1)-nx/2, jnp.arange(ny+1)-ny/2
+    sensor = GaussianIntensityDetector(tuple(spec['shape_yx']))
 
     def image(p):
         c, s = jnp.cos(p[1]), jnp.sin(p[1])
@@ -58,12 +59,7 @@ def make_beam_shift_image_operator(spec, template):
         distance = jnp.sqrt(jnp.sum((centres-p[7:9]*1e-9)**2, axis=1)+1e-40)
         weights = intensity * jax.nn.sigmoid((radius-distance)/edge_width)
         weights = weights / weights.sum()
-        width = jnp.exp(p[2])
-        px = normal_interval_probability((xe[:-1, None]-xy[:, 0])/width,
-                                         (xe[1:, None]-xy[:, 0])/width)
-        py = normal_interval_probability((ye[:-1, None]-xy[:, 1])/width,
-                                         (ye[1:, None]-xy[:, 1])/width)
-        return jnp.exp(p[5]) * ((py*weights) @ px.T) + jnp.exp(p[6])
+        return sensor.image_pixels(xy,jnp.exp(2*p[2]),weights,jnp.exp(p[5]),jnp.exp(p[6]))
     return jax.jit(image)
 
 
@@ -159,19 +155,23 @@ def analyse_beam_shift_images(*, images, nominal_magnifications, specimen_templa
     centre = jax.jit(lambda p: beam_centre_pixels(p, spec['pixel_pitch_m']))
     centre_jacobian = jax.jit(jax.jacfwd(centre))
     parameters, covariances, centres, centre_covariances, errors = [], [], [], [], []
+    def residual(p,image,sigma):
+        return ((operator(p)-image)/sigma).ravel()
+    def derivative_image(p,image,sigma):
+        return (operator_jacobian(p)/sigma[...,None]).reshape(-1,9)
     for index, image in enumerate(images):
         lower = np.r_[np.log(nominal[index]/2), -4*np.pi, np.log(.15), -20., -20., np.log([1e3, .01]), -30., -30.]
         upper = np.r_[np.log(nominal[index]*2), 4*np.pi, np.log(60.), 20., 20., np.log([1e12, 1e6]), 30., 30.]
         start = np.clip(np.r_[seeds[index], 0., 0.], lower+1e-8, upper-1e-8)
         sigma = np.sqrt(np.maximum(image, 1.) + spec['read_noise_std_e']**2)
-        result = least_squares(lambda p: ((np.asarray(operator(p))-image)/sigma).ravel(), start,
-                               jac=lambda p: (np.asarray(operator_jacobian(p))/sigma[...,None]).reshape(-1,9),
-                               bounds=(lower, upper), x_scale='jac', max_nfev=150,
-                               ftol=1e-9, xtol=1e-9, gtol=1e-5)
-        rms = float(np.sqrt(np.mean(result.fun**2)))
+        result = least_squares(residual,start,jac=derivative_image,
+                               args=(jnp.asarray(image),jnp.asarray(sigma)),
+                               bounds=(lower,upper),x_scale='jac',max_nfev=150,max_iter=300,
+                               ftol=1e-9,xtol=1e-9,gtol=1e-5)
+        rms = float(np.sqrt(np.mean(result.residual**2)))
         if not result.success or rms > 1.5:
             raise RuntimeError(f'Beam-shift registration failed at frame {index}: {result.message}; RMS {rms:.3f}')
-        covariance = np.linalg.inv(result.jac.T @ result.jac)
+        covariance = np.linalg.inv(np.asarray(result.jacobian).T @ np.asarray(result.jacobian))
         derivative = np.asarray(centre_jacobian(result.x))
         parameters.append(result.x)
         covariances.append(covariance)
@@ -180,9 +180,9 @@ def analyse_beam_shift_images(*, images, nominal_magnifications, specimen_templa
         errors.append(rms)
         if verbose:
             print(f'MAGICAL beam-shift image {index+1}/{len(images)}: weighted pixel RMS {rms:.3f}', flush=True)
-    return dict(image_parameters=np.asarray(parameters), parameter_covariance=np.asarray(covariances),
-                beam_centres_pixels=np.asarray(centres), beam_centre_covariances=np.asarray(centre_covariances),
-                image_residual_rms=np.asarray(errors))
+    return {'image_parameters': np.asarray(parameters), 'parameter_covariance': np.asarray(covariances),
+                'beam_centres_pixels': np.asarray(centres), 'beam_centre_covariances': np.asarray(centre_covariances),
+                'image_residual_rms': np.asarray(errors)}
 
 
 def measure_beam_shift_images(*, beam_shift_experiment, specimen_template,
@@ -211,7 +211,7 @@ def combine_beam_shift_measurements(*measurement_sets):
     keys = ('lens_controls', 'position_changes_m', 'angle_changes_rad',
             'displacements_pixels', 'covariance_pixels')
     result = {key: np.concatenate([m[key] for m in measurement_sets]) for key in keys}
-    result['pair_labels'] = sum((list(m['pair_labels']) for m in measurement_sets), [])
+    result['pair_labels'] = functools.reduce(operator.iadd, (list(m['pair_labels']) for m in measurement_sets), [])
     return result
 
 

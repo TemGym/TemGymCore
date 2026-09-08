@@ -15,7 +15,7 @@ import numpy as np
 from scipy.optimize import brentq, least_squares
 
 from temgym_core.constants import energy2wavelength
-from temgym_core.microscope_inversion import drift_matrix, hard_edge_solenoid_matrix
+from temgym_core.solenoid import solenoid_column, column_matrix
 from temgym_core.gaussian_image_likelihood import normal_interval_probability
 
 
@@ -53,8 +53,8 @@ def decode_geometry(p):
     return gaps, lengths, entrances + lengths / 2, jnp.sum(gaps) + jnp.sum(lengths)
 
 
-def matrix5(p, controls):
-    """Finite solenoid map in grouped ray coordinates.
+def projector_components(p, controls):
+    """Executable TemGym projector, from specimen to detector.
 
     Four controls mean IL1, IL2, IL3, PL1 with the objective held at one.
     Five controls mean Objective, IL1, IL2, IL3, PL1. The objective control
@@ -66,11 +66,12 @@ def matrix5(p, controls):
     gaps, lengths, _, _ = decode_geometry(p)
     objective = controls[0] if controls.shape == (5,) else 1.
     q = jnp.r_[p[11]*objective, SIGNS * jnp.exp(p[12:16]) * controls[-4:]]
-    matrix = drift_matrix(gaps[0])
-    for i in range(5):
-        matrix = drift_matrix(gaps[i + 1]) @ hard_edge_solenoid_matrix(q[i], lengths[i]) @ matrix
-    order = jnp.array([0, 2, 1, 3])
-    return jnp.eye(5).at[:4, :4].set(matrix[jnp.ix_(order, order)])
+    return solenoid_column(gaps, lengths, q)
+
+
+def matrix5(p, controls):
+    """Grouped 5×5 ray map of the same components used for coherent imaging."""
+    return column_matrix(projector_components(p, controls))
 
 
 def predict_observables(p, controls, spec):

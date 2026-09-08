@@ -1,0 +1,235 @@
+{
+  "cpu_region": {
+    "device": "cpu",
+    "jax_backend": "cpu",
+    "jax_version": "0.10.2",
+    "x64": true,
+    "source_files_sha256": {
+      "/Users/landers/TemGymCore/src/temgym_core/evaluate.py": "9203b598c88b1054a457c92736d2673f3384c169b4e1e49904a9cd4f05cfec1c",
+      "/Users/landers/TemGymCore/src/temgym_core/spatial_evaluate.py": "4f7b6b80421b1b118725d6f355d0bc9d63bfae54addaeb2ffff29a5ae9e59150",
+      "/Users/landers/TemGymCore/src/temgym_core/coherent_image.py": "5b1bca7bd34d16ca22cbee04c069b42c2580ed606592f3eb7a0a98a4463e644f",
+      "/Users/landers/TemGymCore/examples/microscope_models/coherent_forward_validation.py": "19604a2e52ae9a76682fd6873de5133258b6409bd8ca2fd7b55d72150b3cfa5e"
+    },
+    "gaussians": 496562,
+    "step_nm": 0.5,
+    "detector_shape": [
+      8,
+      8
+    ],
+    "pixel_samples": 8,
+    "padding_pixels": 4,
+    "source_construction_seconds": 4.353027401492,
+    "omitted_field_l2_bound": 8.53551446708289e-12,
+    "repeats": 2,
+    "timings": {
+      "transport": {
+        "first_call_seconds": 13.040800312533975,
+        "warm_seconds": [
+          11.779835972934961,
+          11.940682638436556
+        ],
+        "warm_median_seconds": 11.860259305685759
+      },
+      "scan": {
+        "first_call_seconds": 61.53803201019764,
+        "warm_seconds": [
+          61.909885032102466,
+          61.33741512335837
+        ],
+        "warm_median_seconds": 61.62365007773042,
+        "difference_rms_noise": 0.0
+      }
+    },
+    "scope": "One prescribed specimen exit wave; no full microscope fit.",
+    "spatial_uses_dense_fallback": true
+  },
+  "gpu_region": {
+    "device": "NVIDIA GH200 144G HBM3e",
+    "jax_backend": "gpu",
+    "jax_version": "0.10.2",
+    "verified_gpu_kernel": true,
+    "x64": true,
+    "source_files_sha256": {
+      "/Users/landers/TemGymCore/src/temgym_core/evaluate.py": "9203b598c88b1054a457c92736d2673f3384c169b4e1e49904a9cd4f05cfec1c",
+      "/Users/landers/TemGymCore/src/temgym_core/spatial_evaluate.py": "4f7b6b80421b1b118725d6f355d0bc9d63bfae54addaeb2ffff29a5ae9e59150",
+      "/Users/landers/TemGymCore/src/temgym_core/coherent_image.py": "5b1bca7bd34d16ca22cbee04c069b42c2580ed606592f3eb7a0a98a4463e644f",
+      "/Users/landers/TemGymCore/examples/microscope_models/coherent_forward_validation.py": "0974c527bdeb9db87c6b06487aee544e49057bc941900d7cd72474f2256d448a"
+    },
+    "gaussians": 496562,
+    "step_nm": 0.5,
+    "detector_shape": [
+      8,
+      8
+    ],
+    "pixel_samples": 8,
+    "padding_pixels": 4,
+    "source_construction_seconds": 6.093396993353963,
+    "omitted_field_l2_bound": 8.535514467083613e-12,
+    "repeats": 3,
+    "timings": {
+      "transport": {
+        "first_call_seconds": 2.6135736126452684,
+        "warm_seconds": [
+          0.011491691693663597,
+          0.011484876275062561,
+          0.011440204456448555
+        ],
+        "warm_median_seconds": 0.011484876275062561
+      },
+      "gpu_kernel_required": {
+        "first_call_seconds": 0.6852777302265167,
+        "warm_seconds": [
+          0.10628254525363445,
+          0.10617867112159729,
+          0.10611160472035408
+        ],
+        "warm_median_seconds": 0.10617867112159729,
+        "difference_rms_noise": 0.0
+      },
+      "spatial": {
+        "first_call_seconds": 0.6725991070270538,
+        "warm_seconds": [
+          0.10699456743896008,
+          0.10667204670608044,
+          0.10666570626199245
+        ],
+        "warm_median_seconds": 0.10667204670608044,
+        "difference_rms_noise": 0.0
+      },
+      "scan": {
+        "first_call_seconds": 3.480340138077736,
+        "warm_seconds": [
+          3.134258287027478,
+          3.1330934315919876,
+          3.1338571701198816
+        ],
+        "warm_median_seconds": 3.1338571701198816,
+        "difference_rms_noise": 4.162491652093546e-09
+      },
+      "tilt_jvp_scan": {
+        "first_call_seconds": 8.94702085480094,
+        "warm_seconds": [
+          6.089210307225585,
+          6.088342439383268,
+          6.089181466028094
+        ],
+        "warm_median_seconds": 6.089181466028094
+      }
+    },
+    "scope": "One prescribed specimen exit wave; no full microscope fit.",
+    "spatial_uses_dense_fallback": true,
+    "tilt_derivative": {
+      "finite_difference_step_mrad": 1e-05,
+      "relative_l2_error": 7.204243292930651e-09,
+      "passed": true
+    }
+  },
+  "gpu_full_detector": {
+    "device": "NVIDIA GH200 144G HBM3e",
+    "jax_backend": "gpu",
+    "jax_version": "0.10.2",
+    "verified_gpu_kernel": true,
+    "x64": true,
+    "source_files_sha256": {
+      "/Users/landers/TemGymCore/src/temgym_core/evaluate.py": "9203b598c88b1054a457c92736d2673f3384c169b4e1e49904a9cd4f05cfec1c",
+      "/Users/landers/TemGymCore/src/temgym_core/spatial_evaluate.py": "4f7b6b80421b1b118725d6f355d0bc9d63bfae54addaeb2ffff29a5ae9e59150",
+      "/Users/landers/TemGymCore/src/temgym_core/coherent_image.py": "5b1bca7bd34d16ca22cbee04c069b42c2580ed606592f3eb7a0a98a4463e644f",
+      "/Users/landers/TemGymCore/examples/microscope_models/coherent_forward_validation.py": "0974c527bdeb9db87c6b06487aee544e49057bc941900d7cd72474f2256d448a"
+    },
+    "gaussians": 496562,
+    "step_nm": 0.5,
+    "detector_shape": [
+      64,
+      64
+    ],
+    "pixel_samples": 8,
+    "padding_pixels": 4,
+    "source_construction_seconds": 6.1029348485171795,
+    "omitted_field_l2_bound": 8.535514467083613e-12,
+    "repeats": 3,
+    "timings": {
+      "transport": {
+        "first_call_seconds": 2.6029862985014915,
+        "warm_seconds": [
+          0.01153031550347805,
+          0.011401038616895676,
+          0.011358190327882767
+        ],
+        "warm_median_seconds": 0.011401038616895676
+      },
+      "gpu_kernel_required": {
+        "first_call_seconds": 2.88820287771523,
+        "warm_seconds": [
+          2.014355018734932,
+          2.0149670112878084,
+          2.0150568019598722
+        ],
+        "warm_median_seconds": 2.0149670112878084,
+        "difference_rms_noise": 0.0
+      },
+      "spatial": {
+        "first_call_seconds": 2.740479312837124,
+        "warm_seconds": [
+          2.014934306964278,
+          2.0156490840017796,
+          2.015658713877201
+        ],
+        "warm_median_seconds": 2.0156490840017796,
+        "difference_rms_noise": 0.0
+      }
+    },
+    "scope": "One prescribed specimen exit wave; no full microscope fit.",
+    "spatial_uses_dense_fallback": true
+  },
+  "gpu_convergence": {
+    "backend": "spatial",
+    "uses_fft_propagation": false,
+    "voltage_v": 200000.0,
+    "condenser_setting": 3,
+    "projector_view": 2,
+    "refinements": [
+      {
+        "step_nm": 1.0,
+        "gaussians": 123977,
+        "seconds": 9.43119453266263,
+        "omitted_field_l2_bound": 5.249625912904358e-12
+      },
+      {
+        "step_nm": 0.5,
+        "gaussians": 496562,
+        "seconds": 7.3925176821649075,
+        "omitted_field_l2_bound": 8.535514467083613e-12,
+        "change_rms_noise": 0.05481364876250845
+      }
+    ],
+    "checks": {
+      "gaussian_change_rms_noise": 0.05481364876250845,
+      "pixel_change_rms_noise": 0.01926965849601809,
+      "detector_padding_change_rms_noise": 0.0,
+      "source_padding_change_rms_noise": 0.0
+    },
+    "passed": true,
+    "detector_shape": [
+      8,
+      8
+    ],
+    "pixel_pitch_m": 0.00022,
+    "pixel_samples_per_axis": 8,
+    "refined_pixel_samples_per_axis": 16,
+    "source_padding_produced_identical_gaussians": true,
+    "angular_ensemble": "Real-space Gaussian average after coherent field summation.",
+    "full_detector_shape": [
+      64,
+      64
+    ],
+    "scope": "Central detector region at one recorded near-crossover setting; no full-image or coherent geometry recovery claimed."
+  },
+  "checks": {
+    "gpu_vs_cpu_rms_noise": 8.44328402071141e-09,
+    "gpu_vs_previous_validated_cpu_rms_noise": 8.443285365824737e-09,
+    "full_detector_centre_vs_region_rms_noise": 2.7787738261564387e-13,
+    "warm_region_renderer_speedup": 580.3769196466789
+  },
+  "scope": "Prescribed specimen exit wave, current checkout, 200 kV recorded crossover; no complete coherent calibration or full-detector convergence claim.",
+  "passed": true
+}

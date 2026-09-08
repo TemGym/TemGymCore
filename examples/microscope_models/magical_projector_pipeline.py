@@ -4,29 +4,22 @@ This uses the intensity of the existing synthetic atlas as a positive Gaussian
 mixture. It is a prescribed partially coherent intensity target, not coherent
 propagation of the complex Si/SiGe exit wave or a measured specimen certificate.
 """
-from dataclasses import replace
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from scipy.optimize import least_squares
-
-from temgym_core.multiscale_sample import MAGICALSampleAtlas, SampleView
-from temgym_core.gaussian_image_likelihood import normal_interval_probability
 from finite_projector_pipeline import predict_observables
 
+from temgym_core.intensity import GaussianIntensityDetector
+from temgym_core.jax_least_squares import least_squares
+from temgym_core.multiscale_sample import MAGICALSampleAtlas, SampleView
 
-def make_magical_template(voltage=200000., pitch_m=2.5e-9, *, illumination_radius_m=160e-9):
-    """Same clean nominal atlas as magical_gaussian_imaging.ipynb.
 
-    The ROI is fixed at a multilayer edge so the 600k view is not the central
-    perforation or an effectively one-dimensional periodic stripe pattern.
-    A soft circular illumination envelope is part of the public template.
-    """
-    if not np.isfinite(illumination_radius_m) or illumination_radius_m <= 0:
-        raise ValueError("Illumination radius must be finite and positive.")
+def make_magical_sample(voltage=200000.):
+    """TemGym complex MAGICAL specimen and its fixed calibration ROI."""
     atlas = MAGICALSampleAtlas.nominal(
         shape_yx=(384, 384), region_shape_yx=(128, 128),
         authoritative_multilayer_shape_yx=(256, 256), max_levels=3, voltage=voltage,
@@ -42,6 +35,19 @@ def make_magical_template(voltage=200000., pitch_m=2.5e-9, *, illumination_radiu
     sample = SampleView.from_level(atlas.pyramid.levels[0], z=0.)
     region = next(r for r in certificate.regions if r.name == "multilayer_region_3")
     roi = np.array([4e-9, region.centre_xy_m[1] + region.size_xy_m[1] / 2 - 2e-9])
+    return sample, certificate, roi
+
+
+def make_magical_template(voltage=200000., pitch_m=2.5e-9, *, illumination_radius_m=160e-9):
+    """Same clean nominal atlas as magical_gaussian_imaging.ipynb.
+
+    The ROI is fixed at a multilayer edge so the 600k view is not the central
+    perforation or an effectively one-dimensional periodic stripe pattern.
+    A soft circular illumination envelope is part of the public template.
+    """
+    if not np.isfinite(illumination_radius_m) or illumination_radius_m <= 0:
+        raise ValueError("Illumination radius must be finite and positive.")
+    sample, certificate, roi = make_magical_sample(voltage)
     n = int(np.ceil(2 * (illumination_radius_m + 30e-9) / pitch_m))
     axis = (np.arange(n) - (n - 1) / 2) * pitch_m
     xx, yy = np.meshgrid(axis, axis)
@@ -63,28 +69,22 @@ def make_magical_template(voltage=200000., pitch_m=2.5e-9, *, illumination_radiu
         "illumination_radius_m": float(illumination_radius_m), "illumination_edge_m": 2.5e-9,
         "description": "Known clean atlas intensity and illumination represented by a positive 2 nm-sigma Gaussian mixture; no background texture or fiducial spots",
     }
-    return dict(centres_m=coordinates[included], weights=weights,
-                axis_m=axis, intensity=intensity, illumination=illumination), metadata
+    return {"centres_m": coordinates[included], "weights": weights,
+                "axis_m": axis, "intensity": intensity, "illumination": illumination}, metadata
 
 
 def make_magical_image_operator(spec, template):
     """Seven fitted quantities: log scale, angle, log width_px, dx, dy, log dose, log background."""
     centres = jnp.asarray(template["centres_m"]) / spec["pixel_pitch_m"]
     weights = jnp.asarray(template["weights"])
-    ny, nx = spec["shape_yx"]
-    xe = jnp.arange(nx + 1) - nx / 2
-    ye = jnp.arange(ny + 1) - ny / 2
+    detector = GaussianIntensityDetector(tuple(spec["shape_yx"]))
 
     def image(p):
         c, s = jnp.cos(p[1]), jnp.sin(p[1])
         rotation = jnp.array([[c, -s], [s, c]])
         xy = jnp.exp(p[0]) * (centres @ rotation.T) + p[3:5]
-        width = jnp.exp(p[2])
-        px = normal_interval_probability((xe[:-1, None] - xy[:, 0]) / width,
-                                         (xe[1:, None] - xy[:, 0]) / width)
-        py = normal_interval_probability((ye[:-1, None] - xy[:, 1]) / width,
-                                         (ye[1:, None] - xy[:, 1]) / width)
-        return jnp.exp(p[5]) * ((py * weights) @ px.T) + jnp.exp(p[6])
+        return detector.image_pixels(xy, jnp.exp(2 * p[2]), weights,
+                                     jnp.exp(p[5]), jnp.exp(p[6]))
 
     return jax.jit(image)
 
@@ -140,7 +140,7 @@ def analyse_magical_images(directory, verbose=False):
 
 
 def analyse_magical_arrays(*, images, nominal_magnifications, specimen_template,
-                          specimen_and_detector, verbose=False, initial_image_parameters=None):
+                          specimen_and_detector, verbose=False, initial_image_parameters=None, require_noise_level=True):
     """Measure scale, rotation, and blur from the supplied arrays; read no files."""
     spec, template = specimen_and_detector, specimen_template
     if len(images) != len(nominal_magnifications):
@@ -151,16 +151,15 @@ def analyse_magical_arrays(*, images, nominal_magnifications, specimen_template,
     jacobian = jax.jit(jax.jacfwd(operator))
     measured, covariance, costs, image_parameters, parameter_covariance = [], [], [], [], []
     references = {}
+    def residual(p, image, sigma):
+        return ((operator(p) - image) / sigma).ravel()
+    def jac(p, image, sigma):
+        return jacobian(p).reshape(-1, 7) / sigma.ravel()[:, None]
+
     for index, (image, nominal) in enumerate(zip(images, nominal_magnifications)):
         sigma = np.sqrt(np.maximum(image, 1.) + spec["read_noise_std_e"]**2)
         lower = np.r_[np.log(nominal / 2), -4*np.pi, np.log(.15), -20., -20., np.log(1e4), np.log(.01)]
         upper = np.r_[np.log(nominal * 2), 4*np.pi, np.log(60.), 20., 20., np.log(1e13), np.log(1e5)]
-
-        def residual(p):
-            return ((np.asarray(operator(p)) - image) / sigma).ravel()
-
-        def jac(p):
-            return np.asarray(jacobian(p)).reshape(-1, 7) / sigma.ravel()[:, None]
 
         if initial_image_parameters is not None:
             seeds = [np.clip(initial_image_parameters[index], lower+1e-8, upper-1e-8)]
@@ -177,25 +176,25 @@ def analyse_magical_arrays(*, images, nominal_magnifications, specimen_template,
                 coefficients = np.linalg.lstsq(design, image.ravel() / sigma.ravel(), rcond=None)[0]
                 p[5:] = np.log(np.maximum(coefficients, [1e4, .011]))
                 p = np.clip(p, lower+1e-8, upper-1e-8)
-                seeds.append((float(np.mean(residual(p)**2)), p))
+                seeds.append((float(np.mean(np.asarray(residual(p, image, sigma))**2)), p))
             seeds = [item[1] for item in sorted(seeds, key=lambda item: item[0])[:2]]
-        results = [least_squares(residual, seed, jac=jac, bounds=(lower, upper),
-                                  x_scale="jac", max_nfev=150, ftol=1e-9, xtol=1e-9, gtol=1e-5)
+        results = [least_squares(residual, seed, jac=jac, args=(jnp.asarray(image), jnp.asarray(sigma)), bounds=(lower, upper),
+                                  x_scale="jac", max_nfev=150, max_iter=300, ftol=1e-9, xtol=1e-9, gtol=1e-5)
                    for seed in seeds]
-        result = min(results, key=lambda r: np.sum(r.fun**2))
-        rms = np.sqrt(np.mean(result.fun**2))
-        if not result.success or rms > 1.5:
+        result = min(results, key=lambda r: np.sum(r.residual**2))
+        rms = np.sqrt(np.mean(result.residual**2))
+        if require_noise_level and (not result.success or rms > 1.5):
             raise RuntimeError(f"MAGICAL registration failed at frame {index}: {result.message}; RMS {rms:.3f}")
         if nominal not in references:
-            references[nominal] = result.x.copy()
+            references[nominal] = np.asarray(result.x).copy()
         measured.append(result.x[:3])
-        full_covariance = np.linalg.inv(result.jac.T @ result.jac)
+        full_covariance = np.linalg.inv(np.asarray(result.jacobian).T @ np.asarray(result.jacobian))
         covariance.append(full_covariance[:3, :3])
         parameter_covariance.append(full_covariance)
         costs.append(rms)
         image_parameters.append(result.x)
         if verbose:
             print(f"MAGICAL frame {index+1}/{len(images)}: weighted pixel RMS {rms:.3f}", flush=True)
-    return dict(values=np.asarray(measured), covariance=np.asarray(covariance),
-                image_residual_rms=np.asarray(costs), image_parameters=np.asarray(image_parameters),
-                parameter_covariance=np.asarray(parameter_covariance))
+    return {"values": np.asarray(measured), "covariance": np.asarray(covariance),
+                "image_residual_rms": np.asarray(costs), "image_parameters": np.asarray(image_parameters),
+                "parameter_covariance": np.asarray(parameter_covariance)}

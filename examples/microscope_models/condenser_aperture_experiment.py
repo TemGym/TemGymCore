@@ -26,7 +26,7 @@ from scipy.optimize import least_squares
 
 from temgym_core.components import SigmoidAperture
 from temgym_core.gaussian import make_gaussian
-from temgym_core.microscope_inversion import drift_matrix, hard_edge_solenoid_matrix
+from temgym_core.solenoid import solenoid_column_matrix
 
 
 def aperture_specification():
@@ -46,22 +46,14 @@ def aperture_moments(parameters, controls, side):
     gaps, lengths = jnp.exp(p[:5]), jnp.exp(p[5:9])
     strengths = jnp.exp(p[9:12]) * controls
     fraction = jax.nn.sigmoid(p[19])
-    transfer = hard_edge_solenoid_matrix(strengths[0], lengths[0]) @ drift_matrix(
-        gaps[0]
-    )
     if side == "before":
-        transfer = drift_matrix(gaps[1] * (1 - fraction)) @ transfer
+        aperture_gaps = jnp.array([gaps[0], gaps[1] * (1 - fraction)])
+        transfer = solenoid_column_matrix(aperture_gaps, lengths[:1], strengths[:1])[:4, :4]
     elif side == "after":
-        transfer = (
-            drift_matrix(gaps[2] * fraction)
-            @ hard_edge_solenoid_matrix(strengths[1], lengths[1])
-            @ drift_matrix(gaps[1])
-            @ transfer
-        )
+        aperture_gaps = jnp.array([gaps[0], gaps[1], gaps[2] * fraction])
+        transfer = solenoid_column_matrix(aperture_gaps, lengths[:2], strengths[:2])[:4, :4]
     else:
         raise ValueError("Aperture side must be before or after CL3.")
-    order = jnp.array([0, 2, 1, 3])
-    transfer = transfer[jnp.ix_(order, order)]
     mean, covariance = source_moments(p[:19])
     return (transfer @ mean)[:2] - p[20:22] * 1e-6, (
         transfer @ covariance @ transfer.T

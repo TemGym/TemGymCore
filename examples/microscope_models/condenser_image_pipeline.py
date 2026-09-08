@@ -14,9 +14,10 @@ import jax.numpy as jnp
 import numpy as np
 from condenser_calibration_model import generating_parameters, specimen_moments
 from magical_projector_pipeline import make_magical_template
-from scipy.optimize import brentq, least_squares
+from scipy.optimize import brentq
 
-from temgym_core.gaussian_image_likelihood import normal_interval_probability
+from temgym_core.intensity import GaussianIntensityDetector, GaussianIntensitySample
+from temgym_core.jax_least_squares import least_squares
 
 
 def beam_coordinates(mean, covariance):
@@ -71,9 +72,10 @@ def make_image_operator(*, projector_matrices, template, detector):
     transmission = jnp.asarray(template["intensity"]).ravel()
     kernel_variance = detector["sample_kernel_sigma_m"] ** 2
     pitch = detector["pixel_pitch_m"]
-    ny, nx = detector["shape_yx"]
-    xe = jnp.arange(nx + 1) - nx / 2
-    ye = jnp.arange(ny + 1) - ny / 2
+    sample = GaussianIntensitySample(centres, transmission, kernel_variance)
+    sensor = GaussianIntensityDetector(
+        tuple(detector["shape_yx"]), pitch, detector["psf_sigma_pixels"]
+    )
 
     def render(parameters, projector_matrices_override=None):
         # A known magnetic projector model can supply a differentiable voltage
@@ -86,15 +88,9 @@ def make_image_operator(*, projector_matrices, template, detector):
         mean_position, mean_angle = parameters[:2] * 1e-7, parameters[2:4] * 1e-3
         spatial_variance = jnp.exp(2 * parameters[4])
         curvature, angular_variance = parameters[5] * 1e4, jnp.exp(2 * parameters[6])
-        combined = spatial_variance + kernel_variance
-        product_centres = (
-            spatial_variance * centres + kernel_variance * mean_position
-        ) / combined
-        product_variance = spatial_variance * kernel_variance / combined
-        log_weights = jnp.log(transmission) - jnp.sum(
-            (centres - mean_position) ** 2, axis=1
-        ) / (2 * combined)
-        weights = jax.nn.softmax(log_weights)
+        product_centres, product_variance, weights = sample.illuminate(
+            mean_position, spatial_variance
+        )
         maps = a_used + curvature * b_used
         shifts = jnp.einsum("nij,j->ni", b_used, mean_angle - curvature * mean_position)
         detector_centres = (
@@ -104,19 +100,14 @@ def make_image_operator(*, projector_matrices, template, detector):
             product_variance * jnp.sum(maps[:, :, 0] ** 2, axis=1)
             + angular_variance * jnp.sum(b_used[:, :, 0] ** 2, axis=1)
         ) / pitch**2
-        widths = jnp.sqrt(variance + detector["psf_sigma_pixels"] ** 2)
         exposures = parameters[7:].reshape(-1, 2)
 
-        def frame(xy, width, exposure):
-            px = normal_interval_probability(
-                (xe[:-1, None] - xy[:, 0]) / width, (xe[1:, None] - xy[:, 0]) / width
+        def frame(xy, variance, exposure):
+            return sensor.image_pixels(
+                xy, variance, weights, jnp.exp(exposure[0]), jnp.exp(exposure[1])
             )
-            py = normal_interval_probability(
-                (ye[:-1, None] - xy[:, 1]) / width, (ye[1:, None] - xy[:, 1]) / width
-            )
-            return jnp.exp(exposure[0]) * ((py * weights) @ px.T) + jnp.exp(exposure[1])
 
-        return jax.vmap(frame)(detector_centres, widths, exposures)
+        return jax.vmap(frame)(detector_centres, variance, exposures)
 
     return jax.jit(render)
 
@@ -227,7 +218,10 @@ def simulate_condenser_images(
 
 
 def measure_condenser_images(
-    *, input_directory, max_evaluations=200, initialization_only=False
+    *,
+    input_directory,
+    max_evaluations=200,
+    initialization_only=False,
 ):
     """Fit the specimen illumination in each set of projector views, independently.
 
@@ -264,16 +258,16 @@ def measure_condenser_images(
         np.tile(np.log([1e10, 100.0]), n),
     ]
     results, covariances, all_parameters, rms_values = [], [], [], []
+    image_fit_converged = []
+
+    def residual(p, frames, noise):
+        return ((operator(p) - frames) / noise).ravel()
+
+    def jacobian(p, frames, noise):
+        return derivative(p).reshape(-1, len(p)) / noise.ravel()[:, None]
+
     for index, frames in enumerate(images):
         noise = np.sqrt(np.maximum(frames, 1.0) + detector["read_noise_e"] ** 2)
-
-        def residual(p, frames=frames, noise=noise):
-            return ((np.asarray(operator(p)) - frames) / noise).ravel()
-
-        def jacobian(p, noise=noise):
-            return (
-                np.asarray(derivative(p)).reshape(-1, len(p)) / noise.ravel()[:, None]
-            )
 
         # Broad curvature search, using only pixel residuals. The first view is
         # focused at the specimen, so it supplies a rough illumination width.
@@ -304,7 +298,7 @@ def measure_condenser_images(
                 np.log(20e-6),
                 np.tile(np.log([4e7, 3.0]), n),
             ]
-            candidates.append((np.mean(residual(p) ** 2), p))
+            candidates.append((np.mean(np.asarray(residual(p, frames, noise)) ** 2), p))
         fits = []
         for _, seed in sorted(candidates, key=lambda item: item[0])[:2]:
             fits.append(
@@ -312,8 +306,10 @@ def measure_condenser_images(
                     residual,
                     seed,
                     jac=jacobian,
+                    args=(jnp.asarray(frames), jnp.asarray(noise)),
                     bounds=(lower, upper),
                     max_nfev=max_evaluations,
+                    max_iter=2 * max_evaluations,
                     x_scale="jac",
                     ftol=1e-9,
                     xtol=1e-10,
@@ -321,17 +317,18 @@ def measure_condenser_images(
                 )
             )
         fit = min(fits, key=lambda f: f.cost)
-        rms = float(np.sqrt(np.mean(fit.fun**2)))
+        rms = float(np.sqrt(np.mean(fit.residual**2)))
         if not fit.success or (rms > 1.5 and not initialization_only):
             raise RuntimeError(
                 f"Image fit failed at setting {index}: {fit.message}; RMS {rms:.3g}"
             )
-        _, s, vt = np.linalg.svd(fit.jac, full_matrices=False)
+        _, s, vt = np.linalg.svd(fit.jacobian, full_matrices=False)
         covariance = (vt.T / s) @ (vt / s[:, None])
         results.append(fit.x[:7])
         covariances.append(covariance[:7, :7])
         all_parameters.append(fit.x)
         rms_values.append(rms)
+        image_fit_converged.append(fit.success)
         print(
             f"Measured setting {index + 1}/{len(images)}: pixel RMS {rms:.3f}, "
             f"size {np.exp(fit.x[4]) * 1e9:.2f} nm, curvature {fit.x[5] * 1e4:.1f}/m, "
@@ -345,6 +342,7 @@ def measure_condenser_images(
         covariance=covariances,
         image_parameters=all_parameters,
         pixel_residual_rms=rms_values,
+        image_fit_converged=image_fit_converged,
         initialization_only=initialization_only,
     )
     return directory / "measurements.npz"

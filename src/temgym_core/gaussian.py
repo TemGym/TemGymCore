@@ -499,6 +499,11 @@ class BaseGaussianPropagator:
 
 
 class FreeSpacePropagator(BaseGaussianPropagator):
+    def __init__(self, *, include_axial_path=True):
+        # Dropping the common axial carrier is useful for intensity calculations
+        # over metre-long columns: retain the small relative optical actions.
+        self.include_axial_path = include_axial_path
+
     def __call__(self, ray: GaussianBeam, distance: float) -> GaussianBeam:
         distance = jnp.asarray(distance, dtype=jnp.float64)
         q = jnp.asarray(ray.Q_inv)
@@ -543,7 +548,8 @@ class FreeSpacePropagator(BaseGaussianPropagator):
             dy=dy,
             z=ray.z + distance,
             amplitude=ray.amplitude * amplitude_factor,
-            pathlength=ray.pathlength + distance + 0.5 * distance * theta_sq,
+            pathlength=ray.pathlength + (distance if self.include_axial_path else 0.)
+            + 0.5 * distance * theta_sq,
             Q_inv=Q_new,
         )
 

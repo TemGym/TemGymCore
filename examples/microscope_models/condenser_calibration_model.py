@@ -8,7 +8,7 @@ is zero there. Its z, x, y, mean angles, size and divergence are all unknown.
 import jax.numpy as jnp
 import numpy as np
 
-from temgym_core.microscope_inversion import drift_matrix, hard_edge_solenoid_matrix
+from temgym_core.solenoid import solenoid_column_matrix
 
 LENS_NAMES = ("CL1", "CL3", "Mini", "Objective pre-field")
 
@@ -42,15 +42,7 @@ def matrix5(parameters, controls):
     p = jnp.asarray(parameters)
     gaps, lengths = jnp.exp(p[:5]), jnp.exp(p[5:9])
     strengths = jnp.exp(p[9:13]) * jnp.r_[jnp.asarray(controls), -1.0]
-    total = drift_matrix(gaps[0])
-    for i in range(4):
-        total = (
-            drift_matrix(gaps[i + 1])
-            @ hard_edge_solenoid_matrix(strengths[i], lengths[i])
-            @ total
-        )
-    order = jnp.array([0, 2, 1, 3])
-    return jnp.eye(5).at[:4, :4].set(total[jnp.ix_(order, order)])
+    return solenoid_column_matrix(gaps, lengths, strengths)
 
 
 def source_moments(parameters):

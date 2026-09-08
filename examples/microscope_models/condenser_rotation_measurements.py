@@ -12,11 +12,7 @@ from condenser_aperture_experiment import (
     measure_aperture_currents,
 )
 from condenser_calibration_model import generating_parameters, matrix5, source_moments
-from jax.scipy.special import i0e
 from scipy.optimize import least_squares, minimize_scalar
-
-from temgym_core.components import SigmoidAperture
-from temgym_core.gaussian import make_gaussian
 
 
 def make_radial_transmission(*, specification, order=256, edge_samples=256):
@@ -26,58 +22,10 @@ def make_radial_transmission(*, specification, order=256, edge_samples=256):
     miss a nanometre crossover in a micrometre aperture. A tabulated component
     power curve keeps differentiation inexpensive; its convergence is tested.
     """
-    nodes, weights = np.polynomial.legendre.leggauss(order)
-    nodes, weights = jnp.asarray(nodes), jnp.asarray(weights)
-    waist = 0.5e-9
-    tables = []
-    for radius in specification["radii_m"]:
-        limit = radius + 12 * specification["edge_width_m"]
-        grid = jnp.linspace(
-            1e-15,
-            limit,
-            int(np.ceil(limit / specification["edge_width_m"] * edge_samples)) + 1,
-        )
-        beam = make_gaussian(
-            x=grid,
-            y=0.0,
-            voltage=specification["voltage_v"],
-            waist_x=waist,
-            waist_y=waist,
-        )
-        aperture = SigmoidAperture(
-            radius=radius,
-            edge_width=specification["edge_width_m"],
-            sharpness=1.0,
-            z=0.0,
-        )
-        out = aperture(beam)
-        power = jnp.abs(out.amplitude / beam.amplitude) ** 2 * jnp.sqrt(
-            jnp.linalg.det(jnp.imag(beam.Q_inv)) / jnp.linalg.det(jnp.imag(out.Q_inv))
-        )
-        tables.append((grid, power, limit))
-
-    def transmission(mean, variance):
-        variance = variance - waist**2 / 4
-        sigma = jnp.sqrt(variance)
-        offset = jnp.sqrt(jnp.dot(mean, mean) + 1e-40)
-        results = []
-        for grid, power, limit in tables:
-            lower = jnp.maximum(0.0, offset - 10 * sigma)
-            upper = jnp.minimum(limit, offset + 10 * sigma)
-            width = jnp.maximum(upper - lower, 0.0)
-            radial = lower + (nodes + 1) * width / 2
-            density = (
-                radial
-                / variance
-                * jnp.exp(-((radial - offset) ** 2) / (2 * variance))
-                * i0e(radial * offset / variance)
-            )
-            results.append(
-                jnp.sum(weights * width / 2 * density * jnp.interp(radial, grid, power))
-            )
-        return jnp.stack(results)
-
-    return jax.jit(transmission)
+    from temgym_core.intensity import radial_aperture_transmission
+    return radial_aperture_transmission(radii_m=specification["radii_m"],
+        edge_width_m=specification["edge_width_m"], voltage_v=specification["voltage_v"],
+        order=order, edge_samples=edge_samples)
 
 
 def make_focus_transmission(*, specification, order=256, edge_samples=256):

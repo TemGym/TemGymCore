@@ -8,7 +8,7 @@ from pathlib import Path
 import jax
 import numpy as np
 from condenser_objective_experiment import choose_objective_projector_views
-from condenser_rotation_workflow import input_signature
+from condenser_rotation_workflow import input_signature as _input_signature
 from condenser_voltage_experiment import (
     simulate_voltage_experiment,
     simulate_voltage_prediction_images,
@@ -32,16 +32,49 @@ from full_microscope_projector import (
 
 __all__ = [
     "check_full_microscope",
+    "copy_recorded_experiment",
     "fit_microscope",
     "fit_projector",
     "measure_condenser",
     "measure_projector",
     "show_images",
+    "show_prediction_checks",
     "show_result",
     "simulate_experiment",
 ]
 
 HERE = Path(__file__).parent
+
+
+def input_signature(*, paths, settings):
+    """Invalidate saved stages when the shared TemGym physics changes too."""
+    from temgym_core import (
+        coherent_image,
+        coherent_microscope,
+        coherent_moments,
+        components,
+        gaussian,
+        intensity,
+        jax_least_squares,
+        shared_least_squares,
+        solenoid,
+    )
+
+    core_paths = [
+        Path(module.__file__)
+        for module in (
+            components,
+            coherent_microscope,
+            coherent_moments,
+            coherent_image,
+            gaussian,
+            intensity,
+            solenoid,
+            jax_least_squares,
+            shared_least_squares,
+        )
+    ]
+    return _input_signature(paths=[*paths, *core_paths], settings=settings)
 
 
 def _record_step(
@@ -66,7 +99,13 @@ def _record_step(
 
 
 def _generate_full(
-    *, root, voltages_v, random_seed, aperture_diameters_um, centering_sigma_um
+    *,
+    root,
+    voltages_v,
+    random_seed,
+    aperture_diameters_um,
+    centering_sigma_um,
+    image_model="coherent_gaussian",
 ):
     simulate_projector_block(
         protocol_path=HERE / "projector_measurement_protocol.json",
@@ -141,6 +180,39 @@ def _generate_full(
         )
     )
 
+    if image_model == "coherent_gaussian":
+        from coherent_microscope_workflow import (
+            ensure_gaussian_moment_numerics,
+            prepare_condenser_moment_specimens,
+            refine_condenser_pixel_integration,
+            replace_aperture_with_gaussian_counts,
+            replace_condenser_with_gaussian_images,
+            replace_projector_with_gaussian_images,
+        )
+
+        replace_projector_with_gaussian_images(
+            directory=root / "projector", random_seed=random_seed + 17000
+        )
+        replace_projector_with_gaussian_images(
+            directory=root / "projector_predictions", random_seed=random_seed + 19000
+        )
+        replace_condenser_with_gaussian_images(
+            directory=root / "condenser", random_seed=random_seed + 18000
+        )
+        prepare_condenser_moment_specimens(directory=root / "condenser")
+        refine_condenser_pixel_integration(
+            directory=root / "condenser", random_seed=random_seed + 18000
+        )
+        ensure_gaussian_moment_numerics(
+            directory=root / "condenser", random_seed=random_seed + 18000
+        )
+        replace_aperture_with_gaussian_counts(
+            directory=root / "condenser", random_seed=random_seed + 20000
+        )
+    metadata = json.loads((root / "experiment.json").read_text())
+    metadata["image_model"] = image_model
+    (root / "experiment.json").write_text(json.dumps(metadata, indent=2) + "\n")
+
 
 def simulate_experiment(
     *,
@@ -149,6 +221,7 @@ def simulate_experiment(
     random_seed=24001,
     aperture_diameters_um=(4.0, 10.0),
     centering_sigma_um=0.2,
+    image_model="coherent_gaussian",
     reuse_completed=True,
 ):
     """Supply voltages and a noise seed; get all pixels/counts for calibration and checks."""
@@ -156,6 +229,8 @@ def simulate_experiment(
         raise RuntimeError(
             "Enable JAX 64-bit arithmetic before running this experiment."
         )
+    if image_model not in ("coherent_gaussian", "intensity"):
+        raise ValueError("Use coherent_gaussian or intensity for image_model.")
     voltages = tuple(float(v) for v in voltages_v)
     if len(voltages) != 2 or min(voltages) <= 0 or voltages[0] == voltages[1]:
         raise ValueError("Supply two distinct positive voltages.")
@@ -173,6 +248,7 @@ def simulate_experiment(
         HERE / name
         for name in [
             "full_microscope_projector.py",
+            "coherent_microscope_workflow.py",
             "full_microscope_apertures.py",
             "finite_projector_pipeline.py",
             "condenser_voltage_experiment.py",
@@ -197,6 +273,7 @@ def simulate_experiment(
             "generator": inspect.getsource(_generate_full),
             "aperture_diameters_um": diameters,
             "centering_sigma_um": centering_sigma_um,
+            "image_model": image_model,
         },
     )
     required = [
@@ -229,6 +306,21 @@ def simulate_experiment(
             "prediction/current_counts.npz",
         ]
     ]
+    if image_model == "coherent_gaussian":
+        required += [
+            root / block / "gaussian_generation.json"
+            for block in ("projector", "projector_predictions", "condenser")
+        ]
+    if image_model == "coherent_gaussian":
+        required += [
+            root / "condenser" / name
+            for name in (
+                "gaussian_pixel_refinement.json",
+                "gaussian_current_generation.json",
+                "moment_quadrature.json",
+                "gaussian_moment_validation.json",
+            )
+        ]
     required.append(root / "condenser/alignment/alignment_constraint.json")
     _record_step(
         directory=root,
@@ -242,6 +334,7 @@ def simulate_experiment(
         random_seed=random_seed,
         aperture_diameters_um=diameters,
         centering_sigma_um=centering_sigma_um,
+        image_model=image_model,
     )
     return root
 
@@ -249,6 +342,10 @@ def simulate_experiment(
 def measure_projector(*, experiment_directory, reuse_completed=True):
     """Supply images; get scale, rotation, blur and signed displacements with covariance."""
     root = Path(experiment_directory) / "projector"
+    gaussian = (
+        json.loads((root / "experiment.json").read_text()).get("image_model")
+        == "coherent_gaussian"
+    )
     paths = [
         root / f"voltage_{i}" / name
         for i in [0, 1]
@@ -275,7 +372,19 @@ def measure_projector(*, experiment_directory, reuse_completed=True):
         directory=root,
         name="analysis",
         signature=signature,
-        required=[root / f"voltage_{i}/measurements.npz" for i in [0, 1]],
+        required=(
+            [
+                root / f"voltage_{i}" / ("moments_" + name)
+                for i in (0, 1)
+                for name in (
+                    "images.npz",
+                    "tilt_images_3mrad.npz",
+                    "beam_shift_images_10nm.npz",
+                )
+            ]
+            if gaussian
+            else [root / f"voltage_{i}/measurements.npz" for i in (0, 1)]
+        ),
         function=measure_projector_block,
         reuse_completed=reuse_completed,
         images_directory=root,
@@ -293,11 +402,29 @@ def fit_projector(
 ):
     """Fit one shared projector geometry from two-voltage measured responses."""
     root = Path(measurements_directory)
+    gaussian = (
+        json.loads((root / "experiment.json").read_text()).get("image_model")
+        == "coherent_gaussian"
+    )
+    measured_files = [
+        root / f"voltage_{i}" / name
+        for i in (0, 1)
+        for name in (
+            (
+                "moments_images.npz",
+                "moments_tilt_images_3mrad.npz",
+                "moments_beam_shift_images_10nm.npz",
+                "moment_specimen.npz",
+                "known_settings.json",
+            )
+            if gaussian
+            else ("measurements.npz",)
+        )
+    ]
     signature = input_signature(
         paths=[
             root / "experiment.json",
-            root / "voltage_0/measurements.npz",
-            root / "voltage_1/measurements.npz",
+            *measured_files,
             starting_guess_path,
             bounds_path,
             HERE / "full_microscope_projector.py",
@@ -355,14 +482,37 @@ def measure_condenser(
         root / "condenser/experiment.json",
         root / "condenser/alignment/alignment_constraint.json",
         root / "projector/fit/result.json",
-        root / "projector/voltage_0/measurements.npz",
-        root / "projector/voltage_1/measurements.npz",
+        *(
+            [
+                root / "projector" / f"voltage_{i}" / name
+                for i in (0, 1)
+                for name in (
+                    "moments_images.npz",
+                    "moments_tilt_images_3mrad.npz",
+                    "moments_beam_shift_images_10nm.npz",
+                    "moment_specimen.npz",
+                )
+            ]
+            if json.loads((root / "projector/experiment.json").read_text()).get(
+                "image_model"
+            )
+            == "coherent_gaussian"
+            else [root / "projector" / f"voltage_{i}/measurements.npz" for i in (0, 1)]
+        ),
         projector_bounds_path,
         HERE / "full_microscope_inference.py",
         HERE / "full_microscope_apertures.py",
         HERE / "full_microscope_projector.py",
         HERE / "condenser_image_pipeline.py",
     ]
+    if (
+        json.loads((root / "condenser/experiment.json").read_text()).get("image_model")
+        == "coherent_gaussian"
+    ):
+        paths += [
+            root / "condenser" / f"voltage_{i}/moment_specimen.npz" for i in (0, 1)
+        ]
+        paths += list((root / "condenser").glob("voltage_*/moment_specimen_local.npz"))
     signature = input_signature(paths=paths, settings={"projector_fit": projector_fit})
     analysis = root / "condenser/analysis"
     _record_step(
@@ -420,6 +570,35 @@ def fit_microscope(
         for i in [0, 1]
         for name in ["current_measurements.npz", "aperture.json"]
     ]
+    if (
+        json.loads((root / "experiment.json").read_text()).get("image_model")
+        == "coherent_gaussian"
+    ):
+        paths += [
+            root / f"voltage_{i}" / name
+            for i in (0, 1)
+            for name in (
+                "images.npz",
+                "measurements.npz",
+                "detector.json",
+                "moment_specimen.npz",
+            )
+        ]
+        paths += list(root.glob("voltage_*/moment_specimen_local.npz"))
+        paths += [
+            root.parent.parent / "projector" / f"voltage_{i}" / name
+            for i in (0, 1)
+            for name in (
+                "moments_images.npz",
+                "moments_tilt_images_3mrad.npz",
+                "moments_beam_shift_images_10nm.npz",
+                "moment_specimen.npz",
+            )
+        ]
+        paths += [root.parent.parent / "projector/experiment.json"]
+        paths += list(
+            (root.parent.parent / "projector").glob("voltage_*/known_settings.json")
+        )
     signature = input_signature(
         paths=paths, settings={"broad_starts": number_of_broad_starts}
     )
@@ -434,36 +613,218 @@ def fit_microscope(
     return json.loads((root / "full_fit.json").read_text())
 
 
-def check_full_microscope(*, experiment_directory, microscope, projector_bounds_path):
-    """Measure new projector images, test frozen predictions, then compare geometry with truth."""
+def check_full_microscope(
+    *, experiment_directory, microscope, projector_bounds_path, reuse_completed=True
+):
+    """Test frozen predictions, then score geometry; cache only matching inputs."""
     root = Path(experiment_directory)
-    with (root / "checks.log").open("a") as log, redirect_stdout(log):
+    paths = [
+        HERE / name
+        for name in (
+            "full_microscope_checks.py",
+            "full_microscope_projector.py",
+            "coherent_microscope_workflow.py",
+            "full_microscope_inference.py",
+        )
+    ]
+    paths += [Path(projector_bounds_path), root / "experiment.json"]
+    paths += list((root / "projector_predictions").glob("voltage_*/*.npz"))
+    paths += [
+        root / block / "scoring_truth.json" for block in ("projector", "condenser")
+    ]
+    paths += [
+        root / "condenser" / f"voltage_{i}" / name
+        for i in (0, 1)
+        for name in (
+            "images.npz",
+            "detector.json",
+            "aperture.json",
+            "prediction/images.npz",
+            "prediction/current_counts.npz",
+        )
+    ]
+    if (
+        json.loads((root / "condenser/experiment.json").read_text()).get("image_model")
+        == "coherent_gaussian"
+    ):
+        paths += [
+            root / "condenser" / f"voltage_{i}" / name
+            for i in (0, 1)
+            for name in ("moment_specimen.npz", "gaussian_specimen.npz")
+        ]
+        paths += list((root / "condenser").glob("voltage_*/moment_specimen_local.npz"))
+        paths += [
+            root / "condenser/analysis" / f"voltage_{i}/measurements.npz"
+            for i in (0, 1)
+        ]
+    # Generated predictions and image-analysis outputs are not acquisition inputs.
+    paths = [
+        p
+        for p in paths
+        if not p.name.startswith(
+            ("moments_", "scoring_gaussian_", "full_microscope_predictions")
+        )
+    ]
+    signature = input_signature(paths=paths, settings={"microscope": microscope})
+
+    def run():
         measure_projector_block(images_directory=root / "projector_predictions")
-        result = _check_microscope(
+        return _check_microscope(
             experiment_directory=root,
             fitted=microscope,
             bounds_path=projector_bounds_path,
         )
-    return result
+
+    _record_step(
+        directory=root,
+        name="checks",
+        signature=signature,
+        required=[root / "checks.json"],
+        function=run,
+        reuse_completed=reuse_completed,
+    )
+    return json.loads((root / "checks.json").read_text())
 
 
 def show_images(*, experiment_directory, fitted_predictions=False):
+    """Display the recorded beam region; saved acquisitions retain the full camera."""
     import matplotlib.pyplot as plt
 
+    from temgym_core.coherent_moments import moment_regions
+
     root = Path(experiment_directory)
-    fig, axes = plt.subplots(1, 2, figsize=(8, 3.5))
-    for i in [0, 1]:
+    frames, titles = [], []
+    for index in (0, 1):
         if fitted_predictions:
             folder = root / "condenser/voltage_1/prediction"
-            filename = "images.npz" if i == 0 else "full_microscope_predictions.npz"
-            image = np.load(folder / filename)["images"][2, 0]
-            title = "New recorded image" if i == 0 else "Full microscope prediction"
+            filename = "images.npz" if index == 0 else "full_microscope_predictions.npz"
+            frames.append(np.load(folder / filename)["images"][2, 0])
+            titles.append(
+                "New recorded image" if index == 0 else "Full microscope prediction"
+            )
         else:
-            images = load_projector_images(root / "projector" / f"voltage_{i}")
-            image = images.ordinary.images[0]
-            title = f"{images.ordinary.specimen_and_detector['voltage_v'] / 1000:g} kV, projector calibration"
-        axes[i].imshow(image, cmap="gray")
-        axes[i].set_title(title)
-        axes[i].axis("off")
+            images = load_projector_images(root / "projector" / f"voltage_{index}")
+            frames.append(images.ordinary.images[0])
+            titles.append(
+                f"{images.ordinary.specimen_and_detector['voltage_v'] / 1000:g} kV: Gaussian image"
+            )
+    masks = moment_regions(
+        images=np.asarray(frames[:1] if fitted_predictions else frames),
+        background_counts=3.0,
+        read_noise_counts=2.0,
+    )
+    yy, xx = np.nonzero(np.any(masks, axis=0))
+    crop = np.s_[yy.min() : yy.max() + 1, xx.min() : xx.max() + 1]
+    fig, axes = plt.subplots(1, 2, figsize=(8, 3.5))
+    for axis, frame, title in zip(axes, frames, titles):
+        axis.imshow(frame[crop], cmap="gray")
+        axis.set_title(title)
+        axis.axis("off")
     fig.tight_layout()
     return fig
+
+
+def show_prediction_checks(*, checks):
+    """Display four prediction errors without the full geometry report."""
+    from IPython.display import Markdown, display
+
+    rows = [
+        (
+            (
+                "Calibration image measurements",
+                checks["calibration_measurements"]["rms"],
+            )
+            if "calibration_measurements" in checks
+            else ("Calibration images", checks["calibration_pixels"]["pixel_rms"])
+        ),
+        (
+            "New images (beam region)",
+            checks["prediction_pixels"]["signal_region_pixel_rms"],
+        )
+        if "signal_region_pixel_rms" in checks["prediction_pixels"]
+        else ("New images", checks["prediction_pixels"]["pixel_rms"]),
+        ("New projector measurements", checks["projector_predictions"]["rms"]),
+        ("New aperture currents", checks["current_predictions"]["rms"]),
+    ]
+    display(
+        Markdown(
+            "| Check | RMS in noise units |\n|---|---:|\n"
+            + "\n".join(f"| {name} | {value:.4f} |" for name, value in rows)
+        )
+    )
+
+
+def copy_recorded_experiment(*, source_directory, output_directory):
+    """Copy raw acquisition, known settings and scoring model, without old fits.
+
+    Returns the new experiment directory. Repeated calls preserve new analysis
+    files; stage signatures invalidate them when their inputs change.
+    """
+    import hashlib
+    import shutil
+
+    source, output = Path(source_directory).resolve(), Path(output_directory).resolve()
+    if source == output:
+        raise ValueError(
+            "Use a separate output directory to preserve the reference acquisition."
+        )
+    paths = [
+        "experiment.json",
+        "projector/experiment.json",
+        "projector/scoring_truth.json",
+        "projector_predictions/experiment.json",
+        "projector_predictions/scoring_truth.json",
+        "condenser/experiment.json",
+        "condenser/scoring_truth.json",
+        "condenser/alignment/alignment_constraint.json",
+    ]
+    for block in ("projector", "projector_predictions"):
+        for index in (0, 1):
+            paths.extend(
+                f"{block}/voltage_{index}/{name}"
+                for name in (
+                    "images.npz",
+                    "tilt_images_3mrad.npz",
+                    "beam_shift_images_10nm.npz",
+                    "specimen_template.npz",
+                    "known_settings.json",
+                    "scoring_truth.json",
+                )
+            )
+    for index in (0, 1):
+        paths.extend(
+            f"condenser/voltage_{index}/{name}"
+            for name in (
+                "images.npz",
+                "counts.npz",
+                "template.npz",
+                "detector.json",
+                "aperture.json",
+                "prediction/images.npz",
+                "prediction/current_counts.npz",
+                "prediction/template.npz",
+                "prediction/detector.json",
+            )
+        )
+    hashes = {}
+    for name in paths:
+        original, target = source / name, output / name
+        digest = hashlib.sha256(original.read_bytes()).hexdigest()
+        if (
+            not target.exists()
+            or hashlib.sha256(target.read_bytes()).hexdigest() != digest
+        ):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original, target)
+        hashes[name] = digest
+    (output / "raw_acquisition.json").write_text(
+        json.dumps(
+            {
+                "source": str(source),
+                "sha256": hashes,
+                "previous_measurements_or_fits_copied": False,
+            },
+            indent=2,
+        )
+    )
+    return output

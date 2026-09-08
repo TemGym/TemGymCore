@@ -35,8 +35,9 @@ from projector_calibration_workflow import CalibrationImages, measure_calibratio
 from projector_landscape import make_starting_models
 from projector_notebook_helpers import Experiment, model_to_parameters
 from projector_tilt_pipeline import TiltExperiment, simulate_tilt_images
-from scipy.optimize import least_squares
 from scipy.stats import chi2
+
+from temgym_core.jax_least_squares import least_squares
 
 
 def at_voltage(parameters, voltage, reference=200000.0):
@@ -207,12 +208,15 @@ def load_projector_images(folder):
     )
 
 
-def measure_projector_block(*, images_directory):
+def measure_projector_block(*, images_directory, reuse_completed=False):
     root = Path(images_directory)
     experiment = json.loads((root / "experiment.json").read_text())
+    if experiment.get("image_model") == "coherent_gaussian":
+        return measure_projector_moments(images_directory=root)
     for index, _ in enumerate(experiment["voltages_v"]):
         measure_calibration_images(
-            images=load_projector_images(root / f"voltage_{index}")
+            images=load_projector_images(root / f"voltage_{index}"),
+            reuse_completed=reuse_completed,
         )
     return root
 
@@ -246,6 +250,12 @@ def projector_residual(
     """Original measured A/B responses, one shared physical geometry at both voltages."""
     root = Path(measurements_directory)
     experiment = json.loads((root / "experiment.json").read_text())
+    if experiment.get("image_model") == "coherent_gaussian":
+        return gaussian_projector_residual(
+            measurements_directory=root,
+            bounds_path=bounds_path,
+            include_image_measurements=include_image_measurements,
+        )
     _, decode, _, _ = projector_coordinates(bounds_path)
     blocks, image_blocks = [], []
     for index, voltage in enumerate(experiment["voltages_v"]):
@@ -352,6 +362,7 @@ def fit_projector_block(
             bounds=(lower[:16], upper[:16]),
             x_scale="jac",
             max_nfev=5000,
+            max_iter=6000,
             ftol=1e-10,
             xtol=1e-11,
             gtol=1e-5,
@@ -369,6 +380,7 @@ def fit_projector_block(
             bounds=(lower, upper),
             x_scale="jac",
             max_nfev=5000,
+            max_iter=6000,
             ftol=1e-10,
             xtol=1e-11,
             gtol=1e-5,
@@ -384,13 +396,13 @@ def fit_projector_block(
             ).tolist(),
             "displacement_initialization": {
                 "success": bool(initial.success),
-                "residual_rms": float(np.sqrt(np.mean(initial.fun**2))),
+                "residual_rms": float(np.sqrt(np.mean(initial.residual**2))),
                 "parameters": initial.x.tolist(),
             },
             "success": bool(fit.success),
             "evaluations": fit.nfev,
-            "chi_squared": float(fit.fun @ fit.fun),
-            "residual_rms": float(np.sqrt(np.mean(fit.fun**2))),
+            "chi_squared": float(fit.residual @ fit.residual),
+            "residual_rms": float(np.sqrt(np.mean(fit.residual**2))),
             "message": fit.message,
         }
         attempts.append(row)
@@ -429,3 +441,192 @@ def fit_projector_block(
     }
     (output / "result.json").write_text(json.dumps(result, indent=2))
     return result
+
+
+def measure_projector_moments(*, images_directory):
+    """Extract shape and paired centroid measurements from recorded pixels."""
+    from temgym_core.coherent_moments import measure_detector_moments, moment_regions
+
+    root = Path(images_directory)
+    for folder in sorted(root.glob("voltage_*")):
+        spec = json.loads((folder / "known_settings.json").read_text())
+        for filename in (
+            "images.npz",
+            "tilt_images_3mrad.npz",
+            "beam_shift_images_10nm.npz",
+        ):
+            data = dict(np.load(folder / filename))
+            regions = moment_regions(
+                images=data["images"],
+                background_counts=spec["background_counts"],
+                read_noise_counts=spec["read_noise_std_e"],
+            )
+            measured = measure_detector_moments(
+                images=data["images"],
+                background_counts=spec["background_counts"],
+                read_noise_counts=spec["read_noise_std_e"],
+                regions=regions,
+            )
+            metadata = {k: v for k, v in data.items() if k != "images"}
+            np.savez_compressed(
+                folder / ("moments_" + filename),
+                **metadata,
+                **measured,
+                regions=regions,
+            )
+    return root
+
+
+def make_projector_moment_predictor(*, folder, controls, positions, angles):
+    """Known complex specimen + native lens matrices -> five detector moments.
+
+    The lens geometry, illumination curvature/spread and specimen rotation are
+    supplied by the trial model. This function never reads generating parameters.
+    """
+    from coherent_microscope_workflow import load_known_transmission
+
+    from temgym_core.coherent_moments import detector_moments
+    from temgym_core.constants import energy2wavelength
+
+    folder = Path(folder)
+    sample = load_known_transmission(folder / "moment_specimen.npz")["sampled"]
+    spec = json.loads((folder / "known_settings.json").read_text())
+    wavelength = energy2wavelength(spec["voltage_v"])
+
+    def incident(position, curvature, spread, rotation):
+        c, s = jnp.cos(rotation), jnp.sin(rotation)
+        rotate = jnp.array([[c, -s], [s, c]])
+        local_position = rotate.T @ position
+        mean, covariance = sample.circular_moments(
+            radius_m=spec["specimen"]["illumination_radius_m"],
+            edge_m=spec["specimen"]["illumination_edge_m"],
+            position_m=local_position,
+            angle_rad=jnp.zeros(2),
+            curvature_per_m=0.0,
+            angular_rms_rad=0.0,
+            wavelength=wavelength,
+        )
+        transport = jnp.block(
+            [[rotate, jnp.zeros((2, 2))], [curvature * rotate, rotate]]
+        )
+        mean = transport @ mean - jnp.r_[jnp.zeros(2), curvature * position]
+        covariance = transport @ covariance @ transport.T
+        return mean, covariance.at[2:, 2:].add(spread**2 * jnp.eye(2))
+
+    unique_positions, indices = np.unique(
+        np.asarray(positions), axis=0, return_inverse=True
+    )
+    controls, angles = jnp.asarray(controls), jnp.asarray(angles)
+
+    def predict(parameters):
+        # Integrate each distinct illumination position only once.
+        means, covariances = jax.vmap(
+            lambda pos: incident(
+                pos, parameters[16] * 1e4, jnp.exp(parameters[17]), parameters[18]
+            )
+        )(jnp.asarray(unique_positions))
+        means, covariances = means[indices], covariances[indices]
+        means = means.at[:, 2:].add(angles)
+        maps = jax.vmap(lambda command: matrix5(parameters, command))(controls)
+        return jax.vmap(
+            lambda matrix, mean, covariance: detector_moments(
+                matrix,
+                mean,
+                covariance,
+                pixel_pitch_m=spec["pixel_pitch_m"],
+                psf_sigma_pixels=spec["psf_sigma_pixels"],
+            )
+        )(maps, means, covariances)
+
+    return predict
+
+
+def gaussian_projector_residual(
+    *, measurements_directory, bounds_path, include_image_measurements=True
+):
+    """Whitened image moments, eliminating unknown common image translations."""
+    root = Path(measurements_directory)
+    experiment = json.loads((root / "experiment.json").read_text())
+    _, decode, _, _ = projector_coordinates(bounds_path)
+    batches = []
+    for index, voltage in enumerate(experiment["voltages_v"]):
+        folder = root / f"voltage_{index}"
+        filenames = (
+            ("images.npz", "tilt_images_3mrad.npz", "beam_shift_images_10nm.npz")
+            if include_image_measurements
+            else ("tilt_images_3mrad.npz",)
+        )
+        for filename in filenames:
+            data = dict(np.load(folder / ("moments_" + filename)))
+            zeros = np.zeros((len(data["values"]), 2))
+            positions = data.get("input_positions_m", zeros)
+            angles = data.get("input_angles_rad", data.get("input_tilts_rad", zeros))
+            if include_image_measurements:
+                predict = make_projector_moment_predictor(
+                    folder=folder,
+                    controls=data["lens_controls"],
+                    positions=positions,
+                    angles=angles,
+                )
+            else:
+                controls = jnp.asarray(data["lens_controls"])
+                pitch = json.loads((folder / "known_settings.json").read_text())[
+                    "pixel_pitch_m"
+                ]
+                angles = jnp.asarray(angles)
+
+                def predict(p, controls=controls, angles=angles, pitch=pitch):
+                    maps = jax.vmap(lambda c: matrix5(p, c))(controls)
+                    centres = jnp.einsum("nij,nj->ni", maps[:, :2, 2:4], angles) / pitch
+                    return jnp.column_stack((centres, jnp.zeros((len(controls), 3))))
+
+            if filename == "images.npz":
+                projection = np.eye(5)[2:]
+                values = data["values"][:, 2:]
+                covariance = data["covariance"][:, 2:, 2:]
+                paired = False
+            else:
+                projection = np.zeros((8 if include_image_measurements else 2, 10))
+                projection[:2, :2] = -np.eye(2)
+                projection[:2, 5:7] = np.eye(2)
+                if include_image_measurements:
+                    projection[2:5, 2:5] = np.eye(3)
+                    projection[5:8, 7:10] = np.eye(3)
+                values = data["values"].reshape(-1, 10) @ projection.T
+                covariance = np.zeros((len(values), 10, 10))
+                covariance[:, :5, :5] = data["covariance"][::2]
+                covariance[:, 5:, 5:] = data["covariance"][1::2]
+                covariance = projection @ covariance @ projection.T
+                covariance[:, :2, :2] += (
+                    2 * float(data["drift_std_pixels"]) ** 2 * np.eye(2)
+                )
+                paired = True
+            white = np.linalg.inv(np.linalg.cholesky(covariance))
+            batches.append(
+                (
+                    index,
+                    voltage,
+                    predict,
+                    jnp.asarray(projection),
+                    paired,
+                    jnp.asarray(values),
+                    jnp.asarray(white),
+                )
+            )
+
+    def residual(u):
+        base = decode(u[:16])
+        parts = []
+        for index, voltage, predict, projection, paired, values, white in batches:
+            p = at_voltage(base, voltage, experiment["reference_voltage_v"])
+            if include_image_measurements:
+                p = p.at[16:19].set(
+                    jnp.array([u[16 + 2 * index], u[17 + 2 * index], u[20]])
+                )
+            prediction = predict(p)
+            prediction = prediction.reshape(-1, 10) if paired else prediction
+            difference = prediction @ projection.T - values
+            parts.append(jnp.einsum("nij,nj->ni", white, difference).ravel())
+        return jnp.concatenate(parts)
+
+    return jax.jit(residual)

@@ -16,6 +16,7 @@ from condenser_simplification_design import QUANTITIES, physical_geometry
 from scipy.linalg import null_space
 from scipy.optimize import LinearConstraint, least_squares, minimize
 from scipy.stats import chi2
+from temgym_core.jax_least_squares import least_squares as jax_least_squares
 
 
 def to_coordinates(parameters):
@@ -90,12 +91,13 @@ def search_alternatives(
             raise ValueError(
                 "Starting guesses must be strictly inside declared physical bounds."
             )
-        fit = least_squares(
-            lambda p: np.asarray(residual(p)),
+        fit = jax_least_squares(
+            residual,
             guess,
-            jac=lambda p: np.asarray(derivative(p)),
+            jac=derivative,
             bounds=(lower, upper),
             max_nfev=max_evaluations,
+            max_iter=2*max_evaluations,
             x_scale="jac",
             ftol=1e-9,
             xtol=1e-11,
@@ -110,8 +112,8 @@ def search_alternatives(
             "message": str(fit.message),
             "evaluations": int(fit.nfev),
             "chi_squared": float(2 * fit.cost),
-            "residual_rms": float(np.sqrt(np.mean(fit.fun**2))),
-            "active_bounds": np.flatnonzero(fit.active_mask).tolist(),
+            "residual_rms": float(np.sqrt(np.mean(fit.residual**2))),
+            "active_bounds": np.flatnonzero((np.asarray(fit.x) == lower) | (np.asarray(fit.x) == upper)).tolist(),
         }
         records.append(record)
         (folder / f"start_{index:03d}.json").write_text(json.dumps(record, indent=2))

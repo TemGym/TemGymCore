@@ -69,9 +69,14 @@ class Component(HasParamsMixin):
 def _min_eigval_2x2(M: jnp.ndarray) -> jnp.ndarray:
     """Minimum eigenvalue of a real symmetric 2×2 matrix."""
     tr = M[..., 0, 0] + M[..., 1, 1]
-    det = M[..., 0, 0] * M[..., 1, 1] - M[..., 0, 1] * M[..., 1, 0]
-    disc = jnp.maximum(tr * tr - 4.0 * det, 0.0)
-    return 0.5 * (tr - jnp.sqrt(disc))
+    # Difference form avoids cancellation at a round Gaussian. At an exact
+    # repeated eigenvalue choose the symmetric subgradient (half the trace).
+    # Guard the sqrt input itself: masking sqrt(0) afterwards still produces
+    # 0 * inf in autodiff, even when the envelope regularizer is inactive.
+    disc = (M[..., 0, 0] - M[..., 1, 1]) ** 2 + (M[..., 0, 1] + M[..., 1, 0]) ** 2
+    distinct = disc > 0
+    root = jnp.sqrt(jnp.where(distinct, disc, 1.))
+    return 0.5 * (tr - jnp.where(distinct, root, 0.))
 
 
 def _regularize_L2k(
