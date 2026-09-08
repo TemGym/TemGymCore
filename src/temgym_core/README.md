@@ -50,6 +50,41 @@ regular TemGym interface, but importing ordinary components does not load it.
 The notebook that calls it moved to
 [examples/experimental/glauber_ray_example.ipynb](../../examples/experimental/glauber_ray_example.ipynb).
 
+## Reading components
+
+`components.py` stays in one file, grouped into planes, lenses, steering,
+phase/amplitude elements and specimens. Read `Component` for dispatch and
+`Lens` for the simplest physical example. `run_to_end` handles travel to each
+component; finite elements such as `HardEdgeSolenoid` handle their own body.
+
+Each component supplies a ray update and/or a Gaussian update. Where the
+calculation is identical, both use the same method. Gaussian-only elements
+inherit the base class's error for unsupported ray input. `ElectromagneticLens`
+shares one thin/thick focusing sequence, retaining the separate ray and
+Gaussian propagators. `GaussianActionComponent` and `InterpolatedSample2D`
+share one absorption and curvature update; they differ in how they obtain
+the action derivatives.
+
+`phase_shift` is a historical name for **optical path**, not phase in radians.
+The phase is `k * path`; `log_transmission` describes field amplitude.
+`ABCDTransfer` transports coordinates and curvature only. Physical wrappers
+must supply optical path and coherent amplitude, as `HardEdgeSolenoid` does.
+
+The audit also identified existing behaviour needing separate physics work:
+
+| Component | Current limitation |
+|---|---|
+| `ElectromagneticLens` | The round-ray branch ignores x0/y0; Gaussian and stigmator branches use them. |
+| `KrivanekLens` | The legacy ray branch works about the origin and replaces pathlength with the aberration value. |
+| `InterpolatedFields3D` | Fields can be interpolated, but calling the component leaves the beam unchanged. |
+
+The readability changes preserve those behaviours. They also preserve the
+separately edited Seidel and distorted-lens formulas.
+132 targeted tests passed for both the working version and an isolated cleanup
+snapshot. All 77 before/after comparisons matched exactly, including the tested
+action, specimen and electromagnetic-lens derivatives. Full notebook fits were
+not repeated.
+
 ## Images and measurements
 
 `evaluate.gaussian_image(beam, detector, ...)` uses the regular `Detector` from

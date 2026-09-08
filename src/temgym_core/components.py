@@ -1,3 +1,15 @@
+"""Optical components for rays and coherent Gaussian beams.
+
+Read Component for dispatch, then Lens for a simple physical example.
+The file groups planes, lenses, steering, phase/amplitude elements and specimens.
+GaussianActionComponent shares the local optical-path/transmission update.
+
+Use component(beam) at its plane or run_to_end(beam, components) for a column.
+Positions use the beam length unit; slopes are radians. Parameters annotated
+Degrees use degrees; parameters ending in _rad use radians. See each component
+for finite-body propagation and any ray/Gaussian support limitations.
+"""
+
 from __future__ import annotations
 
 import dataclasses
@@ -44,8 +56,15 @@ from .ray import Ray
 from .tree_utils import HasParamsMixin
 
 
+# Component interface and Gaussian action
+
 class Component(HasParamsMixin):
-    """Unified base component for paraxial rays and gaussian beams."""
+    """A component transforms a Ray or GaussianBeam at its current plane.
+
+    Call component(beam); dispatch uses beam.ray_family. The runner handles
+    free-space travel to component.z. A finite component handles its own body
+    propagation. Unsupported beam families raise NotImplementedError.
+    """
 
     def __call__(self, ray: Ray) -> Ray:
         family = getattr(ray, "ray_family", "ray")
@@ -66,6 +85,29 @@ class Component(HasParamsMixin):
         raise NotImplementedError(
             f"{type(self).__name__} is not implemented for ray_family='gaussian'."
         )
+
+
+def _call_single_or_batched_gaussian(ray: GaussianBeam, single_call):
+    if jnp.asarray(ray.r_xy).ndim > 1:
+        return jax.vmap(single_call)(ray.to_vector())
+    return single_call(ray)
+
+
+def _default_action_terms(xy_ref: jnp.ndarray):
+    return (
+        jnp.zeros((), dtype=xy_ref.dtype),
+        jnp.zeros_like(xy_ref),
+        jnp.zeros((2, 2), dtype=xy_ref.dtype),
+    )
+
+
+def _value_grad_hessian(fn, x: jnp.ndarray):
+    value, grad = jax.value_and_grad(fn)(x)
+    return value, grad, jax.hessian(fn)(x)
+
+
+def _uses_default_log_transmission(component: "GaussianActionComponent") -> bool:
+    return type(component).log_transmission is GaussianActionComponent.log_transmission
 
 
 def _min_eigval_2x2(M: jnp.ndarray) -> jnp.ndarray:
@@ -100,71 +142,47 @@ def _regularize_L2k(
     return L2k - shift[..., None, None] * jnp.eye(2, dtype=L2k.dtype)
 
 
-def _is_batched_gaussian(ray: GaussianBeam) -> bool:
-    return jnp.asarray(ray.r_xy).ndim > 1
+def _apply_gaussian_action(ray, path_terms, log_amplitude_terms=None):
+    """Apply local value/gradient/Hessian terms from AD or specimen interpolation."""
+    dS0, dS1, dS2 = path_terms
+    if log_amplitude_terms is not None:
+        log_value, log_gradient, log_hessian = log_amplitude_terms
+        k = ray.k
+        im_q = jnp.imag(ray.Q_inv)
+        # Limit the inferred shift toward higher transmission, then keep the
+        # updated Gaussian envelope decaying. Both specimen paths use this rule.
+        estimated_shift = _solve_2x2(im_q, log_gradient) / k
+        scale = 1.0 / (1.0 + jnp.dot(log_gradient, estimated_shift))
+        log_gradient = log_gradient * scale
+        log_hessian = log_hessian * scale
+        log_hessian_over_k = _regularize_L2k(log_hessian / k, im_q)
+        dS0 = dS0 - 1j * (log_value / k)
+        dS1 = dS1 - 1j * (log_gradient / k)
+        dS2 = dS2 - 1j * log_hessian_over_k
 
-
-def _call_single_or_batched_gaussian(ray: GaussianBeam, single_call):
-    if _is_batched_gaussian(ray):
-        return jax.vmap(single_call)(ray.to_vector())
-    return single_call(ray)
-
-
-def _default_action_terms(xy_ref: jnp.ndarray):
-    return (
-        jnp.zeros((), dtype=xy_ref.dtype),
-        jnp.zeros_like(xy_ref),
-        jnp.zeros((2, 2), dtype=xy_ref.dtype),
+    r_xy, d_xy, amplitude, pathlength, q_new = apply_action_delta(
+        ray, dS0=dS0, dS1=dS1, dS2=dS2
+    )
+    return ray.derive(
+        x=r_xy[..., 0], y=r_xy[..., 1],
+        dx=d_xy[..., 0], dy=d_xy[..., 1], z=ray.z,
+        amplitude=amplitude, pathlength=pathlength, Q_inv=q_new,
     )
 
 
-def _value_grad_hessian(fn, x: jnp.ndarray):
-    value, grad = jax.value_and_grad(fn)(x)
-    return value, grad, jax.hessian(fn)(x)
-
-
-def _uses_default_phase_shift(component: "GaussianActionComponent") -> bool:
-    return type(component).phase_shift is GaussianActionComponent.phase_shift
-
-
-def _uses_default_log_transmission(component: "GaussianActionComponent") -> bool:
-    return type(component).log_transmission is GaussianActionComponent.log_transmission
-
-
-def _matvec(matrix: jnp.ndarray, vector: jnp.ndarray) -> jnp.ndarray:
-    return jnp.einsum("...ij,...j->...i", matrix, vector)
-
-
-def _matmat(matrix: jnp.ndarray, tensor: jnp.ndarray) -> jnp.ndarray:
-    return jnp.einsum("...ij,...jk->...ik", matrix, tensor)
-
-
-def _rotate_quadratic_form(rotation: jnp.ndarray, q_inv: jnp.ndarray) -> jnp.ndarray:
-    """Rotate Q consistently with r' = R r: Q' = R Q R.T."""
-    return jnp.einsum("...ij,...jk,...lk->...il", rotation, q_inv, rotation)
-
-
 class GaussianActionComponent(Component):
-    """Mixin for components defined by an action (phase + log-transmission).
+    """Base for thin elements described by optical path and field transmission.
 
-    Phase and log-transmission are Taylor-expanded *separately* to second
-    order, then combined analytically into complex action coefficients:
+    Despite its name, phase_shift(xy) returns optical path, in the beam's
+    length unit. log_transmission(xy) returns log field amplitude. Together:
 
-        dS = phi - i * L / k
+        field multiplier = exp(i k path + log_amplitude)
+        complex action  = path - i log_amplitude / k
 
-    This captures all physical effects of the transmission profile:
-
-    * **Zeroth order** – amplitude scaling at the beam centre.
-    * **First order** – sub-picometer beam-centre shift toward higher
-      transmission.
-    * **Second order** – beam-width modification from the curvature of
-      the absorption profile (narrowing near absorbing edges).
-
-    Separating the expansions avoids numerical issues that arise when
-    autodiff is applied to non-smooth formulations of ``log_transmission``
-    (e.g. ``abs`` → ``log``).  A safety regularisation on Im(Q') prevents
-    degenerate cases where the Hessian of log-transmission would make the
-    Gaussian envelope non-decaying.
+    Values, gradients and Hessians update amplitude, beam centre and shape.
+    The shared action helper limits absorption-driven recentering and keeps
+    the Gaussian envelope decaying. Subclasses can provide exact quadratic
+    updates or interpolated derivatives instead of automatic differentiation.
     """
 
     def phase_shift(self, xy: jnp.ndarray):
@@ -182,83 +200,40 @@ class GaussianActionComponent(Component):
         return _call_single_or_batched_gaussian(ray, self._call_gaussian_single)
 
     def _call_gaussian_single(self, ray: GaussianBeam) -> GaussianBeam:
-        xy_ref = ray.r_xy
-        k = ray.k
-
-        if _uses_default_phase_shift(self):
-            dS0, dS1, dS2 = _default_action_terms(xy_ref)
+        xy = ray.r_xy
+        if type(self).phase_shift is GaussianActionComponent.phase_shift:
+            path_terms = _default_action_terms(xy)
         else:
-            def phase_scalar(xy):
-                return jnp.real(self.phase_shift(xy))
+            path_terms = _value_grad_hessian(lambda p: jnp.real(self.phase_shift(p)), xy)
 
-            dS0, dS1, dS2 = _value_grad_hessian(phase_scalar, xy_ref)
-
+        log_terms = None
         if not _uses_default_log_transmission(self):
-            def logt_scalar(xy):
-                return jnp.real(jnp.logaddexp(self.log_transmission(xy), -50.0))
+            def log_transmission(p):
+                return jnp.real(jnp.logaddexp(self.log_transmission(p), -50.0))
 
-            L0, L1, L2 = _value_grad_hessian(logt_scalar, xy_ref)
-
-            # Suppress unreliable higher-order amplitude terms when the
-            # implied recentering becomes comparable with the beam width.
-            ImQ = jnp.imag(ray.Q_inv)
-            dx_est = _solve_2x2(ImQ, L1) / k
-            ratio = jnp.dot(L1, dx_est)
-            scale = 1.0 / (1.0 + ratio)
-            L1_eff = L1 * scale
-            L2_eff = L2 * scale
-            L2k = _regularize_L2k(L2_eff / k, ImQ)
-            dS0 = dS0 - 1j * (L0 / k)
-            dS1 = dS1 - 1j * (L1_eff / k)
-            dS2 = dS2 - 1j * L2k
-
-        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
-            ray, dS0=dS0, dS1=dS1, dS2=dS2
-        )
-
-        return ray.derive(
-            x=r_xy[..., 0],
-            y=r_xy[..., 1],
-            dx=d_xy[..., 0],
-            dy=d_xy[..., 1],
-            z=ray.z,
-            amplitude=amplitude,
-            pathlength=pathlength,
-            Q_inv=Q_new,
-        )
+            log_terms = _value_grad_hessian(log_transmission, xy)
+        return _apply_gaussian_action(ray, path_terms, log_terms)
 
 
-class DescanError(NamedTuple):
-    pxo_pxi: float = 0.0
-    pxo_pyi: float = 0.0
-    pyo_pxi: float = 0.0
-    pyo_pyi: float = 0.0
-    sxo_pxi: float = 0.0
-    sxo_pyi: float = 0.0
-    syo_pxi: float = 0.0
-    syo_pyi: float = 0.0
-    offpxi: float = 0.0
-    offpyi: float = 0.0
-    offsxi: float = 0.0
-    offsyi: float = 0.0
+def _matvec(matrix: jnp.ndarray, vector: jnp.ndarray) -> jnp.ndarray:
+    return jnp.einsum("...ij,...j->...i", matrix, vector)
 
-    def as_array(self) -> jnp.ndarray:
-        return jnp.array(self)
 
-    def as_matrix(self) -> jnp.ndarray:
-        return jnp.array(
-            [
-                [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],
-                [self.pyo_pxi, self.pyo_pyi, 0.0, 0.0, self.offpyi],
-                [self.sxo_pxi, self.sxo_pyi, 0.0, 0.0, self.offsxi],
-                [self.syo_pxi, self.syo_pyi, 0.0, 0.0, self.offsyi],
-                [0.0, 0.0, 0.0, 0.0, 1.0],
-            ]
-        )
+def _matmat(matrix: jnp.ndarray, tensor: jnp.ndarray) -> jnp.ndarray:
+    return jnp.einsum("...ij,...jk->...ik", matrix, tensor)
 
+
+def _rotate_quadratic_form(rotation: jnp.ndarray, q_inv: jnp.ndarray) -> jnp.ndarray:
+    """Rotate Q consistently with r' = R r: Q' = R Q R.T."""
+    return jnp.einsum("...ij,...jk,...lk->...il", rotation, q_inv, rotation)
+
+
+# Planes and detectors
 
 @jdc.pytree_dataclass
 class Plane(Component):
+    """A marker plane; propagation to z is performed by the runner."""
+
     z: float
 
     def _call_ray(self, ray: Ray):
@@ -269,7 +244,47 @@ class Plane(Component):
 
 
 @jdc.pytree_dataclass
+class ScanGrid(Component, Grid):
+    """Scan-plane geometry; calling it leaves the beam unchanged."""
+
+    z: float
+    pixel_size: ScaleYX
+    shape: ShapeYX
+    rotation: Degrees = 0.0
+    centre: CoordsXY = (0.0, 0)
+    flip_y: bool = False
+
+    def _call_ray(self, ray: Ray):
+        return ray
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        return ray
+
+
+@jdc.pytree_dataclass
+class Detector(Component, Grid):
+    """Detector geometry. Calling it marks a plane; rendering is separate."""
+
+    z: float
+    pixel_size: ScaleYX
+    shape: ShapeYX
+    rotation: Degrees = 0.0
+    centre: CoordsXY = (0.0, 0)
+    flip_y: bool = False
+
+    def _call_ray(self, ray: Ray):
+        return ray
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        return ray
+
+
+# Lenses and matrix transport
+
+@jdc.pytree_dataclass
 class Lens(GaussianActionComponent):
+    """Thin round lens; focal_length, x0 and y0 use the beam length unit."""
+
     z: float
     focal_length: float
     x0: float = 0.0
@@ -366,6 +381,13 @@ class Stigmator(GaussianActionComponent):
 
 @jdc.pytree_dataclass
 class KrivanekLens(Lens):
+    """Thin lens with Krivanek aberrations.
+
+    The Gaussian path expands a local optical action. The legacy ray path
+    instead corrects slopes about the origin and replaces pathlength with
+    the aberration value; it does not accumulate the ideal-lens optical path.
+    """
+
     coeffs: Dict = dataclasses.field(default_factory=dict)
     axis_eps: float = 1e-24
 
@@ -515,104 +537,76 @@ class DistortedLens(SeidelLens):
         )
 
 
-@jdc.pytree_dataclass
-class ScanGrid(Component, Grid):
-    z: float
-    pixel_size: ScaleYX
-    shape: ShapeYX
-    rotation: Degrees = 0.0
-    centre: CoordsXY = (0.0, 0)
-    flip_y: bool = False
+@jdc.pytree_dataclass(kw_only=True)
+class ABCDTransfer(Component):
+    """Linear 4D map with 2×2 A, B, C, D blocks in [x, y, dx, dy] order.
+
+    Transports positions, slopes and Gaussian curvature. This primitive does
+    not add optical path or the coherent amplitude factor; physical wrappers
+    such as HardEdgeSolenoid supply them.
+    """
+
+    A: jnp.ndarray
+    B: jnp.ndarray
+    C: jnp.ndarray = dataclasses.field(
+        default_factory=lambda: jnp.zeros((2, 2), dtype=jnp.float64)
+    )
+    D: jnp.ndarray = dataclasses.field(
+        default_factory=lambda: jnp.eye(2, dtype=jnp.float64)
+    )
+    z: float = 0.0
 
     def _call_ray(self, ray: Ray):
-        return ray
+        A = jnp.asarray(self.A, dtype=jnp.float64)
+        B = jnp.asarray(self.B, dtype=jnp.float64)
+        C = jnp.asarray(self.C, dtype=jnp.float64)
+        D = jnp.asarray(self.D, dtype=jnp.float64)
+        r_xy_new = _matvec(A, ray.r_xy) + _matvec(B, ray.d_xy)
+        d_xy_new = _matvec(C, ray.r_xy) + _matvec(D, ray.d_xy)
 
-    def _call_gaussian(self, ray: GaussianBeam):
-        return ray
-
-
-@jdc.pytree_dataclass
-class Scanner(Component):
-    z: float
-    scan_pos_x: float
-    scan_pos_y: float
-    scan_tilt_x: float = 0.0
-    scan_tilt_y: float = 0.0
-
-    def _call_ray(self, ray: Ray):
         return ray.derive(
-            x=ray.x + self.scan_pos_x * ray._one,
-            y=ray.y + self.scan_pos_y * ray._one,
-            dx=ray.dx + self.scan_tilt_x * ray._one,
-            dy=ray.dy + self.scan_tilt_y * ray._one,
+            x=r_xy_new[..., 0],
+            y=r_xy_new[..., 1],
+            dx=d_xy_new[..., 0],
+            dy=d_xy_new[..., 1],
         )
 
-    def _call_gaussian(self, ray: GaussianBeam):
+    def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
+        A = jnp.asarray(self.A, dtype=jnp.float64)
+        B = jnp.asarray(self.B, dtype=jnp.float64)
+        C = jnp.asarray(self.C, dtype=jnp.float64)
+        D = jnp.asarray(self.D, dtype=jnp.float64)
+
+        r_xy_new = _matvec(A, ray.r_xy) + _matvec(B, ray.d_xy)
+        d_xy_new = _matvec(C, ray.r_xy) + _matvec(D, ray.d_xy)
+
+        Q = ray.Q_inv
+        denom = A + _matmat(B, Q)
+        numer = C + _matmat(D, Q)
+        # Solve the transposed system to evaluate numer @ inv(denom) without
+        # explicitly forming an inverse; swapaxes keeps bundle axes intact.
+        Q_new = jnp.swapaxes(
+            jnp.linalg.solve(
+                jnp.swapaxes(denom, -1, -2),
+                jnp.swapaxes(numer, -1, -2),
+            ),
+            -1,
+            -2,
+        )
+
         return ray.derive(
-            x=ray.x + self.scan_pos_x * ray._one,
-            y=ray.y + self.scan_pos_y * ray._one,
-            dx=ray.dx + self.scan_tilt_x * ray._one,
-            dy=ray.dy + self.scan_tilt_y * ray._one,
+            x=r_xy_new[..., 0],
+            y=r_xy_new[..., 1],
+            dx=d_xy_new[..., 0],
+            dy=d_xy_new[..., 1],
+            Q_inv=Q_new,
         )
-
-
-@jdc.pytree_dataclass
-class Descanner(Component):
-    z: float
-    scan_pos_x: float
-    scan_pos_y: float
-    scan_tilt_x: float = 0.0
-    scan_tilt_y: float = 0.0
-    descan_error: DescanError = DescanError()
-
-    def _offsets(self):
-        de = self.descan_error
-        sp_x, sp_y = self.scan_pos_x, self.scan_pos_y
-        st_x, st_y = self.scan_tilt_x, self.scan_tilt_y
-        return (
-            sp_x * de.pxo_pxi + sp_y * de.pxo_pyi + de.offpxi - sp_x,
-            sp_x * de.pyo_pxi + sp_y * de.pyo_pyi + de.offpyi - sp_y,
-            sp_x * de.sxo_pxi + sp_y * de.sxo_pyi + de.offsxi - st_x,
-            sp_x * de.syo_pxi + sp_y * de.syo_pyi + de.offsyi - st_y,
-        )
-
-    def _call_ray(self, ray: Ray):
-        ox, oy, odx, ody = self._offsets()
-        return ray.derive(
-            x=ray.x + ox * ray._one,
-            y=ray.y + oy * ray._one,
-            dx=ray.dx + odx * ray._one,
-            dy=ray.dy + ody * ray._one,
-        )
-
-    def _call_gaussian(self, ray: GaussianBeam):
-        ox, oy, odx, ody = self._offsets()
-        return ray.derive(
-            x=ray.x + ox * ray._one,
-            y=ray.y + oy * ray._one,
-            dx=ray.dx + odx * ray._one,
-            dy=ray.dy + ody * ray._one,
-        )
-
-
-@jdc.pytree_dataclass
-class Detector(Component, Grid):
-    z: float
-    pixel_size: ScaleYX
-    shape: ShapeYX
-    rotation: Degrees = 0.0
-    centre: CoordsXY = (0.0, 0)
-    flip_y: bool = False
-
-    def _call_ray(self, ray: Ray):
-        return ray
-
-    def _call_gaussian(self, ray: GaussianBeam):
-        return ray
 
 
 @jdc.pytree_dataclass
 class ThickLens(Component):
+    """Ray-only principal-plane approximation, with separate object/image planes."""
+
     z_po: float
     z_pi: float
     focal_length: float
@@ -711,191 +705,9 @@ def solenoid_column(gaps, lengths, strengths, *, source_z=0.):
 
 
 @jdc.pytree_dataclass
-class Deflector(Component):
-    z: float
-    def_x: float
-    def_y: float
-
-    def _call_ray(self, ray: Ray):
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-        return ray.derive(
-            dx=dx + self.def_x * ray._one,
-            dy=dy + self.def_y * ray._one,
-            pathlength=ray.pathlength + self.def_x * x + self.def_y * y,
-        )
-
-    def _call_gaussian(self, ray: GaussianBeam):
-        """Direct slope modification for deflector with implicit action.
-        
-        A deflector applies a transverse momentum kick: dx += def_x, dy += def_y
-        The pathlength change arises from the phase shift: def_x * x + def_y * y
-        
-        For Gaussian beams, we apply this directly without using taylor_expand,
-        as the implicit action (linear phase) can cause numerical issues.
-        When def_x or def_y are non-zero (tilted), the action derivatives
-        should be handled explicitly via the phase_shift method.
-        """
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-        new_dx = dx + self.def_x * ray._one
-        new_dy = dy + self.def_y * ray._one
-        
-        # For a pure slope change with no amplitude loss,
-        # the Q_inv (inverse waist parameter) is unchanged
-        # but pathlength picks up the deflection-induced phase
-        return ray.derive(
-            dx=new_dx,
-            dy=new_dy,
-            pathlength=ray.pathlength + self.def_x * x + self.def_y * y,
-        )
-
-
-@jdc.pytree_dataclass
-class DoubleDeflector(Component):
-    """Two deflector kicks separated by an internal free-space spacing.
-
-    User-facing commands (shift/tilt) are combined with hardware calibration
-    ratios to produce the two physical kicks in each axis.
-    """
-
-    z: float
-    spacing: float
-
-    shift_x: float = 0.0
-    shift_y: float = 0.0
-    tilt_x: float = 0.0
-    tilt_y: float = 0.0
-
-    shift_balance_x: float = 1.0
-    shift_balance_y: float = 1.0
-    tilt_balance_x: float = 1.0
-    tilt_balance_y: float = 1.0
-
-    @property
-    def z_second(self) -> float:
-        return self.z + self.spacing
-
-    @property
-    def def1_x(self):
-        return self.shift_x + self.tilt_x
-
-    @property
-    def def1_y(self):
-        return self.shift_y + self.tilt_y
-
-    @property
-    def def2_x(self):
-        return (
-            -self.shift_balance_x * self.shift_x
-            -self.tilt_balance_x * self.tilt_x
-        )
-
-    @property
-    def def2_y(self):
-        return (
-            -self.shift_balance_y * self.shift_y
-            -self.tilt_balance_y * self.tilt_y
-        )
-
-    @staticmethod
-    def _apply_kick(ray: Ray | GaussianBeam, def_x, def_y):
-        """Apply a deflection kick to a ray or beam.
-        
-        A transverse kick (def_x, def_y) imparts phase shift: def_x * x + def_y * y
-        """
-        return ray.derive(
-            dx=ray.dx + def_x * ray._one,
-            dy=ray.dy + def_y * ray._one,
-            pathlength=ray.pathlength + def_x * ray.x + def_y * ray.y,
-        )
-
-    def _call_ray(self, ray: Ray):
-        from .propagator import FreeSpaceParaxial
-
-        ray = self._apply_kick(ray, self.def1_x, self.def1_y)
-        ray = FreeSpaceParaxial()(ray, self.spacing)
-        ray = self._apply_kick(ray, self.def2_x, self.def2_y)
-        return ray
-
-    def _call_gaussian(self, ray: GaussianBeam):
-        ray = self._apply_kick(ray, self.def1_x, self.def1_y)
-        ray = FreeSpacePropagator()(ray, self.spacing)
-        ray = self._apply_kick(ray, self.def2_x, self.def2_y)
-        return ray
-
-
-@jdc.pytree_dataclass
-class Rotator(Component):
-    z: float
-    angle: Degrees
-
-    def _rotation(self):
-        angle = jnp.deg2rad(self.angle)
-        cos_a = jnp.cos(angle)
-        sin_a = jnp.sin(angle)
-        return cos_a, sin_a
-
-    def _call_ray(self, ray: Ray):
-        cos_a, sin_a = self._rotation()
-        new_x = ray.x * cos_a - ray.y * sin_a
-        new_y = ray.x * sin_a + ray.y * cos_a
-        new_dx = ray.dx * cos_a - ray.dy * sin_a
-        new_dy = ray.dx * sin_a + ray.dy * cos_a
-        return ray.derive(x=new_x, y=new_y, dx=new_dx, dy=new_dy)
-
-    def _call_gaussian(self, ray: GaussianBeam):
-        cos_a, sin_a = self._rotation()
-        R = jnp.array([[cos_a, -sin_a], [sin_a, cos_a]], dtype=jnp.float64)
-        r_xy_rot = _matvec(R, ray.r_xy)
-        d_xy_rot = _matvec(R, ray.d_xy)
-        Q_rot = _rotate_quadratic_form(R, ray.Q_inv)
-
-        return ray.derive(
-            x=r_xy_rot[..., 0],
-            y=r_xy_rot[..., 1],
-            dx=d_xy_rot[..., 0],
-            dy=d_xy_rot[..., 1],
-            Q_inv=Q_rot,
-        )
-
-
-@jdc.pytree_dataclass
-class DeflectionBiprism(Component):
-    z: float
-    offset: float = 0.0
-    rotation: Degrees = 0.0
-    def_x: float = 0.0
-    side: int = 1
-
-    def _call_ray(self, ray: Ray):
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-        return ray.derive(
-            dx=dx + self.def_x * ray._one * jnp.sign(ray.x),
-            dy=dy,
-            pathlength=ray.pathlength + dx * x + dy * y,
-        )
-
-    def _call_gaussian(self, ray: GaussianBeam):
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-        return ray.derive(
-            dx=dx + self.def_x * ray._one * jnp.sign(ray.x),
-            dy=dy,
-            pathlength=ray.pathlength + dx * x + dy * y,
-        )
-
-
-@jdc.pytree_dataclass
-class Biprism(DeflectionBiprism):
-    def __post_init__(self):
-        warnings.warn(
-            "`components.Biprism` is deprecated and will remain as an alias for "
-            "`DeflectionBiprism`. Prefer `DeflectionBiprism` for clarity.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-
-@jdc.pytree_dataclass
 class RotatingLens(Component):
+    """A rotation in degrees followed by a thin round lens."""
+
     z: float
     focal_length: float
     rotation: Degrees
@@ -909,19 +721,27 @@ class RotatingLens(Component):
         )
 
     def _call_gaussian(self, ray: GaussianBeam):
-        rotated_ray = Rotator(z=self.z, angle=self.rotation)(ray)
-        return Lens(z=self.z, focal_length=self.focal_length, x0=self.x0, y0=self.y0)(
-            rotated_ray
-        )
+        return self._call_ray(ray)
 
 
 @jdc.pytree_dataclass
 class ElectromagneticLens(Component):
+    """Current-controlled focus, optional body drift, then magnetic rotation.
+
+    Focal length varies inversely with excitation squared; rotation is linear
+    in excitation, with relativistic voltage factors. Nonzero Tc represents
+    the body as two half-strength lenses separated by a drift.
+
+    Existing round-ray behaviour uses the optical axis even when x0/y0 are
+    set. Gaussian and stigmator paths use those offsets. This distinction is
+    retained here; it needs a separate physics correction and validation.
+    """
+
     z: float
     turns: float
     current: float
-    Gc: float  # Pure geometry constant [1/(AT²·V·m)]
-    Tc: float = 0.0  # Thickness constant
+    Gc: float  # Voltage / (ampere-turns squared × beam length unit)
+    Tc: float = 0.0  # Beam length unit / ampere-turn
     x0: float = 0.0
     y0: float = 0.0
     stigmator_strength_x: float = 0.0
@@ -1014,84 +834,42 @@ class ElectromagneticLens(Component):
             dy=rot_dy,
         )
 
+    def _focus(self, ray, thin_lens, propagate):
+        """Apply one thin kick, or two half-strength kicks around a body drift."""
+        focal_length = self.focal_length(ray.voltage)
+        fx, fy = self._stigmator_focal_lengths(ray.voltage)
+        thickness = self.thickness
+
+        def kick(beam, focal_scale):
+            return lax.cond(
+                self._stigmator_is_active(),
+                lambda b: self._apply_thin_stigmator(b, focal_scale * fx, focal_scale * fy),
+                lambda b: thin_lens(b, focal_scale * focal_length),
+                beam,
+            )
+
+        def through_body(_):
+            out = kick(ray, 2.0)
+            out = propagate(out, thickness)
+            return kick(out, 2.0)
+
+        return lax.cond(thickness > 0.0, through_body, lambda _: kick(ray, 1.0), None)
+
     def _call_ray(self, ray: Ray) -> Ray:
         from .propagator import FreeSpaceParaxial
 
-        voltage = ray.voltage
-        f = self.focal_length(voltage)
-        D = self.thickness
-        fx, fy = self._stigmator_focal_lengths(voltage)
+        out = self._focus(ray, self._apply_thin_lens_ray, FreeSpaceParaxial())
+        return self._apply_rotation_ray(out, self.rotation_angle(ray.voltage))
 
-        def _stigmator_path(_):
-            def _thin(_):
-                return self._apply_thin_stigmator(ray, fx, fy)
-
-            def _thick(_):
-                out = self._apply_thin_stigmator(ray, 2.0 * fx, 2.0 * fy)
-                out = FreeSpaceParaxial()(out, D)
-                return self._apply_thin_stigmator(out, 2.0 * fx, 2.0 * fy)
-
-            return lax.cond(D > 0.0, _thick, _thin, operand=None)
-
-        def _lens_path(_):
-            def _thin(_):
-                return self._apply_thin_lens_ray(ray, f)
-
-            def _thick(_):
-                out = self._apply_thin_lens_ray(ray, 2.0 * f)
-                out = FreeSpaceParaxial()(out, D)
-                return self._apply_thin_lens_ray(out, 2.0 * f)
-
-            return lax.cond(D > 0.0, _thick, _thin, operand=None)
-
-        out = lax.cond(self._stigmator_is_active(), _stigmator_path, _lens_path, operand=None)
-        return self._apply_rotation_ray(out, self.rotation_angle(voltage))
+    def _apply_thin_lens_gaussian(self, ray, focal_length):
+        return Lens(
+            z=self.z, focal_length=focal_length, x0=self.x0, y0=self.y0
+        )(ray)
 
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
-        from .gaussian import FreeSpacePropagator
+        out = self._focus(ray, self._apply_thin_lens_gaussian, FreeSpacePropagator())
 
-        voltage = ray.voltage
-        f = self.focal_length(voltage)
-        D = self.thickness
-        fx, fy = self._stigmator_focal_lengths(voltage)
-
-        def _stigmator_path(_):
-            def _thin(_):
-                return self._apply_thin_stigmator(ray, fx, fy)
-
-            def _thick(_):
-                out = self._apply_thin_stigmator(ray, 2.0 * fx, 2.0 * fy)
-                out = FreeSpacePropagator()(out, D)
-                return self._apply_thin_stigmator(out, 2.0 * fx, 2.0 * fy)
-
-            return lax.cond(D > 0.0, _thick, _thin, operand=None)
-
-        def _lens_path(_):
-            def _thin(_):
-                thin_lens = Lens(
-                    z=self.z,
-                    focal_length=f,
-                    x0=self.x0,
-                    y0=self.y0,
-                )
-                return thin_lens(ray)
-
-            def _thick(_):
-                half_lens = Lens(
-                    z=self.z,
-                    focal_length=2.0 * f,
-                    x0=self.x0,
-                    y0=self.y0,
-                )
-                out = half_lens(ray)
-                out = FreeSpacePropagator()(out, D)
-                return half_lens(out)
-
-            return lax.cond(D > 0.0, _thick, _thin, operand=None)
-
-        out = lax.cond(self._stigmator_is_active(), _stigmator_path, _lens_path, operand=None)
-
-        angle = self.rotation_angle(voltage)
+        angle = self.rotation_angle(ray.voltage)
         cos_a = jnp.cos(angle)
         sin_a = jnp.sin(angle)
         R = jnp.stack(
@@ -1116,66 +894,286 @@ class ElectromagneticLens(Component):
 
 
 @jdc.pytree_dataclass(kw_only=True)
-class ABCDTransfer(Component):
-    A: jnp.ndarray
-    B: jnp.ndarray
-    C: jnp.ndarray = dataclasses.field(
-        default_factory=lambda: jnp.zeros((2, 2), dtype=jnp.float64)
-    )
-    D: jnp.ndarray = dataclasses.field(
-        default_factory=lambda: jnp.eye(2, dtype=jnp.float64)
-    )
-    z: float = 0.0
+class FourierTransform:
+    """Explicit drift(f) → lens(f) → drift(f) for rays or Gaussians."""
+
+    f: float | jnp.ndarray
+    x0: float = 0.0
+    y0: float = 0.0
+
+    def __call__(self, ray: Ray) -> Ray:
+        family = getattr(ray, "ray_family", "ray")
+
+        if family == "gaussian":
+            fs = FreeSpacePropagator()
+        else:
+            from .propagator import FreeSpaceParaxial
+
+            fs = FreeSpaceParaxial()
+
+        ray = fs(ray, self.f)
+        lens = Lens(z=ray.z, focal_length=self.f, x0=self.x0, y0=self.y0)
+        ray = lens(ray)
+        ray = fs(ray, self.f)
+        return ray
+
+
+# Steering, rotation and scanning
+
+@jdc.pytree_dataclass
+class Deflector(Component):
+    """Add a slope kick and its linear optical path; Gaussian shape is unchanged."""
+
+    z: float
+    def_x: float
+    def_y: float
 
     def _call_ray(self, ray: Ray):
-        A = jnp.asarray(self.A, dtype=jnp.float64)
-        B = jnp.asarray(self.B, dtype=jnp.float64)
-        C = jnp.asarray(self.C, dtype=jnp.float64)
-        D = jnp.asarray(self.D, dtype=jnp.float64)
-        r_xy_new = _matvec(A, ray.r_xy) + _matvec(B, ray.d_xy)
-        d_xy_new = _matvec(C, ray.r_xy) + _matvec(D, ray.d_xy)
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        return ray.derive(
+            dx=dx + self.def_x * ray._one,
+            dy=dy + self.def_y * ray._one,
+            pathlength=ray.pathlength + self.def_x * x + self.def_y * y,
+        )
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        return self._call_ray(ray)
+
+
+@jdc.pytree_dataclass
+class DoubleDeflector(Component):
+    """Two deflector kicks separated by an internal free-space spacing.
+
+    User-facing commands (shift/tilt) are combined with hardware calibration
+    ratios to produce the two physical kicks in each axis.
+    """
+
+    z: float
+    spacing: float
+
+    shift_x: float = 0.0
+    shift_y: float = 0.0
+    tilt_x: float = 0.0
+    tilt_y: float = 0.0
+
+    shift_balance_x: float = 1.0
+    shift_balance_y: float = 1.0
+    tilt_balance_x: float = 1.0
+    tilt_balance_y: float = 1.0
+
+    @property
+    def z_second(self) -> float:
+        return self.z + self.spacing
+
+    @property
+    def def1_x(self):
+        return self.shift_x + self.tilt_x
+
+    @property
+    def def1_y(self):
+        return self.shift_y + self.tilt_y
+
+    @property
+    def def2_x(self):
+        return (
+            -self.shift_balance_x * self.shift_x
+            -self.tilt_balance_x * self.tilt_x
+        )
+
+    @property
+    def def2_y(self):
+        return (
+            -self.shift_balance_y * self.shift_y
+            -self.tilt_balance_y * self.tilt_y
+        )
+
+    @staticmethod
+    def _apply_kick(ray: Ray | GaussianBeam, def_x, def_y):
+        """Apply a deflection kick to a ray or beam.
+
+        A transverse kick (def_x, def_y) imparts phase shift: def_x * x + def_y * y
+        """
+        return ray.derive(
+            dx=ray.dx + def_x * ray._one,
+            dy=ray.dy + def_y * ray._one,
+            pathlength=ray.pathlength + def_x * ray.x + def_y * ray.y,
+        )
+
+    def _call_ray(self, ray: Ray):
+        from .propagator import FreeSpaceParaxial
+
+        ray = self._apply_kick(ray, self.def1_x, self.def1_y)
+        ray = FreeSpaceParaxial()(ray, self.spacing)
+        ray = self._apply_kick(ray, self.def2_x, self.def2_y)
+        return ray
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        ray = self._apply_kick(ray, self.def1_x, self.def1_y)
+        ray = FreeSpacePropagator()(ray, self.spacing)
+        ray = self._apply_kick(ray, self.def2_x, self.def2_y)
+        return ray
+
+
+@jdc.pytree_dataclass
+class Rotator(Component):
+    z: float
+    angle: Degrees
+
+    def _rotation(self):
+        angle = jnp.deg2rad(self.angle)
+        cos_a = jnp.cos(angle)
+        sin_a = jnp.sin(angle)
+        return cos_a, sin_a
+
+    def _call_ray(self, ray: Ray):
+        cos_a, sin_a = self._rotation()
+        new_x = ray.x * cos_a - ray.y * sin_a
+        new_y = ray.x * sin_a + ray.y * cos_a
+        new_dx = ray.dx * cos_a - ray.dy * sin_a
+        new_dy = ray.dx * sin_a + ray.dy * cos_a
+        return ray.derive(x=new_x, y=new_y, dx=new_dx, dy=new_dy)
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        cos_a, sin_a = self._rotation()
+        R = jnp.array([[cos_a, -sin_a], [sin_a, cos_a]], dtype=jnp.float64)
+        r_xy_rot = _matvec(R, ray.r_xy)
+        d_xy_rot = _matvec(R, ray.d_xy)
+        Q_rot = _rotate_quadratic_form(R, ray.Q_inv)
 
         return ray.derive(
-            x=r_xy_new[..., 0],
-            y=r_xy_new[..., 1],
-            dx=d_xy_new[..., 0],
-            dy=d_xy_new[..., 1],
+            x=r_xy_rot[..., 0],
+            y=r_xy_rot[..., 1],
+            dx=d_xy_rot[..., 0],
+            dy=d_xy_rot[..., 1],
+            Q_inv=Q_rot,
         )
 
-    def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
-        A = jnp.asarray(self.A, dtype=jnp.float64)
-        B = jnp.asarray(self.B, dtype=jnp.float64)
-        C = jnp.asarray(self.C, dtype=jnp.float64)
-        D = jnp.asarray(self.D, dtype=jnp.float64)
 
-        r_xy_new = _matvec(A, ray.r_xy) + _matvec(B, ray.d_xy)
-        d_xy_new = _matvec(C, ray.r_xy) + _matvec(D, ray.d_xy)
+@jdc.pytree_dataclass
+class DeflectionBiprism(Component):
+    z: float
+    offset: float = 0.0
+    rotation: Degrees = 0.0
+    def_x: float = 0.0
+    side: int = 1
 
-        Q = ray.Q_inv
-        denom = A + _matmat(B, Q)
-        numer = C + _matmat(D, Q)
-        # Solve the transposed system to evaluate numer @ inv(denom) without
-        # explicitly forming an inverse; swapaxes keeps bundle axes intact.
-        Q_new = jnp.swapaxes(
-            jnp.linalg.solve(
-                jnp.swapaxes(denom, -1, -2),
-                jnp.swapaxes(numer, -1, -2),
-            ),
-            -1,
-            -2,
-        )
-
+    def _call_ray(self, ray: Ray):
+        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
         return ray.derive(
-            x=r_xy_new[..., 0],
-            y=r_xy_new[..., 1],
-            dx=d_xy_new[..., 0],
-            dy=d_xy_new[..., 1],
-            Q_inv=Q_new,
+            dx=dx + self.def_x * ray._one * jnp.sign(ray.x),
+            dy=dy,
+            pathlength=ray.pathlength + dx * x + dy * y,
         )
 
+    def _call_gaussian(self, ray: GaussianBeam):
+        return self._call_ray(ray)
+
+
+@jdc.pytree_dataclass
+class Biprism(DeflectionBiprism):
+    def __post_init__(self):
+        warnings.warn(
+            "`components.Biprism` is deprecated and will remain as an alias for "
+            "`DeflectionBiprism`. Prefer `DeflectionBiprism` for clarity.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+
+class DescanError(NamedTuple):
+    """Affine position/slope response and offsets used by Descanner."""
+
+    pxo_pxi: float = 0.0
+    pxo_pyi: float = 0.0
+    pyo_pxi: float = 0.0
+    pyo_pyi: float = 0.0
+    sxo_pxi: float = 0.0
+    sxo_pyi: float = 0.0
+    syo_pxi: float = 0.0
+    syo_pyi: float = 0.0
+    offpxi: float = 0.0
+    offpyi: float = 0.0
+    offsxi: float = 0.0
+    offsyi: float = 0.0
+
+    def as_array(self) -> jnp.ndarray:
+        return jnp.array(self)
+
+    def as_matrix(self) -> jnp.ndarray:
+        return jnp.array(
+            [
+                [self.pxo_pxi, self.pxo_pyi, 0.0, 0.0, self.offpxi],
+                [self.pyo_pxi, self.pyo_pyi, 0.0, 0.0, self.offpyi],
+                [self.sxo_pxi, self.sxo_pyi, 0.0, 0.0, self.offsxi],
+                [self.syo_pxi, self.syo_pyi, 0.0, 0.0, self.offsyi],
+                [0.0, 0.0, 0.0, 0.0, 1.0],
+            ]
+        )
+
+
+@jdc.pytree_dataclass
+class Scanner(Component):
+    """Add calibrated position and slope offsets; Gaussian shape is unchanged."""
+
+    z: float
+    scan_pos_x: float
+    scan_pos_y: float
+    scan_tilt_x: float = 0.0
+    scan_tilt_y: float = 0.0
+
+    def _call_ray(self, ray: Ray):
+        return ray.derive(
+            x=ray.x + self.scan_pos_x * ray._one,
+            y=ray.y + self.scan_pos_y * ray._one,
+            dx=ray.dx + self.scan_tilt_x * ray._one,
+            dy=ray.dy + self.scan_tilt_y * ray._one,
+        )
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        return self._call_ray(ray)
+
+
+@jdc.pytree_dataclass
+class Descanner(Component):
+    """Undo scan offsets, allowing the affine errors in descan_error."""
+
+    z: float
+    scan_pos_x: float
+    scan_pos_y: float
+    scan_tilt_x: float = 0.0
+    scan_tilt_y: float = 0.0
+    descan_error: DescanError = DescanError()
+
+    def _offsets(self):
+        de = self.descan_error
+        sp_x, sp_y = self.scan_pos_x, self.scan_pos_y
+        st_x, st_y = self.scan_tilt_x, self.scan_tilt_y
+        return (
+            sp_x * de.pxo_pxi + sp_y * de.pxo_pyi + de.offpxi - sp_x,
+            sp_x * de.pyo_pxi + sp_y * de.pyo_pyi + de.offpyi - sp_y,
+            sp_x * de.sxo_pxi + sp_y * de.sxo_pyi + de.offsxi - st_x,
+            sp_x * de.syo_pxi + sp_y * de.syo_pyi + de.offsyi - st_y,
+        )
+
+    def _call_ray(self, ray: Ray):
+        ox, oy, odx, ody = self._offsets()
+        return ray.derive(
+            x=ray.x + ox * ray._one,
+            y=ray.y + oy * ray._one,
+            dx=ray.dx + odx * ray._one,
+            dy=ray.dy + ody * ray._one,
+        )
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        return self._call_ray(ray)
+
+
+# Apertures and prescribed phase/amplitude
 
 @jdc.pytree_dataclass(kw_only=True)
 class SigmoidAperture(GaussianActionComponent):
+    """Smooth field-amplitude transmission for Gaussians; rays pass through."""
+
     radius: float = 1.0
     edge_width: float = 0.5
     sharpness: float = 1.0
@@ -1215,11 +1213,6 @@ class PhaseBiprism(GaussianActionComponent):
     sharpness: float = 50.0
     eps: float = 1e-15
     z: float = 0.0
-
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "PhaseBiprism is only implemented for gaussian beams."
-        )
 
     def _uv(self, xy: jnp.ndarray):
         x, y = xy[..., 0], xy[..., 1]
@@ -1263,11 +1256,6 @@ class ConstantPhaseShift(GaussianActionComponent):
     constant_phase_shift: float
     z: float = 0.0
 
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "ConstantPhaseShift is only implemented for gaussian beams."
-        )
-
     def phase_shift(self, xy: jnp.ndarray):
         return self.constant_phase_shift
 
@@ -1277,11 +1265,6 @@ class LinearPhaseShift(GaussianActionComponent):
     linear_phase_shift: jnp.ndarray
     z: float = 0.0
 
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "LinearPhaseShift is only implemented for gaussian beams."
-        )
-
     def phase_shift(self, xy: jnp.ndarray):
         return jnp.dot(self.linear_phase_shift, xy)
 
@@ -1290,11 +1273,6 @@ class LinearPhaseShift(GaussianActionComponent):
 class QuadraticPhaseShift(GaussianActionComponent):
     quadratic_phase_shift: jnp.ndarray
     z: float = 0.0
-
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "QuadraticPhaseShift is only implemented for gaussian beams."
-        )
 
     def phase_shift(self, xy: jnp.ndarray):
         return 0.5 * xy @ self.quadratic_phase_shift @ xy
@@ -1310,11 +1288,6 @@ class ZernikeAberration(GaussianActionComponent):
     y0: float = 0.0
     outside: float = 0.0
     z: float = 0.0
-
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "ZernikeAberration is only implemented for gaussian beams."
-        )
 
     def phase_shift(self, xy: jnp.ndarray):
         x = (xy[..., 0] - self.x0) / self.radius
@@ -1335,11 +1308,6 @@ class ConstantAmplitudeShift(GaussianActionComponent):
     amplitude: float
     z: float = 0.0
 
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "ConstantAmplitudeShift is only implemented for gaussian beams."
-        )
-
     def log_transmission(self, xy: jnp.ndarray):
         return jnp.log(self.amplitude)
 
@@ -1349,11 +1317,6 @@ class LinearAmplitudeShift(GaussianActionComponent):
     linear_log_amplitude: jnp.ndarray | None = None
     linear_amplitude: jnp.ndarray | None = None
     z: float = 0.0
-
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "LinearAmplitudeShift is only implemented for gaussian beams."
-        )
 
     def log_transmission(self, xy: jnp.ndarray):
         coeffs = self.linear_log_amplitude
@@ -1369,14 +1332,11 @@ class QuadraticAmplitudeShift(GaussianActionComponent):
     quadratic_log_amplitude: jnp.ndarray
     z: float = 0.0
 
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "QuadraticAmplitudeShift is only implemented for gaussian beams."
-        )
-
     def log_transmission(self, xy: jnp.ndarray):
         return 0.5 * xy @ self.quadratic_log_amplitude @ xy
 
+
+# Analytical specimen profiles
 
 @jdc.pytree_dataclass(kw_only=True)
 class MagneticPhaseSample(GaussianActionComponent):
@@ -1392,11 +1352,6 @@ class MagneticPhaseSample(GaussianActionComponent):
     radial_strength: float = 0.15
     eps: float = 1e-9
     z: float = 0.0
-
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "MagneticPhaseSample is only implemented for gaussian beams."
-        )
 
     def _local_coords(self, xy):
         x = xy[..., 0] - self.x0
@@ -1453,11 +1408,6 @@ class RandomPhaseSample(GaussianActionComponent):
     correlation_length: float = 2e-9
     eps: float = 1e-9
     z: float = 0.0
-
-    def _call_ray(self, ray: Ray):
-        raise NotImplementedError(
-            "RandomPhaseSample is only implemented for gaussian beams."
-        )
 
     def _local_coords(self, xy):
         x = xy[..., 0] - self.x0
@@ -1520,6 +1470,8 @@ class RandomPhaseSample(GaussianActionComponent):
 
         return self.strength * mask * combined
 
+
+# Interpolated specimens
 
 class ScalarActionJet2D(NamedTuple):
     value: jnp.ndarray
@@ -1869,39 +1821,7 @@ class InterpolatedSample2D(GaussianActionComponent):
             return super()._call_gaussian_single(ray)
         jet = self.action_jet(ray.r_xy)
         log_jet = self._floored_log_amplitude_jet(jet.log_amplitude, self.log_floor)
-        k = ray.k
-
-        # Match GaussianActionComponent's absorption recentering and Q safety
-        # while using the spline's explicit derivatives rather than nested AD.
-        im_q = jnp.imag(ray.Q_inv)
-        dx_est = _solve_2x2(im_q, log_jet.gradient_xy) / k
-        ratio = jnp.dot(log_jet.gradient_xy, dx_est)
-        scale = 1.0 / (1.0 + ratio)
-        log_gradient = log_jet.gradient_xy * scale
-        log_hessian = log_jet.hessian_xy * scale
-        log_hessian_over_k = _regularize_L2k(log_hessian / k, im_q)
-
-        d_s0 = jet.pathlength.value - 1j * (log_jet.value / k)
-        d_s1 = jet.pathlength.gradient_xy - 1j * (log_gradient / k)
-        d_s2 = jet.pathlength.hessian_xy - 1j * log_hessian_over_k
-        r_xy, d_xy, amplitude, pathlength, q_new = apply_action_delta(
-            ray, dS0=d_s0, dS1=d_s1, dS2=d_s2
-        )
-        return ray.derive(
-            x=r_xy[..., 0],
-            y=r_xy[..., 1],
-            dx=d_xy[..., 0],
-            dy=d_xy[..., 1],
-            z=ray.z,
-            amplitude=amplitude,
-            pathlength=pathlength,
-            Q_inv=q_new,
-        )
-
-    def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
-        if jnp.asarray(ray.r_xy).ndim > 1:
-            return jax.vmap(self._call_gaussian_single)(ray.to_vector())
-        return self._call_gaussian_single(ray)
+        return _apply_gaussian_action(ray, jet.pathlength, log_jet)
 
     @classmethod
     def from_array(
@@ -1993,6 +1913,12 @@ def sample_interpolant(
 
 @jdc.pytree_dataclass(kw_only=True)
 class InterpolatedFields3D(Component):
+    """Interpolated field container; evaluate(xyz) returns the stored fields.
+
+    Beam interaction is not implemented: calling this component currently
+    returns the beam unchanged.
+    """
+
     interpolator: Interpolator3D
     method: jdc.Static[str] = "catmull-rom"
     z: float = 0.0
@@ -2020,31 +1946,9 @@ class InterpolatedFields3D(Component):
         return ray
 
 
-@jdc.pytree_dataclass(kw_only=True)
-class FourierTransform:
-    f: float | jnp.ndarray
-    x0: float = 0.0
-    y0: float = 0.0
-
-    def __call__(self, ray: Ray) -> Ray:
-        family = getattr(ray, "ray_family", "ray")
-
-        if family == "gaussian":
-            fs = FreeSpacePropagator()
-        else:
-            from .propagator import FreeSpaceParaxial
-
-            fs = FreeSpaceParaxial()
-
-        ray = fs(ray, self.f)
-        lens = Lens(z=ray.z, focal_length=self.f, x0=self.x0, y0=self.y0)
-        ray = lens(ray)
-        ray = fs(ray, self.f)
-        return ray
-
-
 __all__ = [
     "Component",
+    "GaussianActionComponent",
     "DescanError",
     "Plane",
     "Lens",
@@ -2058,6 +1962,8 @@ __all__ = [
     "Descanner",
     "Detector",
     "ThickLens",
+    "HardEdgeSolenoid",
+    "solenoid_column",
     "Deflector",
     "DoubleDeflector",
     "Rotator",
