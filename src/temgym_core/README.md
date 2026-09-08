@@ -8,7 +8,7 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 |---|---|
 | Optical elements, including lenses, solenoids and detector | `components.py` |
 | Rays and Gaussian beams through those elements; affine 5×5 matrix | `ray.py`, `gaussian.py`, `source.py`, `propagator.py`, `run.py` |
-| Gaussian fields and integrated detector images | `evaluate.py`, `spatial_evaluate.py`, `grid.py` |
+| Gaussian fields and integrated detector images | `evaluate.py`, `grid.py` |
 | Image measurements, their matrix predictions and intensity initialization | `image.py` |
 | Bounded JAX least squares and fits with shared parameters | `optimization.py` |
 | Interpolated specimen component; nominal MAGICAL recipe | `components.py`; `calibration/gaussian.py` |
@@ -25,6 +25,28 @@ explains the experiment-specific code.
 `components.py`. Supply beams already propagated to its plane with `run_to_end`.
 It sums complex Gaussian fields before forming intensity and integrating pixels.
 There is no separate coherent detector or pixel-fitting workflow.
+
+All rendering backends now live in `evaluate.py`. Use the same
+`evaluate_gaussians(beam, grid, method=...)` entry point:
+
+| Method | Purpose |
+|---|---|
+| `scan` | Portable coherent sum with JAX derivatives |
+| `gpu_kernel` | Full coherent sum on GPU; scan fallback on CPU |
+| `spatial` | GPU neighbour bins with a field-tail cutoff; dense fallback for broad beams |
+| `loop` | Small independent loop for numerical checks |
+
+`auto` selects the dense GPU kernel or CPU scan. `gpu_kernel_required` requires
+a verified GPU backend. The GPU paths are for forward rendering; choose `scan`
+for differentiation. Spatial bins are rebuilt on every call, and interference
+is retained. The removed Numba/CuPy renderer was replaced in the two diffraction
+examples by the standard entry point. Public dense-kernel wrappers used by the
+other examples remain. Gaussian batching is supplied by `GaussianBeam.to_vector()`.
+
+The renderer consolidation passed 37 CPU tests and 24 explicitly enabled GPU
+tests. Before/after complex fields matched exactly for scan, loop, dense GPU
+and spatial GPU evaluation on the comparison bundle. The complete 40,000×
+MAGICAL notebook also passed on GPU with unchanged image-error results.
 
 `image.py` measures image centroids and widths and predicts them from the
 specimen wave and a transfer matrix. Its phase-gradient and amplitude-gradient
@@ -90,7 +112,7 @@ Older APIs and experiments remain in Git: `fc992bc` precedes the first core
 cleanup and `31adfc3` precedes this consolidation. The current calibration
 notebook's public calls are unchanged.
 
-The core and calibration now contain 36 Python files. The sample cleanup removes
+The core and calibration now contain 35 Python files. The sample cleanup removes
 about 2,200 source lines. At both 200 and 195 kV, the fixed specimen maps, spline
 coefficients, sampled action values/gradients/Hessians and Gaussian updates match
 the previous implementation exactly. The calibration intensity template, sampled

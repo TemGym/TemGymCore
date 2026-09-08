@@ -7,7 +7,7 @@ import pytest
 
 from temgym_core.evaluate import evaluate_gaussians, gpu_kernel_available
 from temgym_core.gaussian import FreeSpacePropagator, make_gaussian
-from temgym_core.spatial_evaluate import _build_bins
+from temgym_core.evaluate import _build_spatial_bins
 
 jax.config.update("jax_enable_x64", True)
 
@@ -54,7 +54,7 @@ def gpu():
 def test_spatial_complex_interference_matches_independent_sum_and_tail_bound(gpu, tile):
     beam, points = bundle(), grid()
     cutoff = 1e-10
-    bins = _build_bins(beam.r_xy, beam.Q_inv, beam.k, cutoff=cutoff, bins_per_axis=32)
+    bins = _build_spatial_bins(beam.r_xy, beam.Q_inv, beam.k, cutoff=cutoff, bins_per_axis=32)
     assert not bool(bins.use_dense), "test must exercise the spatial kernel"
     actual = np.asarray(evaluate_gaussians(beam, points, method="spatial",
                                           tile_beams=tile, spatial_bins=32,
@@ -78,7 +78,7 @@ def test_jitted_calls_rebuild_bins_after_translation_rotation_and_broadening(gpu
     changed = beam.derive(x=xy[:, 0], y=xy[:, 1], dx=slopes[:, 0], dy=slopes[:, 1],
                           Q_inv=rotation @ beam.Q_inv @ rotation.T)
     moderately_broadened = FreeSpacePropagator()(changed, 1e-6)
-    bins = _build_bins(moderately_broadened.r_xy, moderately_broadened.Q_inv,
+    bins = _build_spatial_bins(moderately_broadened.r_xy, moderately_broadened.Q_inv,
                        moderately_broadened.k, cutoff=1e-12, bins_per_axis=64)
     assert not bool(bins.use_dense)
     broadened = FreeSpacePropagator()(changed, 5e-6)
@@ -98,7 +98,7 @@ def test_crowded_bins_and_broad_envelopes_fall_back_without_losing_beams(gpu):
                  make_gaussian(x=jnp.linspace(-1e-9, 1e-9, 71),
                                waist_x=1e-6, waist_y=3e-6, voltage=200e3)):
         beam = beam.to_vector()
-        bins = _build_bins(beam.r_xy, beam.Q_inv, beam.k, cutoff=1e-12, bins_per_axis=64)
+        bins = _build_spatial_bins(beam.r_xy, beam.Q_inv, beam.k, cutoff=1e-12, bins_per_axis=64)
         assert bool(bins.use_dense)
         actual = evaluate_gaussians(beam, points, method="spatial", tile_beams=32)
         expected = evaluate_gaussians(beam, points, method="gpu_kernel", tile_beams=32)
@@ -111,7 +111,7 @@ def test_occupied_bin_spans_many_tiles_without_capacity_truncation(gpu):
     x, y = x.ravel().at[:128].set(0.), y.ravel().at[:128].set(0.)
     beam = make_gaussian(x=x, y=y, phase=jnp.arange(x.size) * 0.3,
                          waist_x=0.5e-9, waist_y=0.5e-9, voltage=200e3)
-    bins = _build_bins(beam.r_xy, beam.Q_inv, beam.k, cutoff=1e-12, bins_per_axis=64)
+    bins = _build_spatial_bins(beam.r_xy, beam.Q_inv, beam.k, cutoff=1e-12, bins_per_axis=64)
     assert int(bins.counts.max()) >= 128
     assert not bool(bins.use_dense)
     points = grid()
@@ -122,7 +122,7 @@ def test_occupied_bin_spans_many_tiles_without_capacity_truncation(gpu):
 
 def test_bin_boundaries_and_far_outside_pixels(gpu):
     beam = bundle()
-    bins = _build_bins(beam.r_xy, beam.Q_inv, beam.k, cutoff=1e-9, bins_per_axis=32)
+    bins = _build_spatial_bins(beam.r_xy, beam.Q_inv, beam.k, cutoff=1e-9, bins_per_axis=32)
     boundary = np.asarray(bins.origin)[None] + np.arange(33)[:, None] * float(bins.cell_size)
     xy = np.concatenate([boundary, np.nextafter(boundary, np.inf),
                          np.nextafter(boundary, -np.inf), [[1e5, -1e5]]])
@@ -139,7 +139,7 @@ def test_invalid_and_nearly_singular_curvature_select_dense():
     beam = bundle()
     for q in (beam.Q_inv.at[:, 0, 0].set(-1j),
               jnp.broadcast_to(jnp.array([[1j, 0.], [0., 1e-18j]]), (529, 2, 2))):
-        bins = _build_bins(beam.r_xy, q, beam.k, cutoff=1e-12, bins_per_axis=32)
+        bins = _build_spatial_bins(beam.r_xy, q, beam.k, cutoff=1e-12, bins_per_axis=32)
         assert bool(bins.use_dense)
 
 
