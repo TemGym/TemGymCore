@@ -13,7 +13,7 @@ except ModuleNotFoundError:  # Python 3.10
 import numpy as np
 
 from .components import Component, Detector, DoubleDeflector, ElectromagneticLens, Plane
-from .constants import compute_Rc_from_voltage, effective_accelerating_potential
+from .constants import effective_accelerating_potential
 from .run import column_matrix
 
 
@@ -149,10 +149,10 @@ class Microscope:
 
 @dataclass(frozen=True)
 class ImagingSolution:
-    """Focused microscope, native 5×5 matrix and scaled three-equation residual.
+    """Focused microscope, local 5×5 matrix and scaled imaging residuals.
 
-    Failed solves raise ValueError; a returned solution has passed both the
-    conjugate-plane residual and an independent native-component matrix check.
+    Failed solves raise ValueError. A returned solution satisfies the requested
+    A, B and optional reference-image position tolerances.
     """
 
     microscope: Microscope
@@ -160,100 +160,108 @@ class ImagingSolution:
     residual: np.ndarray
 
 
-def _radial_chain(positions, powers, start_z, end_z):
-    """Thin, round map in the rotating frame, in physical propagation order."""
-    matrix, previous_z = np.eye(2), start_z
-    for z, power in zip(positions, powers, strict=True):
-        matrix = np.array(((1., 0.), (-power, 1.))) @ np.array(((1., z - previous_z), (0., 1.))) @ matrix
-        previous_z = z
-    return np.array(((1., end_z - previous_z), (0., 1.))) @ matrix
-
-
-def _imaging_geometry(microscope, object_plane, image_plane, voltage):
-    start = float(microscope.components[object_plane].z)
-    end = float(microscope.components[image_plane].z)
-    downstream = {name: c for name, c in sorted(microscope.components.items(), key=lambda item: float(item[1].z))
-                  if start < float(c.z) < end}
-    lenses = tuple(downstream.values())
-    if len(lenses) != 5 or any(not isinstance(c, ElectromagneticLens) for c in lenses):
-        raise ValueError("Imaging solve requires exactly five downstream ElectromagneticLens components.")
-    if any(c.Tc != 0 or c.stigmator_strength_x != 0 or c.stigmator_strength_y != 0
-           or c.x0 != 0 or c.y0 != 0 for c in lenses):
-        raise ValueError("Imaging solve supports only centred, thin, round lenses.")
-    z = np.array([c.z for c in lenses])
-    turns = np.array([c.turns for c in lenses])
-    gains = np.array([c.Gc for c in lenses]) * turns**2 / float(effective_accelerating_potential(voltage))
-    if np.any(np.diff(z) <= 0) or np.any(gains <= 0) or not np.all(np.isfinite(gains)):
-        raise ValueError("Lens positions must increase and focal-power gains must be finite and positive.")
-    currents = np.array([c.current for c in lenses])
-    powers = gains * currents**2
-    u, v = z[0] - start, end - z[-1]
-    denominators = (powers[0] - 1 / u, powers[-1] - 1 / v)
-    if min(denominators) <= 0:
-        raise ValueError("The fixed objective and projector must have real conjugate planes.")
-    objective_v, projector_u = 1 / np.asarray(denominators)
-    object_z, image_z = z[0] + objective_v, z[-1] - projector_u
-    if not z[0] < object_z < z[1] or not z[-2] < image_z < z[-1]:
-        raise ValueError("Fixed conjugate planes must lie outside the three-lens relay.")
-    return dict(names=tuple(downstream), z=z, turns=turns, gains=gains, currents=currents,
-                sample_z=start, detector_z=end, objective_image_z=object_z,
-                projector_object_z=image_z, objective_magnification=-objective_v / u,
-                projector_magnification=-v / projector_u)
-
-
 def find_imaging_condition(microscope, *, magnification, vary, voltage=None,
                            object_plane="sample", image_plane="detector",
-                           rotation=0., current_bounds=(0.01, 5.)):
-    """Solve A = magnification × R(rotation), B = 0; only ``vary`` currents move.
+                           rotation=0., bounds=(0.01, 5.),
+                           reference=(0., 0., 0., 0.), image_position=None):
+    """Adjust native component parameters to A = magnification × R, B = 0.
 
-    This local design solve supports a centred, thin, round five-lens column:
-    a fixed objective, three adjustable relay lenses, and a fixed projector.
-    Supply an initial setting (usually a current-table row). ``vary`` must name
-    the three relay lenses in axial order. Rotation is in radians and bounds
-    are in amperes. Enable JAX float64 before loading the microscope.
+    ``vary`` names scalar controls: "IL1" means "IL1.current", while
+    "solenoid.q" or "lens.focal_length" select other native parameters.
+    Bounds are a lower/upper pair of scalars or arrays in those parameters'
+    units. Component entrance positions and the two measurement planes stay
+    fixed. Supply physically valid bounds for finite component bodies.
 
-    The small NumPy/SciPy solve retains the intermediate conjugate planes to
-    avoid cancellation at high magnification. The returned lab-frame matrix
-    is checked through TemGym's native components. This is operating-condition
-    design; it does not infer microscope geometry from measured images.
+    ``reference`` is the input (x,y,theta_x,theta_y). Optionally constrain its
+    image to ``image_position=(x,y)`` [m]. The matrix is local for nonlinear
+    optics; this solve does not constrain wave transmission or aberrations
+    away from the reference ray. Not every control set can meet every target.
+
+    JAX differentiates native ray propagation to obtain the matrix, then
+    differentiates its residuals for the shared bounded least-squares solver.
+    Enable float64. Returned errors satisfy |A/M - R| < 1e-9, |B| < 1e-8 m
+    and, when requested, reference-image position error < 1e-9 m.
     """
-    from scipy.optimize import least_squares
     import jax
+    import jax.numpy as jnp
+    from .optimization import least_squares
 
     if not jax.config.x64_enabled:
         raise ValueError("Enable jax_enable_x64 for the high-magnification imaging solve.")
     voltage = microscope.voltage if voltage is None else voltage
     if not np.all(np.isfinite((magnification, rotation, voltage))) or magnification <= 0 or voltage <= 0:
         raise ValueError("Magnification and voltage must be positive and rotation finite.")
-    lower, upper = (np.broadcast_to(np.asarray(b, dtype=float), (3,)) for b in current_bounds)
+    reference = np.asarray(reference, dtype=float)
+    if reference.shape != (4,) or not np.all(np.isfinite(reference)):
+        raise ValueError("reference must contain four finite ray coordinates.")
+    if image_position is not None:
+        image_position = np.asarray(image_position, dtype=float)
+        if image_position.shape != (2,) or not np.all(np.isfinite(image_position)):
+            raise ValueError("image_position must contain two finite positions in metres.")
+    start = float(microscope.components[object_plane].z)
+    end = float(microscope.components[image_plane].z)
+    if not np.isfinite(end - start) or end <= start:
+        raise ValueError("The image plane must be downstream of the object plane.")
+    names = [name for name, c in sorted(microscope.components.items(), key=lambda item: float(item[1].z))
+             if start < float(c.z) < end]
+    components = tuple(microscope.components[name] for name in names) + (Plane(z=end),)
+    controls = []
+    for entry in vary:
+        name, _, attribute = entry.partition(".")
+        attribute = attribute or "current"
+        if name not in names or attribute in ("z", "z_po"):
+            raise ValueError("Vary controls between the measurement planes; entrance z positions are fixed.")
+        control = (names.index(name), attribute)
+        if control in controls:
+            raise ValueError(f"Repeated control: {entry}")
+        controls.append(control)
+    if not controls:
+        raise ValueError("Supply at least one adjustable control.")
+    initial = np.array([getattr(components[i], attribute) for i, attribute in controls], dtype=float)
+    if initial.shape != (len(controls),) or not np.all(np.isfinite(initial)):
+        raise ValueError("Adjustable controls must be finite scalars.")
+    lower, upper = (np.broadcast_to(np.asarray(b, dtype=float), initial.shape) for b in bounds)
     if not np.all(np.isfinite((lower, upper))) or np.any(lower >= upper):
-        raise ValueError("Current bounds must be finite and ordered.")
-    g = _imaging_geometry(microscope, object_plane, image_plane, voltage)
-    if tuple(vary) != g["names"][1:-1]:
-        raise ValueError("vary must name the three interior downstream lenses in axial order.")
-    relay_target = magnification / (g["objective_magnification"] * g["projector_magnification"])
-    target_ampturns = rotation / float(compute_Rc_from_voltage(voltage))
-    fixed_ampturns = g["turns"][[0, -1]] @ g["currents"][[0, -1]]
-    length_scale = g["objective_image_z"] - g["z"][0]
+        raise ValueError("Bounds must be finite and ordered.")
 
-    def residual(currents):
-        matrix = _radial_chain(g["z"][1:-1], g["gains"][1:-1] * currents**2,
-                               g["objective_image_z"], g["projector_object_z"])
-        return np.array((matrix[0, 0] / relay_target - 1., matrix[0, 1] / length_scale,
-                         (g["turns"][1:-1] @ currents + fixed_ampturns - target_ampturns)
-                         / max(abs(fixed_ampturns), 1.)))
+    def updated_column(parameters):
+        column = list(components)
+        for (i, attribute), value in zip(controls, parameters):
+            column[i] = replace(column[i], **{attribute: value})
+        return tuple(column)
 
-    result = least_squares(residual, np.clip(g["currents"][1:-1], lower, upper),
-                           bounds=(lower, upper), xtol=1e-14, ftol=1e-14, gtol=1e-14, max_nfev=300)
-    if not result.success or np.max(np.abs(result.fun)) > 1e-10:
-        raise ValueError(f"No converged imaging solution at {magnification:g}x within the current bounds.")
-    focused = replace(microscope.with_currents(**dict(zip(vary, result.x))), voltage=voltage)
-    column = [c for c in focused.column if g["sample_z"] < float(c.z) < g["detector_z"]]
-    matrix = np.asarray(column_matrix(column + [Plane(z=g["detector_z"])],
-                                      source_z=g["sample_z"], voltage=voltage))
+    def matrix_at(parameters):
+        return column_matrix(updated_column(parameters), source_z=start,
+                             voltage=voltage, reference=reference)
+
     rotation_matrix = np.array(((np.cos(rotation), -np.sin(rotation)), (np.sin(rotation), np.cos(rotation))))
-    if (not np.all(np.isfinite(matrix))
+    target = np.c_[magnification * rotation_matrix, np.zeros((2, 2))]
+    # Express the residual in coordinates at the first adjustable component.
+    # The fixed upstream optics otherwise make A and B almost dependent at
+    # high magnification. This is a constant change of basis, not another model.
+    first = min(i for i, _ in controls)
+    prefix = components[:first] + (Plane(z=components[first].z),)
+    input_basis = np.linalg.inv(np.asarray(column_matrix(
+        prefix, source_z=start, voltage=voltage, reference=reference))[:4, :4])
+    scales = np.maximum(np.linalg.norm(target @ input_basis, axis=0), 1.)
+
+    def residual(parameters):
+        matrix = matrix_at(parameters)
+        errors = ((matrix[:2, :4] - target) @ input_basis / scales).ravel()
+        if image_position is not None:
+            position = matrix[:2, :4] @ reference + matrix[:2, 4]
+            errors = jnp.concatenate((errors, (position - image_position) / 1e-3))
+        return errors
+
+    result = least_squares(residual, np.clip(initial, lower, upper), bounds=(lower, upper),
+                           x_scale="jac", ftol=1e-14, xtol=1e-14, gtol=1e-14, max_iter=300)
+    matrix = np.asarray(matrix_at(result.x))
+    position = matrix[:2, :4] @ reference + matrix[:2, 4]
+    if (not result.success or not np.all(np.isfinite(matrix))
             or np.max(np.abs(matrix[:2, :2] / magnification - rotation_matrix)) > 1e-9
-            or np.max(np.abs(matrix[:2, 2:4])) > 1e-8):
-        raise ValueError("Imaging solution failed the native component matrix check.")
-    return ImagingSolution(focused, matrix, result.fun)
+            or np.max(np.abs(matrix[:2, 2:4])) > 1e-8
+            or (image_position is not None and np.max(np.abs(position - image_position)) > 1e-9)):
+        raise ValueError(f"No converged imaging solution at {magnification:g}x: {result.message}")
+    column = updated_column(result.x)
+    focused = microscope.with_components(**{names[i]: column[i] for i, _ in controls})
+    return ImagingSolution(replace(focused, voltage=voltage), matrix, np.asarray(result.residual))

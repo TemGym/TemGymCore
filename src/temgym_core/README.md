@@ -17,7 +17,10 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 | Microscope configuration, operating modes and plots | `microscope.py`, `plotting.py` |
 
 `microscope.py` holds a named collection of native components, current tables in
-amperes, and the explicit `find_imaging_condition` design solve. See the
+amperes, and the explicit `find_imaging_condition` design solve.
+The solve differentiates native ray propagation and uses the shared bounded
+JAX least-squares solver. `run.column_matrix` returns the local Jacobian and
+affine offset; it is also differentiable with respect to component parameters. See the
 [short API example](../../examples/microscope_models/IMAGING_MODES.md).
 It replaces `microscope_model.py` and `imaging_modes.py`; no compatibility layer
 or second component configuration hierarchy remains. The calibration workflow

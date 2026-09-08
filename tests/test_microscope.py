@@ -9,7 +9,7 @@ import pytest
 
 from temgym_core.components import ElectromagneticLens, HardEdgeSolenoid, Plane
 from temgym_core.constants import effective_accelerating_potential
-from temgym_core.microscope import CurrentTable, Microscope, find_imaging_condition, _imaging_geometry
+from temgym_core.microscope import CurrentTable, Microscope, find_imaging_condition
 from temgym_core.run import column_matrix, run_to_end
 from temgym_core.ray import Ray
 
@@ -142,11 +142,13 @@ def test_explicit_solve_refocuses_intermediate_magnifications(model, target):
 @pytest.mark.parametrize("target", (40_000, 200_000, 600_000))
 def test_three_defined_stages_are_conjugate_and_compose(model, target):
     focused = model.with_settings(magnification=target)
-    g = _imaging_geometry(focused, "sample", "detector", focused.voltage)
-    planes = (g["sample_z"], g["objective_image_z"], g["projector_object_z"], g["detector_z"])
-    magnifications = (abs(g["objective_magnification"]),
-                      target / (g["objective_magnification"] * g["projector_magnification"]),
-                      abs(g["projector_magnification"]))
+    objective, projector = (focused.components[name] for name in ("Obj_post", "PL1"))
+    start, end = (focused.components[name].z for name in ("sample", "detector"))
+    u, v = objective.z - start, end - projector.z
+    objective_v = 1 / (1 / float(objective.focal_length(focused.voltage)) - 1 / u)
+    projector_u = 1 / (1 / float(projector.focal_length(focused.voltage)) - 1 / v)
+    planes = (start, objective.z + objective_v, projector.z - projector_u, end)
+    magnifications = (objective_v / u, target / (objective_v / u * v / projector_u), v / projector_u)
     total = np.eye(4)
     for start, end, mag in zip(planes[:-1], planes[1:], magnifications):
         matrix = trace_basis(focused, start, end)
@@ -156,18 +158,21 @@ def test_three_defined_stages_are_conjugate_and_compose(model, target):
     np.testing.assert_allclose(total, trace_basis(focused), rtol=1e-10, atol=1e-8)
 
 
-@pytest.mark.parametrize("change", [dict(Tc=1e-8), dict(x0=1e-6), dict(stigmator_strength_x=.1)])
-def test_solver_rejects_unsupported_optics(model, change):
+def test_finite_electromagnetic_lenses_are_focused(model):
     initial = model.with_settings(magnification=40_000)
-    changed = initial.with_components(IL1=replace(initial.components["IL1"], **change))
-    with pytest.raises(ValueError, match="thin, round"):
-        find_imaging_condition(changed, magnification=40_000, vary=RELAY)
+    initial = initial.with_components(**{
+        name: replace(initial.components[name], Tc=1e-8) for name in RELAY
+    })
+    result = find_imaging_condition(initial, magnification=40_000, vary=RELAY)
+    matrix = trace_basis(result.microscope)
+    np.testing.assert_allclose(matrix[:2, :2] / 40_000, np.eye(2), atol=1e-9)
+    np.testing.assert_allclose(matrix[:2, 2:], 0, atol=1e-8)
 
 
 def test_infeasible_bounds_fail_instead_of_returning_unfocused_microscope(model):
     with pytest.raises(ValueError, match="No converged"):
         find_imaging_condition(model.with_settings(magnification=40_000),
-                               magnification=40_000, vary=RELAY, current_bounds=(.1, .2))
+                               magnification=40_000, vary=RELAY, bounds=(.1, .2))
 
 
 def test_nonzero_rotation_and_second_voltage(model):
@@ -178,3 +183,69 @@ def test_nonzero_rotation_and_second_voltage(model):
     np.testing.assert_allclose(matrix[:2, :2] / 60_000, rotation, atol=1e-10)
     np.testing.assert_allclose(matrix[:2, 2:], 0, atol=1e-10)
     assert result.microscope.voltage == 200_100
+
+
+def test_two_stigmators_and_steering_with_an_off_axis_reference():
+    from temgym_core.components import Stigmator, Deflector
+    microscope = Microscope({
+        "sample": Plane(z=0.),
+        "first": Stigmator(z=.1, focal_length_x=.09, focal_length_y=.11, x0=.001),
+        "second": Stigmator(z=.3, focal_length_x=.11, focal_length_y=.09),
+        "steer": Deflector(z=.35, def_x=0., def_y=0.),
+        "detector": Plane(z=.4),
+    })
+    reference = (.0002, -.0001, 0., 0.)
+    result = find_imaging_condition(
+        microscope, magnification=1., rotation=np.pi,
+        vary=["first.focal_length_x", "first.focal_length_y",
+              "second.focal_length_x", "second.focal_length_y", "steer.def_x", "steer.def_y"],
+        bounds=([.05]*4 + [-.1]*2, [.15]*4 + [.1]*2),
+        reference=reference, image_position=(0., 0.),
+    )
+    np.testing.assert_allclose(result.matrix[:2, :2], -np.eye(2), atol=1e-9)
+    np.testing.assert_allclose(result.matrix[:2, 2:4], 0, atol=1e-8)
+    ray = Ray(x=reference[0], y=reference[1], dx=0., dy=0., z=0., pathlength=0.)
+    out = run_to_end(ray, result.microscope.column)
+    np.testing.assert_allclose((out.x, out.y), (0., 0.), atol=1e-9)
+    assert result.microscope.components["first"].x0 == .001
+
+
+def test_one_finite_solenoid_with_adjustable_q():
+    lens = HardEdgeSolenoid(z=.1, length=.02, q=.6)
+    # Locate the conjugate plane for this known finite lens using basis rays.
+    basis = column_matrix((lens,))
+    detector_z = lens.z + lens.length - float(basis[0, 2] / basis[2, 2])
+    truth = Microscope({"sample": Plane(z=0.), "lens": lens, "detector": Plane(z=detector_z)})
+    target_matrix = column_matrix(truth.column)
+    target = float(np.linalg.norm(target_matrix[:2, 0]))
+    rotation = float(np.arctan2(target_matrix[1, 0], target_matrix[0, 0]))
+    initial = truth.with_components(lens=replace(lens, q=.55))
+    result = find_imaging_condition(initial, magnification=target, rotation=rotation,
+                                    vary=["lens.q"], bounds=(.3, .9))
+    np.testing.assert_allclose(result.microscope.components["lens"].q, .6, atol=1e-10)
+    np.testing.assert_allclose(result.matrix, target_matrix, atol=1e-8)
+
+
+def test_local_matrix_and_parameter_derivatives_for_a_nonlinear_component():
+    import jax_dataclasses as jdc
+    from temgym_core.components import Component
+
+    @jdc.pytree_dataclass
+    class CubicKick(Component):
+        z: float
+        strength: float
+
+        def _call_ray(self, ray):
+            return ray.derive(dx=ray.dx + self.strength * ray.x**3)
+
+    reference = jnp.array((.2, .1, .03, .04))
+    def matrix(strength):
+        return column_matrix((CubicKick(z=0., strength=strength),), reference=reference)
+    actual = matrix(.4)
+    expected = np.eye(5)
+    expected[2, 0] = 3 * .4 * .2**2
+    expected[2, 4] = -2 * .4 * .2**3
+    np.testing.assert_allclose(actual, expected, atol=1e-14)
+    derivative = jax.jit(jax.jacfwd(matrix))(.4)
+    np.testing.assert_allclose(derivative[2, 0], 3 * .2**2, atol=1e-14)
+    np.testing.assert_allclose(derivative[2, 4], -2 * .2**3, atol=1e-14)

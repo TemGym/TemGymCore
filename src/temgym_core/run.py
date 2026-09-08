@@ -29,7 +29,7 @@ def propagate_gaussian_mixture(source, components, extra_covariance):
         propagator=FreeSpacePropagator(include_axial_path=False),
     )
     mean, covariance = output.moments()
-    matrix = column_matrix(components, source_z=source.z)[:4, :4]
+    matrix = column_matrix(components, source_z=source.z, voltage=source.voltage)[:4, :4]
     return mean, covariance + matrix @ extra_covariance @ matrix.T
 
 
@@ -452,21 +452,27 @@ def run_with_grads(
     return value, grads
 
 
-def column_matrix(components, *, source_z=0., voltage=200e3):
-    """Affine 5×5 map in [x,y,theta_x,theta_y,1] order.
+def column_matrix(components, *, source_z=0., voltage=200e3,
+                  reference=(0., 0., 0., 0.)):
+    """Differentiate native ray propagation in [x,y,theta_x,theta_y,1] order.
 
-    Execute five basis rays through the same components and drift machinery
-    used by normal TemGym runs. Valid for affine paraxial components only.
-    Offsets are measured with the fifth (on-axis) ray.
-    Voltage [V] is passed to those rays for current-controlled lens components.
+    For q_out = F(q), return J = dF/dq at ``reference`` and offset F(q) - Jq.
+    This is exact for affine optics and a local linearisation for aberrated
+    optics. It describes ray coordinates, not transmission or interference.
+    Source z is in metres, voltage in volts, and reference angles in radians.
+    Component parameters remain differentiable through this calculation.
     """
-    basis = jnp.eye(5)
-    ray = Ray(x=basis[0], y=basis[1], dx=basis[2], dy=basis[3],
-              z=source_z, pathlength=0., voltage=voltage)
-    out = run_to_end(ray, components)
-    values = jnp.stack((out.x, out.y, out.dx, out.dy))
-    linear = values[:, :4] - values[:, 4, None]
-    return jnp.eye(5).at[:4, :4].set(linear).at[:4, 4].set(values[:, 4])
+    def trace(q):
+        ray = Ray(x=q[0], y=q[1], dx=q[2], dy=q[3],
+                  z=source_z, pathlength=0., voltage=voltage)
+        out = run_to_end(ray, components)
+        values = jnp.stack((out.x, out.y, out.dx, out.dy))
+        return values, values
+
+    reference = jnp.asarray(reference, dtype=float)
+    linear, values = jax.jacfwd(trace, has_aux=True)(reference)
+    offset = values - linear @ reference
+    return jnp.eye(5).at[:4, :4].set(linear).at[:4, 4].set(offset)
 
 
 def solenoid_column_matrix(gaps, lengths, strengths):

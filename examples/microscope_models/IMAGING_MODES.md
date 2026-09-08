@@ -14,7 +14,7 @@ solution = find_imaging_condition(
     initial,
     magnification=40_000,
     vary=["IL1", "IL2", "IL3"],
-    current_bounds=(0.01, 5.0),
+    bounds=(0.01, 5.0),
     rotation=0.0,
 )
 focused = solution.microscope
@@ -23,11 +23,27 @@ print(matrix[:2, :2])     # A = 40,000 × identity
 print(matrix[:2, 2:4])    # B ≈ 0
 ```
 
-The solve varies only the named relay currents. Geometry, the objective,
-projector and upstream controls stay fixed. It retains intermediate conjugate
-planes to avoid numerical cancellation, then checks the lab-frame matrix
-through native components. Failed solves raise an error. `solution.residual`
-contains the scaled magnification, focus and rotation residuals.
+The solve changes only the selected component parameters. A bare lens name
+means its `current`; use names such as `lens.focal_length`, `solenoid.q`, or
+`steer.def_x` for other native controls. Bounds use the selected parameters'
+units, with one lower and upper bound per parameter when necessary.
+
+`column_matrix` uses `jax.jacfwd` on native ray propagation. Our existing
+bounded JAX least-squares solver then differentiates the imaging residuals
+with respect to the selected parameters. We still need least squares:
+derivatives describe the response; the solver finds settings that meet the target.
+There is no separate thin-lens chain or SciPy solve here.
+
+The residual contains the eight entries of the A/B mismatch. They are scaled
+in coordinates at the first adjustable component, using the differentiated
+fixed upstream optics. This avoids nearly dependent magnification/focus errors
+at high magnification. Failed solves raise an error; `solution.residual` stores
+these scaled errors and `solution.matrix` is the physical laboratory-frame map.
+
+For a nonzero input ray, set `reference=(x, y, theta_x, theta_y)`. The matrix is
+its local linearisation, with offset `F(reference) - J @ reference`. Optionally
+set `image_position=(x, y)` to constrain where that ray lands, adding two
+position residuals scaled by 1 mm. This lets steering controls centre the image.
 
 For an experiment, wobble a current without automatically refocusing:
 
@@ -51,12 +67,16 @@ reference voltage; its units differ from native Gc. To design a focused setting
 at another voltage, pass `voltage=...` to `find_imaging_condition`. To simulate
 only a voltage wobble, change the beam voltage and keep the components fixed.
 
-This design solve supports five centred, thin, round `ElectromagneticLens`
-components between the chosen planes. The container also accepts solenoids and
-other native components, but the design solve does not yet support those optics.
-It designs simulation settings; it is not the image-based microscope fitter.
-The calibration notebook continues to use its native finite-solenoid builders
-and bounded JAX least-squares solver.
+There is no fixed lens count or thin-lens restriction. The solve uses each
+component's implemented ray behaviour, including finite lenses, solenoids,
+stigmators and deflectors. Component entrance positions stay fixed. For finite
+bodies, supply bounds that preserve a physically valid column geometry.
+
+For nonlinear optics, meeting the local matrix target does not establish
+image quality away from the reference ray. Aperture transmission, interference
+and finite-field aberrations need separate forward-image checks. The selected
+controls may not be sufficient to meet the target, and a local solution is not
+a uniqueness proof. The calibration notebook keeps its existing fitting workflow.
 
 ## Saved 200 kV settings
 

@@ -220,3 +220,28 @@ def test_normal_interval_preserves_small_positive_tail_probability():
     )
     assert probability > 0.0
     np.testing.assert_allclose(probability, ndtr(-9.0) - ndtr(-10.0), rtol=1e-13)
+
+
+def test_mixture_uses_source_voltage_for_current_controlled_lenses():
+    from temgym_core.components import ElectromagneticLens, Plane
+    from temgym_core.constants import effective_accelerating_potential
+    from temgym_core.gaussian import FreeSpacePropagator
+    from temgym_core.run import run_to_end
+
+    voltage = 100_000.
+    source = gaussian_waist(z=0., voltage=voltage, rms_size=1e-6)
+    lens = ElectromagneticLens(z=.1, turns=100., current=1.,
+                              Gc=float(effective_accelerating_potential(voltage)) / (.08 * 100**2))
+    column = (lens, Plane(z=.3))
+    extra = jnp.diag(jnp.array((0., 0., 1e-6, 2e-6)))
+    _, mixed_covariance = propagate_gaussian_mixture(source, column, extra)
+    coherent = run_to_end(source, column, propagator=FreeSpacePropagator(include_axial_path=False))
+    angle = float(lens.rotation_angle(voltage))
+    rotation = np.array(((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle))))
+    identity, zero = np.eye(2), np.zeros((2, 2))
+    before = np.block([[identity, .1 * identity], [zero, identity]])
+    after = np.block([[identity, .2 * identity], [zero, identity]])
+    kick = np.block([[rotation, zero], [-rotation / .08, rotation]])
+    matrix = after @ kick @ before
+    expected = coherent.moments()[1] + matrix @ extra @ matrix.T
+    np.testing.assert_allclose(mixed_covariance, expected, rtol=1e-10, atol=1e-18)
