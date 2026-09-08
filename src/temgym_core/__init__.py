@@ -101,19 +101,7 @@ _EXPORTS = {
         ("DeflectorConfig", "LensConfig", "OperatingMode", "MicroscopeModel"),
         "microscope_model",
     ),
-    **dict.fromkeys(
-        (
-            "CubicActionField2D",
-            "CubicInterpolatedSample2D",
-            "MAGICALSampleAtlas",
-            "SampleLevel2D",
-            "SamplePyramid2D",
-            "SampleView",
-            "select_sample_view",
-            "validate_sample_level",
-        ),
-        "multiscale_sample",
-    ),
+    "InterpolatedSample2D": "components",
 }
 
 

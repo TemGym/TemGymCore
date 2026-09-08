@@ -11,7 +11,7 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 | Gaussian fields and integrated detector images | `evaluate.py`, `spatial_evaluate.py`, `grid.py` |
 | Image measurements, their matrix predictions and intensity initialization | `image.py` |
 | Bounded JAX least squares and fits with shared parameters | `optimization.py` |
-| Known MAGICAL specimen and cubic interpolation | `multiscale_sample.py` |
+| Interpolated specimen component; nominal MAGICAL recipe | `components.py`; `calibration/gaussian.py` |
 | Atomic-scattering physics used by `AtomicPotential` | `potential.py` |
 | Microscope configuration, operating modes and plots | `microscope_model.py`, `imaging_modes.py`, `plotting.py` |
 
@@ -33,11 +33,21 @@ therefore compare predicted and measured quantities without rendering pixels
 at every iteration. Its intensity approximation is used for initialization
 and the optional faster synthetic acquisition.
 
-The multiscale sample is used: it creates the MAGICAL transmission and its
-spatial derivatives. The calibration uses a fixed sampled specimen; it does
-not choose resolution levels during optimization. The separate MAGICAL imaging
-example also uses the atlas at different magnifications. The old NEOARM TOML
-loader has been removed; use `nominal` or `from_certificate` directly.
+`InterpolatedSample2D.from_action_maps(...)` constructs a regular component
+from optical path in metres, log field amplitude, and x/y pixel-centre arrays.
+Maps use image (y, x) order. The C2 cubic spline, spatial derivatives, specimen
+pose, periodic boundaries and Gaussian update are retained from `SampleView`.
+The existing complex-array constructor, `from_array`, keeps its original behaviour.
+
+`calibration.gaussian.make_magical_sample()` returns that component, known
+feature dimensions and a calibration centre. Both the calibration and the 40k
+MAGICAL imaging notebook use this one synthetic recipe. It makes the same fixed
+specimen map as before, without building unused regional maps or pyramids.
+The old atlas, certificates and automatic field selection have been removed;
+Git revision `5aa2ae7` retains them. This fixed map is an overview target, not an
+atomic-resolution model. Refine specimen sampling and the Gaussian approximation
+separately when changing the scene. The component's `sampling_diagnostic` still
+flags beams for which the local quadratic sample approximation is inadequate.
 
 ## Why keep local optimization code?
 
@@ -80,8 +90,15 @@ Older APIs and experiments remain in Git: `fc992bc` precedes the first core
 cleanup and `31adfc3` precedes this consolidation. The current calibration
 notebook's public calls are unchanged.
 
-This consolidation reduces maintained Python from 41 to 37 files (core plus
-calibration). 105 distinct targeted tests pass. Gaussian images and derivatives
-match the previous detector implementation to floating-point precision; MAGICAL
-sample values and gradients are unchanged. The wheel imports and renders outside
-the repository. Full acquisition and multiple-start fitting were not repeated.
+The core and calibration now contain 36 Python files. The sample cleanup removes
+about 2,200 source lines. At both 200 and 195 kV, the fixed specimen maps, spline
+coefficients, sampled action values/gradients/Hessians and Gaussian updates match
+the previous implementation exactly. The calibration intensity template, sampled
+transmission and predicted moments also match exactly.
+
+115 targeted tests passed. The complete 256 × 256, 40,000× MAGICAL notebook ran
+on the GPU: refining the Gaussian waist from 2 nm to 1 nm reduced total image
+error from 0.920% to 0.256%, with propagation error below 0.0003%. The calibration
+notebook's imports and public call signatures were checked; its full acquisition
+and multiple-start fits were not rerun. Source fingerprints will invalidate old
+workflow caches on the next run, as they do for other core changes.

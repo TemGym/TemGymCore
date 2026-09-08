@@ -4,7 +4,7 @@ import functools
 import hashlib
 import json
 import operator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import jax
@@ -13,7 +13,7 @@ import numpy as np
 
 from temgym_core.image import gaussian_intensity_image
 from temgym_core.optimization import least_squares
-from temgym_core.multiscale_sample import MAGICALSampleAtlas, SampleView
+from .gaussian import make_magical_sample
 
 from .projector_model import (
     LENSES,
@@ -24,40 +24,10 @@ from .projector_model import (
 )
 
 
-def make_magical_sample(voltage=200000.0):
-    """TemGym complex MAGICAL specimen and its fixed calibration ROI."""
-    atlas = MAGICALSampleAtlas.nominal(
-        shape_yx=(384, 384),
-        region_shape_yx=(128, 128),
-        authoritative_multilayer_shape_yx=(256, 256),
-        max_levels=3,
-        voltage=voltage,
-    )
-    certificate = replace(
-        atlas.certificate,
-        features=tuple(
-            replace(f, phase_amplitude_rad=0.0, log_amplitude_depth=0.0)
-            for f in atlas.certificate.features
-        ),
-    )
-    atlas = MAGICALSampleAtlas.from_certificate(
-        certificate,
-        shape_yx=(384, 384),
-        region_shape_yx=(128, 128),
-        authoritative_multilayer_shape_yx=(256, 256),
-        max_levels=3,
-        global_support_margin_m=atlas.global_support_margin_m,
-    )
-    sample = SampleView.from_level(atlas.pyramid.levels[0], z=0.0)
-    region = next(r for r in certificate.regions if r.name == "multilayer_region_3")
-    roi = np.array([4e-9, region.centre_xy_m[1] + region.size_xy_m[1] / 2 - 2e-9])
-    return sample, certificate, roi
-
-
 def make_magical_template(
     voltage=200000.0, pitch_m=2.5e-9, *, illumination_radius_m=160e-9
 ):
-    """Same clean nominal atlas as magical_gaussian_imaging.ipynb.
+    """Same fixed nominal specimen as magical_gaussian_imaging.ipynb.
 
     The ROI is fixed at a multilayer edge so the 600k view is not the central
     perforation or an effectively one-dimensional periodic stripe pattern.
@@ -65,7 +35,7 @@ def make_magical_template(
     """
     if not np.isfinite(illumination_radius_m) or illumination_radius_m <= 0:
         raise ValueError("Illumination radius must be finite and positive.")
-    sample, certificate, roi = make_magical_sample(voltage)
+    sample, dimensions, roi = make_magical_sample(voltage)
     n = int(np.ceil(2 * (illumination_radius_m + 30e-9) / pitch_m))
     axis = (np.arange(n) - (n - 1) / 2) * pitch_m
     xx, yy = np.meshgrid(axis, axis)
@@ -78,13 +48,13 @@ def make_magical_template(
     weights = (intensity * illumination)[included] * pitch_m**2
     weights /= weights.sum()
     metadata = {
-        "source": "MAGICALSampleAtlas.nominal: nominal synthetic certificate",
+        "source": dimensions["source"],
         "phase_contrast": False,
         "roi_centre_atlas_m": roi.tolist(),
-        "silicon_width_m": certificate.silicon_layer_width_m,
-        "sige_width_m": certificate.silicon_germanium_layer_width_m,
-        "repeat_m": certificate.silicon_layer_width_m
-        + certificate.silicon_germanium_layer_width_m,
+        "silicon_width_m": dimensions["silicon_width_m"],
+        "sige_width_m": dimensions["sige_width_m"],
+        "repeat_m": dimensions["silicon_width_m"]
+        + dimensions["sige_width_m"],
         "template_pitch_m": pitch_m,
         "gaussian_component_sigma_m": 2e-9,
         "illumination_radius_m": float(illumination_radius_m),
