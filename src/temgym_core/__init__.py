@@ -98,8 +98,8 @@ _EXPORTS = {
         "plotting",
     ),
     **dict.fromkeys(
-        ("DeflectorConfig", "LensConfig", "OperatingMode", "MicroscopeModel"),
-        "microscope_model",
+        ("Microscope", "CurrentTable", "find_imaging_condition"),
+        "microscope",
     ),
     "InterpolatedSample2D": "components",
 }

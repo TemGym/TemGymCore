@@ -452,16 +452,17 @@ def run_with_grads(
     return value, grads
 
 
-def column_matrix(components, *, source_z=0.):
+def column_matrix(components, *, source_z=0., voltage=200e3):
     """Affine 5×5 map in [x,y,theta_x,theta_y,1] order.
 
     Execute five basis rays through the same components and drift machinery
     used by normal TemGym runs. Valid for affine paraxial components only.
     Offsets are measured with the fifth (on-axis) ray.
+    Voltage [V] is passed to those rays for current-controlled lens components.
     """
     basis = jnp.eye(5)
     ray = Ray(x=basis[0], y=basis[1], dx=basis[2], dy=basis[3],
-              z=source_z, pathlength=0.)
+              z=source_z, pathlength=0., voltage=voltage)
     out = run_to_end(ray, components)
     values = jnp.stack((out.x, out.y, out.dx, out.dy))
     linear = values[:, :4] - values[:, 4, None]

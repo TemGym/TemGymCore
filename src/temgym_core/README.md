@@ -14,7 +14,14 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 | Interpolated specimen component; nominal MAGICAL recipe | `components.py`; `calibration/gaussian.py` |
 | Analytical matrices and transport through supplied matrices | `transfer_matrices.py` |
 | Experimental atomic potentials and `AtomicPotential` component | `experimental/potential.py` |
-| Microscope configuration, operating modes and plots | `microscope_model.py`, `imaging_modes.py`, `plotting.py` |
+| Microscope configuration, operating modes and plots | `microscope.py`, `plotting.py` |
+
+`microscope.py` holds a named collection of native components, current tables in
+amperes, and the explicit `find_imaging_condition` design solve. See the
+[short API example](../../examples/microscope_models/IMAGING_MODES.md).
+It replaces `microscope_model.py` and `imaging_modes.py`; no compatibility layer
+or second component configuration hierarchy remains. The calibration workflow
+uses its own parameter-to-component builders and does not depend on this container.
 
 The remaining files supply constants, coordinate transforms, aberrations and
 array/tree utilities. The [calibration code map](calibration/README.md)

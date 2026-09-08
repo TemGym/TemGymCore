@@ -1,46 +1,68 @@
-# Focused imaging modes, 40k–600k
+# Configuring and focusing a microscope
 
-The `magnification` mode in `microscope.toml` now forms a specimen-to-detector
-image with **A = magnification × identity and B = 0**, including zero net
-rotation, in the 200 kV thin-round-lens model. The ten saved magnifications
-are 40k, 60k, 80k, 100k, 150k, 200k, 250k, 300k, 400k, and 600k.
-
-Use the existing API, including the combined illumination/imaging mode:
+`Microscope` holds named native TemGym components. Current tables contain
+amperes. Loading a file or selecting a table does not run an optimisation.
 
 ```python
 import jax
-from temgym_core.microscope_model import MicroscopeModel
+from temgym_core.microscope import Microscope, find_imaging_condition
 
 jax.config.update("jax_enable_x64", True)
-model = MicroscopeModel.from_toml("examples/microscope_models/microscope.toml")
-components = model.build_components({"parallel": 3.0, "magnification": 40_000})
-# Intermediate values are also solved, for example 50_000 or 500_000.
+microscope = Microscope.from_toml("examples/microscope_models/microscope.toml")
+initial = microscope.with_settings(parallel=3.0, magnification=40_000)
+solution = find_imaging_condition(
+    initial,
+    magnification=40_000,
+    vary=["IL1", "IL2", "IL3"],
+    current_bounds=(0.01, 5.0),
+    rotation=0.0,
+)
+focused = solution.microscope
+matrix = solution.matrix  # 5×5, ordered x, y, theta_x, theta_y, 1
+print(matrix[:2, :2])     # A = 40,000 × identity
+print(matrix[:2, 2:4])    # B ≈ 0
 ```
 
-`OperatingMode.interpolate_currents` remains a table interpolation primitive.
-For this mode, `build_components` uses that interpolation as an initial guess
-and refines IL1–IL3 to restore focus, magnification, and rotation. Requests
-outside 40k–600k raise an error. Modes without the `conjugate_imaging` option
-retain their previous behavior. The constraint currently supports this
-five-lens, thin, round downstream topology; adding lens thickness or
-astigmatism requires a corresponding forward-model design routine.
+The solve varies only the named relay currents. Geometry, the objective,
+projector and upstream controls stay fixed. It retains intermediate conjugate
+planes to avoid numerical cancellation, then checks the lab-frame matrix
+through native components. Failed solves raise an error. `solution.residual`
+contains the scaled magnification, focus and rotation residuals.
 
-## What was solved
+For an experiment, wobble a current without automatically refocusing:
 
-All physical z positions, focal-power coefficients, turns, and the objective
-current were retained. PL1 is fixed at a model current of −3.5 A throughout
-the imaging range. The three intermediate currents solve three constraints:
-relay magnification, relay B = 0, and zero total signed ampere-turn excitation
-through the downstream lenses. The latter gives zero rotation in the
-existing `ElectromagneticLens` model. The nonlinear solve operates between
-the fixed conjugate planes to avoid the cancellation in a high-magnification
-full-column residual.
+```python
+wobbled = focused.with_currents(IL1=1.05 * focused.components["IL1"].current)
+```
 
-This PL1 setting was selected after comparing candidate branches with the
-recorded control trends. It keeps all intermediate currents positive, avoids
-an almost inactive IL3 at 600k, and gives a fixed final-projector magnification
-of approximately 135×. The curve comparison is therefore a design diagnostic,
-not independent validation or a measured current calibration.
+`with_components(IL1=replace(lens, x0=...))` accepts native lens parameters.
+It also adds apertures or replaces the sample. Each update returns a new
+microscope. `microscope.column` is the ordered component tuple for `run_to_end`.
+The loaded sample is a `Plane`; source and aperture choices remain explicit.
+Their original TOML specifications are accessible in `microscope.config`.
+
+`microscope.tables["magnification"].at(50_000)` returns named interpolated
+currents. Refocus explicitly to achieve an intermediate magnification.
+Out-of-range interpolation and conflicting tables raise errors. No mode aliases,
+normalised-current wrappers, largest-current merging or NPZ model bundles remain.
+
+Native lenses handle the beam voltage. TOML Gc is converted once at the file's
+reference voltage; its units differ from native Gc. To design a focused setting
+at another voltage, pass `voltage=...` to `find_imaging_condition`. To simulate
+only a voltage wobble, change the beam voltage and keep the components fixed.
+
+This design solve supports five centred, thin, round `ElectromagneticLens`
+components between the chosen planes. The container also accepts solenoids and
+other native components, but the design solve does not yet support those optics.
+It designs simulation settings; it is not the image-based microscope fitter.
+The calibration notebook continues to use its native finite-solenoid builders
+and bounded JAX least-squares solver.
+
+## Saved 200 kV settings
+
+The ten stored rows span 40k–600k and satisfy A = magnification × identity,
+B = 0 and zero total rotation. All are effective simulation parameters, not
+measured NEOARM currents, field profiles or physical lens thicknesses.
 
 The sample is at z = 325 mm and the detector at z = 1043.75 mm. The stages are:
 
@@ -82,73 +104,16 @@ fixed at **2.271891 mm**, and PL1 at **2.286337 mm**.
 | IL3 | 352.980 | 2.137981 | 0.606103 |
 | PL1 | 407.983 | −3.500000 | −3.500000 |
 
-These are effective simulation parameters. In particular, no physical lens
-thicknesses or axial field profiles were recovered: the active lenses here
-have `Tc = 0`. The model currents and assumed turns are not measured NEOARM
-electrical parameters. A large focal length for IL3 means weak focusing; it
-does not require the physical lens or its neighboring drift to be that long.
 
-## Comparison with the recorded NEOARM table
+Reproduce the settings and matrix checks from the repository root:
 
-Both series are divided by their own value at 40k, without fitting a scale or
-offset. This is a shape comparison under a provisional proportional-control
-interpretation, not proof that current is proportional to DAC.
-
-| Lens | Designed 600k / 40k | Recorded DAC 600k / 40k | Interpretation |
-| --- | ---: | ---: | --- |
-| IL1 | 0.98993 | 1.00981 | Both peak at low magnification; the model peak is smaller and its high-magnification value is lower. |
-| IL2 | 1.88816 | 2.01589 | Both increase; the model requires less relative change. |
-| IL3 | 0.28349 | 0.28407 | Close agreement across the curve; normalized RMS difference is 0.00957. |
-| PL1 | 1.00000 | 1.00000 | Fixed across the range in both cases. |
-
-The sequence and division of magnification are consistent with the general
-JEOL description of an [intermediate lens system](https://www.jeol.com/words/emterms/20121023.062458.php)
-and a [fixed final projector near 150×](https://www.jeol.com/words/emterms/20121023.072558.php).
-That supports plausibility of the architecture, not the numerical field
-parameters of the NEOARM. Measured focus and rotation sweeps are still needed
-to calibrate the instrument. These are thin-lens results and do not validate
-finite-field overlap, aberrations, or image contrast.
-
-## Verification and reproduction
-
-On 5 September 2026, direct differentiation of `run_to_end` at all ten saved
-rows (with refinement disabled) and nine refined intermediate settings gave:
-
-- Maximum elementwise error in `A / Mag` relative to identity: **2.48e−14**.
-- Maximum operator norm of B: **8.35e−14 m**.
-- The separate objective, relay, and final-projector stages also passed
-  direct basis-ray conjugacy and composition tests at 40k, 200k, and 600k.
-- **61 tests passed** across the new imaging tests and `test_microscope_model`.
-
-Plain interpolation of the ten current rows, without refinement, gave up to
-2.29% magnification error at the tested midpoints. This is why refinement is
-part of `build_components` for the opted-in mode.
-
-```bash
-OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu .venv/bin/python examples/microscope_models/design_imaging_modes.py
-OPENBLAS_NUM_THREADS=1 JAX_PLATFORMS=cpu .venv/bin/python -m pytest -q tests/test_conjugate_imaging_modes.py tests/test_microscope_model.py
+```sh
+JAX_PLATFORMS=cpu .venv/bin/python examples/microscope_models/design_imaging_modes.py
 ```
 
-Add `--write-table` to regenerate the ten TOML rows. The driver writes
-`examples/generated/microscope_imaging_modes/report.json` and three figures
-in SVG, PDF, and 300-dpi PNG: `neoarm_curve_comparison`, `lens_parameters`,
-and `conjugate_rays`. The JSON includes all focal lengths, model currents,
-full matrices, intermediate-value checks, and normalized recorded curves.
-The older `microscope_design_curves.ipynb` contains a historical design with
-its own geometry assumptions; use this driver to regenerate these modes.
+Add `--write-table` to update the TOML. The script now only designs and checks
+these settings; the old curve-comparison and report-generation experiment was removed.
 
-## From focused modes to an unknown-geometry fit
-
-Use the single [full microscope fitting notebook](microscope_calibration_pipeline.ipynb).
-It generates MAGICAL images at 200 and 195 kV, calibrates the projector at both
-voltages, fits the condenser with projector uncertainty included, and tests
-new images and aperture currents. Objective current stays fixed. Both fitting
-stages use hard bounds without soft penalties. It runs independently of the
-archived exploratory notebooks.
-
-The [reduction notes](DATASET_REDUCTION_NOTES.md) compare dataset sizes and
-multiple starting guesses. The [adaptive study notes](ADAPTIVE_CALIBRATION_NOTES.md)
-preserve the earlier 334-image experiment. The finite-lens calibration controls
-are separate from the thin-lens focused-mode table above. Their large excitation
-range, exact input calibration and known intensity template remain simulation
-assumptions.
+The older diffraction table is unchanged. Its verification notebook still fails
+the strict specimen-plane `A = 0` assertion; this was reproduced with both the
+original and simplified implementations.

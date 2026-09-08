@@ -108,8 +108,7 @@ values = [[1.0, 0.5263161094639132, 1.5044496146637962, 1.0], [2.0, 0.6460602116
 [modes.imaging.magnification]
 # Designed by design_imaging_modes.py at 200 kV: A = mag * identity, B = 0.
 # Simulation currents; no calibrated relationship to NEOARM DAC words.
-# Refine interpolated settings to preserve conjugacy and zero rotation.
-conjugate_imaging = { relay_lenses = ["IL1", "IL2", "IL3"], current_bounds_a = [0.01, 5.0], rotation_rad = 0.0 }
+# Call find_imaging_condition explicitly after interpolating these settings.
 headers = ["mag", "Obj_prefield", "Obj_post", "IL1", "IL2", "IL3", "PL1"]
 values = [
   [40000, 1.0, -2.472521284171875, 2.205677874538948, 1.7622839524439564, 2.1379811620054303, -3.5],
