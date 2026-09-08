@@ -47,12 +47,34 @@ alongside a shared projector calibration, retaining their correlations without
 building one large dense Jacobian. These are numerical helpers within the
 same notebook procedure.
 
-[JAXopt](https://github.com/google/jaxopt) is no longer maintained.
-[Optimistix's standard least-squares API](https://docs.kidger.site/optimistix/api/least_squares/)
-does not directly expose our box bounds and supplied block-scheduled Jacobian.
-Replacing these routines remains possible, but requires adapting and validating
-the solver behavior. This cleanup preserves the algorithms and consolidates
-them into one module; it does not claim a package replacement was tested.
+[Optimistix](https://docs.kidger.site/optimistix/api/least_squares/) was tested
+with Levenberg–Marquardt and sigmoid bounds on the recorded 200/195 kV Gaussian
+experiment. The current bounded solver is retained because the replacement
+lost useful solutions from the existing starting guesses.
+
+| Recorded starting guess | Current solver χ² | Optimistix + sigmoid χ² |
+|---|---:|---:|
+| Projector 1 | 766.2734 | 387,426.7 |
+| Condenser 1 | 638.3346 | 638.3346 |
+| Condenser 4 | 638.3346 | 4.325 × 10⁹ |
+
+The successful condenser comparison differed by at most 1.6e-6 of each
+parameter's allowed interval. The failed projector solve reported package
+convergence, but its physical scaled gradient was 0.239 (target 1e-5), so it
+was rejected. Several starts lie within 1e-9 of a bound in normalized
+coordinates; sigmoid saturation can suppress their physical sensitivity.
+Capping transform scaling and using interval-based scaling also failed the
+difficult condenser start. Moving both solvers' starts 0.1% inside the bounds
+changed the current solver's basin too, so this is not a reliable simple fix.
+
+These are local fits to existing measurements, using Optimistix 0.1.0 and
+JAX 0.10.2 on CPU with float64. The first projector prototype guarded sigmoid
+fractions at 1e-6 from the endpoints. Additional projector trials were stopped
+and are not used as evidence. Images were not regenerated, the full joint
+refinement was not repeated, and this is not a GPU performance comparison.
+A package replacement still needs reliable bound handling or a separately
+validated geometry parameterization. The exploratory code stays outside the
+maintained source tree.
 
 Older APIs and experiments remain in Git: `fc992bc` precedes the first core
 cleanup and `31adfc3` precedes this consolidation. The current calibration
