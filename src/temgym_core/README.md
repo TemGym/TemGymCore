@@ -12,12 +12,26 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 | Image measurements and their matrix predictions | `moments.py` |
 | Bounded JAX least squares and fits with shared parameters | `optimization.py` |
 | Interpolated specimen component; nominal MAGICAL recipe | `components.py`; `calibration/gaussian.py` |
-| Atomic-scattering physics used by `AtomicPotential` | `potential.py` |
+| Analytical matrices and transport through supplied matrices | `transfer_matrices.py` |
+| Experimental atomic potentials and `AtomicPotential` component | `experimental/potential.py` |
 | Microscope configuration, operating modes and plots | `microscope_model.py`, `imaging_modes.py`, `plotting.py` |
 
-The remaining files supply constants, coordinate transforms, transfer matrices,
-aberrations and array/tree utilities. The [calibration code map](calibration/README.md)
+The remaining files supply constants, coordinate transforms, aberrations and
+array/tree utilities. The [calibration code map](calibration/README.md)
 explains the experiment-specific code.
+
+`transfer_matrices.py` defines each matrix once, with a small conversion helper
+for SymPy, NumPy and JAX. The former `transfer.py` helpers live here too.
+Cumulative maps follow travel order: `M0`, `M1 @ M0`, `M2 @ M1 @ M0`.
+This corrects the old helper's reversed order; the calibration workflow uses
+`run.column_matrix` and did not use that helper. The unused duplicate in
+`tests/transfer_matrices.py` has been removed.
+
+Atomic-scattering work is now imported explicitly from
+`temgym_core.experimental.potential`. Its Gaussian component still uses the
+regular TemGym interface, but importing ordinary components does not load it.
+The notebook that calls it moved to
+[examples/experimental/glauber_ray_example.ipynb](../../examples/experimental/glauber_ray_example.ipynb).
 
 ## Images and measurements
 
@@ -139,8 +153,8 @@ Older APIs and experiments remain in Git: `fc992bc` precedes the first core
 cleanup and `31adfc3` precedes this consolidation. The current calibration
 notebook's public calls are unchanged.
 
-The core and calibration now contain 34 Python files. The sample cleanup removes
-about 2,200 source lines. At both 200 and 195 kV, the fixed specimen maps, spline
+At the sample-cleanup checkpoint, core and calibration contained 34 Python files.
+That cleanup removed about 2,200 source lines. At both 200 and 195 kV, the fixed specimen maps, spline
 coefficients, sampled action values/gradients/Hessians and Gaussian updates match
 the previous implementation exactly. The calibration intensity template, sampled
 transmission and predicted moments also match exactly.

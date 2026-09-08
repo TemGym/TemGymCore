@@ -1,397 +1,193 @@
-import sympy as sp
-import numpy as np
+"""Small analytical matrices and ray transport through supplied matrices.
+
+5×5 matrices act on [x, y, theta_x, theta_y, 1]; 3×3 matrices act on
+[x, theta_x, 1]. Constructors default to SymPy for existing derivations;
+pass xp=numpy or xp=jax.numpy for numerical arrays and JAX derivatives.
+
+For a microscope built from components, use run.column_matrix instead.
+"""
+
 import jax.numpy as jnp
+import numpy as np
+import sympy as sp
+
+
+def _matrix(rows, xp):
+    """Construct each matrix once, then select its numerical or symbolic type."""
+    if xp is sp:
+        return sp.Matrix(rows)
+    if xp is np or xp is jnp:
+        return xp.array(rows, dtype=xp.float64)
+    raise ValueError("xp must be sympy, numpy, or jax.numpy.")
 
 
 def imaging_matrix(M, f, xp=sp):
-    """
-    Returns the 3x3 ABCD matrix for a perfect imaging system
-    with magnification M and focal length f. Last column is [0,0,1].
-    """
-    if xp == sp:
-        return xp.Matrix([[M, 0, 0], [-1/f, 1/M, 0], [0, 0, 1]])
-    elif xp == np:
-        return np.array([[M, 0, 0], [-1.0 / f, 1.0 / M, 0.0], [0.0, 0.0, 1.0]],
-                        dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([[M, 0, 0], [-1.0 / f, 1.0 / M, 0.0], [0.0, 0.0, 1.0]],
-                         dtype=jnp.float64)
+    """Perfect imaging: A=M, B=0, C=-1/f, D=1/M."""
+    return _matrix([[M, 0, 0], [-1 / f, 1 / M, 0], [0, 0, 1]], xp)
 
 
 def imaging_matrix_5x5(M, f, xp=sp):
-    """
-    5x5 imaging matrix acting on [x, y, theta_x, theta_y, 1]^T.
-    """
-    if xp == sp:
-        return xp.Matrix([
-            [M, 0, 0,   0,   0],
-            [0, M, 0,   0,   0],
-            [-1/f, 0, 1/M, 0, 0],
-            [0, -1/f, 0, 1/M, 0],
-            [0, 0, 0,   0,   1],
-        ])
-    elif xp == np:
-        return np.array([
-            [M, 0.0, 0.0, 0.0, 0.0],
-            [0.0, M, 0.0, 0.0, 0.0],
-            [-1.0/f, 0.0, 1.0/M, 0.0, 0.0],
-            [0.0, -1.0/f, 0.0, 1.0/M, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([
-            [M, 0.0, 0.0, 0.0, 0.0],
-            [0.0, M, 0.0, 0.0, 0.0],
-            [-1.0/f, 0.0, 1.0/M, 0.0, 0.0],
-            [0.0, -1.0/f, 0.0, 1.0/M, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=jnp.float64)
+    """The same perfect imaging map in both transverse axes."""
+    return _matrix([
+        [M, 0, 0, 0, 0],
+        [0, M, 0, 0, 0],
+        [-1 / f, 0, 1 / M, 0, 0],
+        [0, -1 / f, 0, 1 / M, 0],
+        [0, 0, 0, 0, 1],
+    ], xp)
 
 
 def scale_matrix(M, xp=sp):
-    """
-    3x3 scaling matrix with last column [0,0,1].
-    """
-    if xp == sp:
-        return xp.Matrix([[M, 0, 0], [0, 1/M, 0], [0, 0, 1]])
-    elif xp == np:
-        return np.array([[M, 0, 0], [0, 1.0 / M, 0], [0, 0, 1.0]],
-                        dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([[M, 0, 0], [0, 1.0 / M, 0], [0, 0, 1.0]],
-                         dtype=jnp.float64)
+    """Scale position by M and slope by 1/M."""
+    return _matrix([[M, 0, 0], [0, 1 / M, 0], [0, 0, 1]], xp)
 
 
 def scale_matrix_5x5(M, xp=sp):
-    """
-    5x5 scaling matrix for [x,y,theta_x,theta_y,1]^T, scaling x,y by M and angles by 1/M.
-    """
-    if xp == sp:
-        return xp.Matrix([
-            [M, 0, 0,   0,   0],
-            [0, M, 0,   0,   0],
-            [0, 0, 1/M, 0,   0],
-            [0, 0, 0, 1/M,   0],
-            [0, 0, 0,   0,   1],
-        ])
-    elif xp == np:
-        return np.array([
-            [M, 0.0, 0.0, 0.0, 0.0],
-            [0.0, M, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0/M, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0/M, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([
-            [M, 0.0, 0.0, 0.0, 0.0],
-            [0.0, M, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0/M, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0/M, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=jnp.float64)
+    """Scale both positions by M and both slopes by 1/M."""
+    return _matrix([
+        [M, 0, 0, 0, 0],
+        [0, M, 0, 0, 0],
+        [0, 0, 1 / M, 0, 0],
+        [0, 0, 0, 1 / M, 0],
+        [0, 0, 0, 0, 1],
+    ], xp)
 
 
 def propagation_matrix(z, xp=sp):
-    """
-    Returns the 3x3 ABCD matrix for free space propagation over distance z.
-    """
-    if xp == sp:
-        return xp.Matrix([[1, z, 0], [0, 1, 0], [0, 0, 1]])
-    elif xp == np:
-        return np.array([[1.0, z, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                        dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([[1.0, z, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                         dtype=jnp.float64)
+    """Free-space drift: x' = x + z theta_x."""
+    return _matrix([[1, z, 0], [0, 1, 0], [0, 0, 1]], xp)
 
 
 def propagation_matrix_5x5(z, xp=sp):
-    """
-    5x5 free space propagation for [x,y,theta_x,theta_y,1]^T.
-    x' = x + z*theta_x; y' = y + z*theta_y.
-    """
-    if xp == sp:
-        return xp.Matrix([
-            [1, 0, z, 0, 0],
-            [0, 1, 0, z, 0],
-            [0, 0, 1, 0, 0],
-            [0, 0, 0, 1, 0],
-            [0, 0, 0, 0, 1],
-        ])
-    elif xp == np:
-        return np.array([
-            [1.0, 0.0, z,   0.0, 0.0],
-            [0.0, 1.0, 0.0, z,   0.0],
-            [0.0, 0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([
-            [1.0, 0.0, z,   0.0, 0.0],
-            [0.0, 1.0, 0.0, z,   0.0],
-            [0.0, 0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=jnp.float64)
+    """Free-space drift through distance z in both axes."""
+    return _matrix([
+        [1, 0, z, 0, 0],
+        [0, 1, 0, z, 0],
+        [0, 0, 1, 0, 0],
+        [0, 0, 0, 1, 0],
+        [0, 0, 0, 0, 1],
+    ], xp)
 
 
 def lens_matrix(f, xp=sp):
-    """
-    Returns the 3x3 ABCD matrix for a thin lens with focal length f.
-    """
-    if xp == sp:
-        return xp.Matrix([[1, 0, 0], [-1 / f, 1, 0], [0, 0, 1]])
-    elif xp == np:
-        return np.array([[1.0, 0.0, 0.0], [-1.0 / f, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                        dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([[1.0, 0.0, 0.0], [-1.0 / f, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                         dtype=jnp.float64)
+    """Thin lens: theta_x' = theta_x - x/f."""
+    return _matrix([[1, 0, 0], [-1 / f, 1, 0], [0, 0, 1]], xp)
 
 
 def lens_matrix_5x5(f, xp=sp):
-    """
-    5x5 thin lens (same focal length for x and y).
-    theta_x' = theta_x - x/f; theta_y' = theta_y - y/f.
-    """
-    if xp == sp:
-        return xp.Matrix([
-            [1, 0, 0, 0, 0],
-            [0, 1, 0, 0, 0],
-            [-1/f, 0, 1, 0, 0],
-            [0, -1/f, 0, 1, 0],
-            [0, 0, 0, 0, 1],
-        ])
-    elif xp == np:
-        return np.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [-1.0/f, 0.0, 1.0, 0.0, 0.0],
-            [0.0, -1.0/f, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [-1.0/f, 0.0, 1.0, 0.0, 0.0],
-            [0.0, -1.0/f, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=jnp.float64)
+    """Round thin lens with the same focal length in both axes."""
+    return _matrix([
+        [1, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0],
+        [-1 / f, 0, 1, 0, 0],
+        [0, -1 / f, 0, 1, 0],
+        [0, 0, 0, 0, 1],
+    ], xp)
 
 
 def biprism_matrix(biprism_deflection, xp=sp):
-    """
-    Returns the 3x3 matrix adding constant deflection to angle term.
-    """
-    if xp == sp:
-        return xp.Matrix([[1.0, 0.0, 0.0],
-                          [0.0, 1.0, biprism_deflection],
-                          [0.0, 0.0, 1.0]])
-    elif xp == np:
-        return np.array([[1.0, 0.0, 0.0],
-                         [0.0, 1.0, biprism_deflection],
-                         [0.0, 0.0, 1.0]], dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([[1.0, 0.0, 0.0],
-                          [0.0, 1.0, biprism_deflection],
-                          [0.0, 0.0, 1.0]], dtype=jnp.float64)
+    """Constant angular kick; the caller supplies its sign for each wire side."""
+    return _matrix([[1, 0, 0], [0, 1, biprism_deflection], [0, 0, 1]], xp)
 
 
 def biprism_matrix_5x5(biprism_deflection, xp=sp):
-    """
-    5x5 version adding same constant deflection to both theta_x and theta_y.
-    """
-    if xp == sp:
-        return xp.Matrix([
-            [1, 0, 0, 0, 0],
-            [0, 1, 0, 0, 0],
-            [0, 0, 1, 0, biprism_deflection],
-            [0, 0, 0, 1, 0],
-            [0, 0, 0, 0, 1],
-        ])
-    elif xp == np:
-        return np.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, biprism_deflection],
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, biprism_deflection],
-            [0.0, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=jnp.float64)
+    """Constant kick in theta_x only; y and theta_y are unchanged."""
+    return _matrix([
+        [1, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0],
+        [0, 0, 1, 0, biprism_deflection],
+        [0, 0, 0, 1, 0],
+        [0, 0, 0, 0, 1],
+    ], xp)
 
 
 def double_deflector_matrix_5x5(
-    spacing,
-    drive_x,
-    drive_y,
-    balance_x=1.0,
-    balance_y=1.0,
-    xp=sp,
+    spacing, drive_x, drive_y, balance_x=1.0, balance_y=1.0, xp=sp,
 ):
+    """Two angular kicks separated by spacing: D2 @ P(spacing) @ D1.
+
+    The first kick is (drive_x, drive_y); the second is its negative,
+    scaled by the respective balance. Balanced kicks leave a pure shift.
     """
-    5x5 matrix for two deflector kicks separated by free-space spacing.
-
-    Built as D2 @ P(spacing) @ D1, where:
-      D1 adds [drive_x, drive_y] to [theta_x, theta_y],
-      D2 adds [-balance_x*drive_x, -balance_y*drive_y].
-    """
-    def2_x = -balance_x * drive_x
-    def2_y = -balance_y * drive_y
-
-    if xp == sp:
-        d1 = xp.Matrix([
-            [1, 0, 0, 0, 0],
-            [0, 1, 0, 0, 0],
-            [0, 0, 1, 0, drive_x],
-            [0, 0, 0, 1, drive_y],
-            [0, 0, 0, 0, 1],
-        ])
-        d2 = xp.Matrix([
-            [1, 0, 0, 0, 0],
-            [0, 1, 0, 0, 0],
-            [0, 0, 1, 0, def2_x],
-            [0, 0, 0, 1, def2_y],
-            [0, 0, 0, 0, 1],
-        ])
-    elif xp == np:
-        d1 = np.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, drive_x],
-            [0.0, 0.0, 0.0, 1.0, drive_y],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=np.float64)
-        d2 = np.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, def2_x],
-            [0.0, 0.0, 0.0, 1.0, def2_y],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=np.float64)
-    elif xp == jnp:
-        d1 = jnp.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, drive_x],
-            [0.0, 0.0, 0.0, 1.0, drive_y],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=jnp.float64)
-        d2 = jnp.array([
-            [1.0, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0, def2_x],
-            [0.0, 0.0, 0.0, 1.0, def2_y],
-            [0.0, 0.0, 0.0, 0.0, 1.0],
-        ], dtype=jnp.float64)
-    else:
-        raise ValueError("xp must be one of sympy, numpy, or jax.numpy.")
-
-    p = propagation_matrix_5x5(spacing, xp=xp)
-    return d2 @ p @ d1
+    return _matrix([
+        [1, 0, spacing, 0, spacing * drive_x],
+        [0, 1, 0, spacing, spacing * drive_y],
+        [0, 0, 1, 0, drive_x - balance_x * drive_x],
+        [0, 0, 0, 1, drive_y - balance_y * drive_y],
+        [0, 0, 0, 0, 1],
+    ], xp)
 
 
 def propagation_refractive_index(z, n, xp=sp):
-    """
-    Returns the 3x3 ABCD matrix for propagation over distance z with refractive index n.
-    """
-    if xp == sp:
-        return xp.Matrix([[1, z / n, 0], [0, 1, 0], [0, 0, 1]])
-    elif xp == np:
-        return np.array([[1.0, z / n, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                        dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([[1.0, z / n, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                         dtype=jnp.float64)
+    """Drift with reduced distance z/n."""
+    return propagation_matrix(z / n, xp=xp)
 
 
 def refraction_flat(n_1, n_2, xp=sp):
-    """
-    Returns the 3x3 ABCD matrix for refraction at a flat interface between
-    two media with refractive indices n_1 and n_2.
-    """
-    if xp == sp:
-        return xp.Matrix([[1, 0, 0], [0, n_1 / n_2, 0], [0, 0, 1]])
-    elif xp == np:
-        return np.array([[1.0, 0.0, 0.0], [0.0, (n_1 / n_2), 0.0], [0.0, 0.0, 1.0]],
-                        dtype=np.float64)
-    elif xp == jnp:
-        return jnp.array([[1.0, 0.0, 0.0], [0.0, (n_1 / n_2), 0.0], [0.0, 0.0, 1.0]],
-                         dtype=jnp.float64)
+    """Flat interface: scale slope by n_1/n_2."""
+    return _matrix([[1, 0, 0], [0, n_1 / n_2, 0], [0, 0, 1]], xp)
 
 
 def rotation_matrix(theta, xp=sp):
-    """
-    Returns the 3x3 ABCD matrix for a rotation by angle theta.
-    """
-    if xp == sp:
-        return xp.Matrix([[sp.cos(theta), sp.sin(theta), 0],
-                          [-sp.sin(theta), sp.cos(theta), 0],
-                          [0, 0, 1]])
-    elif xp == np:
-        c = np.cos(theta)
-        s = np.sin(theta)
-        return np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
-    elif xp == jnp:
-        c = jnp.cos(theta)
-        s = jnp.sin(theta)
-        return jnp.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float64)
+    """Legacy rotation of the two 3×3 state coordinates, not an x/y lens rotation."""
+    c, s = xp.cos(theta), xp.sin(theta)
+    return _matrix([[c, s, 0], [-s, c, 0], [0, 0, 1]], xp)
 
 
 def calculate_z1_and_z2_from_M_and_f(M, f):
-    """
-    Given the magnification M and focal length f,
-    calculate the distances z1 and z2 for a two-lens system
-    to satisfy the imaging condition.
-    """
-    z1 = f * (1/M - 1)
-    z2 = f * (1 - M)
-    return z1, z2
+    """Single-lens object/image coordinates relative to the lens at z=0."""
+    return f * (1 / M - 1), f * (1 - M)
 
 
 def calculate_z2_and_M_from_z1_and_f(z1, f):
-    """
-    Given the distance z1 and focal length f,
-    calculate the distance z2 and magnification M
-    for a two-lens system to satisfy the imaging condition.
-    """
-    M = 1 / (1 + z1/f)
-    z2 = f * (1 - M)
-    return z2, M
+    """Image coordinate and magnification for an object at signed coordinate z1."""
+    M = 1 / (1 + z1 / f)
+    return f * (1 - M), M
 
 
 def calculate_M_and_f_from_z1_and_z2(z1, z2):
-    M = z2 / z1                 # negative if z1<0, z2>0
-    f = z1 * z2 / (z1 - z2)     # positive if z1<0, z2>0
-    return M, f
+    """Magnification and focal length from signed object/image coordinates."""
+    return z2 / z1, z1 * z2 / (z1 - z2)
 
 
 def full_abcd_2lens(zs, f1, f2, symbolic=False):
-    """
-    Build the full 3x3 ABCD matrix for a two-lens system (propagations + lenses).
-    If symbolic is True, uses sympy and returns a sympy.Matrix, otherwise returns a numpy array.
-    """
+    """Three drifts and two thin lenses, ordered from object to image."""
     z1, z2, z3 = zs
     xp = sp if symbolic else np
+    return (
+        propagation_matrix(z3, xp=xp) @ lens_matrix(f2, xp=xp)
+        @ propagation_matrix(z2, xp=xp) @ lens_matrix(f1, xp=xp)
+        @ propagation_matrix(z1, xp=xp)
+    )
 
-    P1 = propagation_matrix(z1, xp=xp)
-    L1 = lens_matrix(f1, xp=xp)
-    P2 = propagation_matrix(z2, xp=xp)
-    L2 = lens_matrix(f2, xp=xp)
-    P3 = propagation_matrix(z3, xp=xp)
 
-    M = P3 @ L2 @ P2 @ L1 @ P1
+def accumulate_matrices(matrices):
+    """Product M[-1] @ ... @ M[0]; supply a nonempty sequence in travel order."""
+    total = matrices[-1]
+    for matrix in reversed(matrices[:-1]):
+        total = total @ matrix
+    return total
 
-    if symbolic:
-        return M
-    else:
-        return np.array(M, dtype=np.float64)
+
+def accumulate_matrices_cumulative(matrices):
+    """JAX array of maps to each plane: M[0], M[1] @ M[0], ... ."""
+    total = matrices[0]
+    cumulative = [total]
+    for matrix in matrices[1:]:
+        total = matrix @ total
+        cumulative.append(total)
+    return jnp.stack(cumulative)
+
+
+def transfer_rays(ray_coords, transfer_matrices):
+    """Rays (N, 5) and M successive matrices → JAX coordinates (N, M, 5)."""
+    cumulative = accumulate_matrices_cumulative(transfer_matrices)
+    return jnp.einsum("mij,nj->nmi", cumulative, ray_coords)
+
+
+def transfer_rays_pt_src(input_pos_xy, input_slopes_xy, transfer_matrix):
+    """Point position, two N-element slope arrays and a 5×5 map → (4, N)."""
+    dx, dy = map(jnp.asarray, input_slopes_xy)
+    x, y = input_pos_xy
+    rays = jnp.stack((jnp.full(dx.shape, x), jnp.full(dy.shape, y), dx, dy, jnp.ones_like(dx)))
+    return (transfer_matrix @ rays)[:4]

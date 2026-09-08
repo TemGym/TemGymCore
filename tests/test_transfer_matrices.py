@@ -1,6 +1,18 @@
 import jax.numpy as jnp
 import numpy as np
-from temgym_core.transfer import transfer_rays, transfer_rays_pt_src, accumulate_matrices
+import jax
+import pytest
+import sympy as sp
+
+from temgym_core.transfer_matrices import (
+    accumulate_matrices,
+    calculate_z1_and_z2_from_M_and_f,
+    imaging_matrix_5x5,
+    lens_matrix_5x5,
+    propagation_matrix_5x5,
+    transfer_rays,
+    transfer_rays_pt_src,
+)
 
 
 def test_transfer_pt_src_free_space():
@@ -150,3 +162,44 @@ def test_accumulate_transfer_matrices():
     sub = accumulate_matrices(mats[2:3])
     expected_sub = C
     np.testing.assert_allclose(np.array(sub), expected_sub)
+
+
+def test_transfer_visits_planes_in_physical_order_and_has_jax_derivatives():
+    # A lens and drift do not commute: check physical coordinates at every plane.
+    ray = jnp.array([[2., -1., .1, -.2, 1.]])
+
+    def trace(f):
+        matrices = jnp.stack((
+            propagation_matrix_5x5(3., xp=jnp),
+            lens_matrix_5x5(f, xp=jnp),
+            propagation_matrix_5x5(2., xp=jnp),
+        ))
+        return transfer_rays(ray, matrices)
+
+    f = 4.
+    first_position = np.array([2.3, -1.6])
+    first_slopes = np.array([.1, -.2])
+    exit_slopes = first_slopes - first_position / f
+    expected = np.array([
+        [*first_position, *first_slopes, 1.],
+        [*first_position, *exit_slopes, 1.],
+        [*(first_position + 2 * exit_slopes), *exit_slopes, 1.],
+    ])
+    np.testing.assert_allclose(trace(f)[0], expected, atol=1e-14)
+    np.testing.assert_allclose(jax.jit(trace)(f)[0], expected, atol=1e-14)
+    derivative = np.asarray(jax.jacfwd(trace)(f))[0, -1]
+    expected_derivative = np.r_[2 * first_position / f**2, first_position / f**2, 0.]
+    np.testing.assert_allclose(derivative, expected_derivative, atol=1e-14)
+
+
+@pytest.mark.parametrize('xp', [sp, np, jnp])
+def test_imaging_matrix_matches_a_lens_between_its_object_and_image_planes(xp):
+    magnification, focal_length = -3, sp.Rational(1, 5) if xp is sp else .2
+    object_z, image_z = calculate_z1_and_z2_from_M_and_f(magnification, focal_length)
+    actual = (
+        propagation_matrix_5x5(image_z, xp=xp)
+        @ lens_matrix_5x5(focal_length, xp=xp)
+        @ propagation_matrix_5x5(-object_z, xp=xp)
+    )
+    expected = imaging_matrix_5x5(magnification, focal_length, xp=xp)
+    np.testing.assert_allclose(np.asarray(actual, float), np.asarray(expected, float), atol=1e-14)

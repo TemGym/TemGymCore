@@ -1,7 +1,7 @@
 import numpy as np
 import jax.numpy as jnp
 from scipy.special import j1
-from temgym_core.potential import glauber_amplitude_radial
+from temgym_core.experimental.potential import glauber_amplitude_radial
 
 
 def f_black_disk_analytic(theta, k, a):

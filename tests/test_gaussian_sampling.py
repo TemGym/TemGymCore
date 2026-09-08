@@ -6,14 +6,13 @@ import numpy as np
 
 from gaussian_sampling import _support_offsets, sampling_error
 from temgym_core.components import (
-    AtomicPotential,
     ElectromagneticLens,
     QuadraticPhaseShift,
     SeidelLens,
     SigmoidAperture,
 )
 from temgym_core.gaussian import make_gaussian
-from temgym_core.potential import Si
+from temgym_core.experimental.potential import AtomicPotential, Si
 
 
 VOLTAGE = 200e3

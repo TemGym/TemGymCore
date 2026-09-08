@@ -1,9 +1,18 @@
-import jax.numpy as jnp
+"""Experimental atomic potentials and Gaussian-beam scattering.
+
+Import AtomicPotential explicitly from this module. It uses the regular
+TemGym component interface; it is not part of microscope calibration.
+"""
+
 import jax
-from scipy.special import j0
-from jax.scipy.integrate import trapezoid
+import jax.numpy as jnp
+import jax_dataclasses as jdc
 from scipy.integrate import simpson
-from scipy.special import kn
+from scipy.special import j0, kn
+
+from ..components import Component, _call_single_or_batched_gaussian
+from ..gaussian import GaussianBeam, apply_action_delta, taylor_expand
+from ..ray import Ray
 
 # Si parameters as JAX array
 Si = jnp.array([
@@ -194,3 +203,65 @@ def glauber_scattering_amplitude_many_q(q_array,
     for q in q_array:
         f_list.append(glauber_scattering_amplitude(float(q), k, p, b_max, nb, r_cutoff, sigma))
     return jnp.stack(f_list)
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class AtomicPotential(Component):
+    atom_xyz: jnp.ndarray
+    element_params: jnp.ndarray
+    cutoff_radius: float
+    z: float = 0.0
+
+    def _call_ray(self, ray: Ray):
+        raise NotImplementedError(
+            "AtomicPotential is only implemented for gaussian beams."
+        )
+
+    def log_transmission(self, xy):
+        return 0.0
+
+    def phase_shift(self, xy: jnp.ndarray, z, sigma, k: float) -> complex:
+        x, y = xy[..., 0], xy[..., 1]
+        r = jnp.sqrt(
+            (x - self.atom_xyz[0]) ** 2
+            + (y - self.atom_xyz[1]) ** 2
+            + (z - self.atom_xyz[2]) ** 2
+        )
+        V = potential_smoothed(r, self.element_params, self.cutoff_radius)
+        interaction_constant = sigma / k
+        return -interaction_constant * V
+
+    def complex_action(self, xy: jnp.ndarray, z: jnp.ndarray, sigma, k: float) -> complex:
+        logA = self.log_transmission(xy)
+        L = jnp.logaddexp(logA, -50)
+        return self.phase_shift(xy, z, sigma, k) - 1j * (L / k)
+
+    def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
+        return _call_single_or_batched_gaussian(ray, self._call_gaussian_single)
+
+    def _call_gaussian_single(self, ray: GaussianBeam) -> GaussianBeam:
+        dS0, dS1, dS2 = taylor_expand(
+            self.complex_action,
+            ray.r_xy,
+            ray.z,
+            ray.sigma,
+            ray.k,
+        )
+
+        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
+            ray,
+            dS0=dS0,
+            dS1=dS1,
+            dS2=dS2,
+        )
+
+        return ray.derive(
+            x=r_xy[..., 0],
+            y=r_xy[..., 1],
+            dx=d_xy[..., 0],
+            dy=d_xy[..., 1],
+            z=ray.z,
+            amplitude=amplitude,
+            pathlength=pathlength,
+            Q_inv=Q_new,
+        )
