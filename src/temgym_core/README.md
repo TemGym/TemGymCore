@@ -11,7 +11,7 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 | Gaussian fields and integrated detector images | `evaluate.py`, `grid.py` |
 | Image measurements and their matrix predictions | `moments.py` |
 | Bounded JAX least squares and fits with shared parameters | `optimization.py` |
-| Interpolated specimen component; nominal MAGICAL recipe | `components.py`; `calibration/gaussian.py` |
+| Interpolated and Fourier Bragg specimens; nominal MAGICAL recipe | `components.py`; `calibration/gaussian.py` |
 | Analytical matrices and transport through supplied matrices | `transfer_matrices.py` |
 | Experimental atomic potentials and `AtomicPotential` component | `experimental/potential.py` |
 | Microscope configuration, operating modes and plots | `microscope.py`, `plotting.py` |
@@ -25,6 +25,18 @@ affine offset; it is also differentiable with respect to component parameters. S
 It replaces `microscope_model.py` and `imaging_modes.py`; no compatibility layer
 or second component configuration hierarchy remains. The calibration workflow
 uses its own parameter-to-component builders and does not depend on this container.
+
+`components.BraggSample.from_unit_cell` represents an infinite periodic thin
+specimen by selected Fourier orders of its complex transmission. Each incident
+Gaussian creates one child per order, preserving the phase at its centre. It
+uses the ordinary `run_to_end` and detector renderer; pass a whole bundle
+directly rather than wrapping it in another `vmap`. See the executable
+[Bragg example](../../examples/gaussians/diffraction_bragg.ipynb) for a sinusoidal
+phase grating with analytic intensity and flux checks. Unit-cell samples use
+image (y, x) order without repeated endpoints, and all lengths use the beam's
+coordinate unit. Refine the input grid and retained orders separately; omitted
+orders are not renormalized. The transmission must be supplied for the chosen
+beam energy. This component does not calculate dynamical crystal scattering.
 
 The remaining files supply constants, coordinate transforms, aberrations and
 array/tree utilities. The [calibration code map](calibration/README.md)
@@ -95,6 +107,25 @@ snapshot. All 77 before/after comparisons matched exactly, including the tested
 action, specimen and electromagnetic-lens derivatives. Full notebook fits were
 not repeated.
 
+## On-axis ray aberration jets
+
+`KrivanekLensCartesian` is a polynomial alternative to `KrivanekLens` for
+Taylor differentiation at the optical axis. It preserves the original ray
+branch's slope and pathlength conventions and supports Gaussian beams with a
+Cartesian pupil action. The polar implementation remains available unchanged.
+
+`SeidelLens` also accepts singular rays. Its geometric branch solves the same
+stationary object-to-pupil equations used to locate the Gaussian reference ray,
+including both position and slope changes. Six unrolled Newton steps and an
+explicit two-by-two solve support `jax.experimental.jet` near the ideal branch.
+This is geometric transport; it does not include Gaussian width or amplitude.
+
+The [aberration demonstration](../../examples/aberration_demonstration/aberration_demonstration.ipynb)
+differentiates actual component calls at one on-axis reference ray. It recovers
+Krivanek coefficients through fifth-order slope derivatives and all nine Seidel
+coefficients from third-order position/slope derivatives, then checks independent
+rays through reconstructed components.
+
 ## Images and measurements
 
 `evaluate.gaussian_image(beam, detector, ...)` uses the regular `Detector` from
@@ -119,6 +150,14 @@ is retained. The removed Numba/CuPy renderer was replaced in the two diffraction
 examples by the standard entry point. Public dense-kernel wrappers used by the
 other examples remain. Gaussian batching is supplied by `GaussianBeam.to_vector()`.
 
+`source.decompose_gaussian(source, num_across=768, through=upstream)` returns
+589,824 coherent beamlets at the original source plane. The optional lossless
+round column ends just before an aperture: it chooses a basis narrow there,
+without changing the physical source as the count increases. Propagate that
+bundle through the actual aperture and remaining lenses, then sum its complex
+field with `evaluate_gaussians(..., method="spatial")`. Refine the sampling to
+check the aperture approximation separately from the renderer's tail cutoff.
+
 The renderer consolidation passed 37 CPU tests and 24 explicitly enabled GPU
 tests. Before/after complex fields matched exactly for scan, loop, dense GPU
 and spatial GPU evaluation on the comparison bundle. The complete 40,000×
@@ -127,27 +166,30 @@ MAGICAL notebook also passed on GPU with unchanged image-error results.
 `moments.py` replaces `image.py`. Read its first two functions together:
 
 - `measure_detector_moments(images=..., background_counts=..., read_noise_counts=...)`
-  returns five measurements per image—centre x/y, variance x, covariance xy,
-  variance y—and their measurement uncertainty.
+  returns five moments per image—centre x/y, variance x, covariance xy,
+  variance y—plus total signal and their joint measurement uncertainty. Coordinates come from the native
+  `Detector`: positive x points rightward and positive y upward.
 - `predict_detector_moments(matrix, mean, covariance, pixel_pitch_m=..., psf_sigma_pixels=...)`
   predicts those same quantities from a 5×5 matrix and the specimen's 4D beam state.
 
-`SampledTransmission` integrates the known specimen to get that beam state,
-including phase and amplitude gradients. The last two functions handle the
-pixel-sampling correction used for narrow condenser images. The fit compares
-these predictions with measurements without rendering pixels at every iteration.
+`SampledTransmission` integrates a transmission component to get that beam state,
+including phase and amplitude gradients. Its `from_component` constructor accepts
+quadrature points and weights; the beam-calibration fitter uses it for the native
+sigmoid aperture. The fit compares these predictions with measurements without
+rendering pixels at every iteration. Pixel-sampling helpers remain available for
+other measurements.
 
 Single-beam moments belong to `GaussianBeam.moments()`; mixture propagation
 lives in `run.py`. Aperture transmission stays in `calibration/apertures.py`.
-The optional intensity renderer is in `evaluate.py`, its initialization formula
-in `calibration/condenser_images.py`, and exposure/background fitting in
-`optimization.py`. There is no extra image module or Gaussian-spot sample class.
+The generic intensity renderer remains in `evaluate.py`; calibration uses
+coherent Gaussian images only. Exposure/background fitting lives in
+`optimization.py`. There is no calibration-specific intensity renderer.
 
-This cleanup passed 36 targeted tests. Before/after checks matched exactly for
-measurements, specimen moments, rendering initialization, Gaussian propagation,
-aperture flux and the tested specimen, pixel-correction and aperture Jacobians.
-The notebook's nine public calls were checked; full acquisition and fitting
-were not repeated.
+The active calibration notebook uses aperture-in beam images over vacuum, with
+an already calibrated length scale. Its four public steps and experimental
+assumptions are described in the [calibration code map](calibration/README.md).
+Image generation checks its moments against the independent aperture/matrix
+calculation and refines pixel integration where necessary.
 
 `InterpolatedSample2D.from_action_maps(...)` constructs a regular component
 from optical path in metres, log field amplitude, and x/y pixel-centre arrays.
@@ -156,8 +198,9 @@ pose, periodic boundaries and Gaussian update are retained from `SampleView`.
 The existing complex-array constructor, `from_array`, keeps its original behaviour.
 
 `calibration.gaussian.make_magical_sample()` returns that component, known
-feature dimensions and a calibration centre. Both the calibration and the 40k
-MAGICAL imaging notebook use this one synthetic recipe. It makes the same fixed
+feature dimensions and a calibration centre. The 40k
+MAGICAL imaging notebook uses this synthetic recipe; beam calibration uses a
+vacuum region instead. It makes the same fixed
 specimen map as before, without building unused regional maps or pyramids.
 The old atlas, certificates and automatic field selection have been removed;
 Git revision `5aa2ae7` retains them. This fixed map is an overview target, not an
@@ -179,8 +222,8 @@ helper is 69 lines; 29 targeted sampling, sample and coherent-image tests passed
 `optimization.least_squares` handles finite bounds, parameter scaling and
 supplied JAX Jacobians. `fit_shared_least_squares` fits per-image beam parameters
 alongside a shared projector calibration, retaining their correlations without
-building one large dense Jacobian. These are numerical helpers within the
-same notebook procedure.
+building one large dense Jacobian. The active beam-calibration procedure uses `least_squares` directly;
+the shared-fit helper remains available for other applications.
 
 [Optimistix](https://docs.kidger.site/optimistix/api/least_squares/) was tested
 with Levenberg–Marquardt and sigmoid bounds on the recorded 200/195 kV Gaussian
@@ -212,8 +255,8 @@ validated geometry parameterization. The exploratory code stays outside the
 maintained source tree.
 
 Older APIs and experiments remain in Git: `fc992bc` precedes the first core
-cleanup and `31adfc3` precedes this consolidation. The current calibration
-notebook's public calls are unchanged.
+cleanup and `31adfc3` precedes this consolidation. The active calibration notebook now has four public steps; see its code map
+for the aperture-in beam-image procedure.
 
 At the sample-cleanup checkpoint, core and calibration contained 34 Python files.
 That cleanup removed about 2,200 source lines. At both 200 and 195 kV, the fixed specimen maps, spline
@@ -227,3 +270,11 @@ error from 0.920% to 0.256%, with propagation error below 0.0003%. The calibrati
 notebook's imports and public call signatures were checked; its full acquisition
 and multiple-start fits were not rerun. Source fingerprints will invalidate old
 workflow caches on the next run, as they do for other core changes.
+
+### Reflection geometry and angular Gaussian bases
+
+`coordinate_transforms.PlaneFrame` describes a surface or detector by a 3D origin and orthonormal in-plane axes. It provides local/world transforms and differentiable line-plane intersection. Native column components continue to use their usual axial coordinates; a change to a reflected propagation frame is explicit.
+
+`source.decompose_gaussian_angular` reconstructs a coherent Gaussian with wider, tilted packets. Refining the angular quadrature leaves packet widths fixed. The optional `through` column chooses the sampling plane while returning a source-plane bundle for native propagation.
+
+`plotting.plot_reflection_column` combines native Gaussian basis traces with caller-supplied physical reflected paths and detector endpoints. See [the SEM reflection notebook](../../examples/sem_reflection/sem_reflection.ipynb) for the experimental kinematic scattering adapter, its assumptions and verification.

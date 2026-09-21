@@ -1,29 +1,26 @@
-"""Calibrate a microscope from recorded Gaussian images and aperture currents.
+"""Calibrate native TemGym lenses from images or directly simulated measurements."""
 
-The public functions follow the notebook: acquire, measure, fit, check.
-Lens propagation and differentiation use the native TemGym components.
-"""
-
-from .checks import show_result
+from .condenser_model import design_condenser_curve
+from .recorded import import_images
+from .viewer import browse_images, show_result
 from .workflow import (
-    check_full_microscope,
-    copy_recorded_experiment,
+    check_microscope,
     fit_microscope,
-    fit_projector,
-    measure_condenser,
-    measure_projector,
-    show_images,
+    measure_images,
     simulate_experiment,
+    simulate_measurements,
+    simulate_ray_experiment,
 )
 
 __all__ = [
-    "simulate_experiment",
-    "measure_projector",
-    "fit_projector",
-    "measure_condenser",
+    "browse_images",
+    "check_microscope",
+    "design_condenser_curve",
     "fit_microscope",
-    "check_full_microscope",
-    "show_images",
+    "import_images",
+    "measure_images",
     "show_result",
-    "copy_recorded_experiment",
+    "simulate_experiment",
+    "simulate_measurements",
+    "simulate_ray_experiment",
 ]

@@ -1,0 +1,10 @@
+{
+  "held_out_IL1_delta": -0.15,
+  "held_out_IL1_current_A": 1.8748261933580812,
+  "held_out_intensity_relative_error": 2.274773396550932e-05,
+  "detector_shape_yx": [
+    256,
+    256
+  ],
+  "checks": "PASS: reference focus, saved calibration, 256\u00d7256 intensities, lens conjugate rays, finite intensities, phase error, unused-setting prediction"
+}

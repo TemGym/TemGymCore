@@ -256,3 +256,76 @@ def test_block_solution_and_covariance_match_dense_joint_problem():
         + response @ r.shared_covariance @ response.T
     )
     np.testing.assert_allclose(recovered, cov[1:, 1:], atol=1e-12)
+
+
+def test_geodesic_correction_follows_a_weak_curved_valley():
+    # The weak second measurement leaves a long, curved valley. A noise-level
+    # gradient threshold can stop near its entrance despite a large x error.
+    def residual(x, target):
+        return jnp.array([20 * (x[1] - x[0] ** 2), 1e-5 * (x[0] - target)])
+
+    loose = least_squares(
+        residual,
+        [2.0, 4.0],
+        args=(0.7,),
+        bounds=([-3.0, -10.0], [3.0, 10.0]),
+        x_scale="jac",
+        gtol=1e-5,
+    )
+    assert loose.success
+    assert abs(float(loose.x[0]) - 0.7) > 0.5
+    tight = least_squares(
+        residual,
+        loose.x,
+        args=(0.7,),
+        bounds=([-3.0, -10.0], [3.0, 10.0]),
+        x_scale="jac",
+        geodesic=True,
+        gtol=1e-14,
+        ftol=1e-14,
+        xtol=1e-13,
+        max_nfev=1000,
+        max_iter=2000,
+    )
+    assert tight.success, tight.message
+    np.testing.assert_allclose(tight.x, [0.7, 0.49], atol=2e-6)
+    assert any(h["accepted"] and h["accelerated"] for h in tight.history)
+    np.testing.assert_allclose(
+        tight.jacobian, jax.jacfwd(residual)(tight.x, 0.7), atol=1e-10
+    )
+
+
+def test_geodesic_correction_respects_binding_bounds():
+    def residual(x):
+        valid = jnp.all((x >= 0.0) & (x <= 1.0))
+        return jnp.where(
+            valid, jnp.array([jnp.exp(x[0]) - 4, x[1] ** 2 - 0.25]), jnp.nan
+        )
+
+    result = least_squares(
+        residual,
+        [0.2, 0.8],
+        bounds=(0.0, 1.0),
+        geodesic=True,
+        gtol=1e-10,
+    )
+    assert result.success, result.message
+    np.testing.assert_allclose(result.x, [1.0, 0.5], atol=1e-7)
+    assert all(np.isfinite(h["actual_reduction"]) for h in result.history)
+
+
+def test_exact_residual_target_is_distinct_from_a_small_gradient():
+    result = least_squares(
+        lambda x: jnp.array([1e-7 * (x[0] - 1.0)]),
+        [0.0],
+        bounds=(-2.0, 2.0),
+        gtol=0.0,
+        ftol=0.0,
+        xtol=0.0,
+        residual_tol=1e-12,
+        x_scale="jac",
+    )
+    assert result.success
+    assert result.status == "residual_tol"
+    assert np.max(np.abs(result.residual)) <= 1e-12
+    np.testing.assert_allclose(result.x, [1.0], atol=1e-5)

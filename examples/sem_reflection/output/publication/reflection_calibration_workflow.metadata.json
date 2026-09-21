@@ -1,0 +1,30 @@
+{
+  "dpi": 600,
+  "figure_size_inches": [
+    7.086614173228347,
+    4.448818897637795
+  ],
+  "formats": [
+    "png",
+    "svg",
+    "pdf"
+  ],
+  "metadata": {
+    "comparison_record_zero_based": 52,
+    "height_mm": 113,
+    "image_records_zero_based": [
+      1,
+      7,
+      16,
+      28,
+      52
+    ],
+    "image_treatment": "Common crop and logarithmic contrast; affine stack projection",
+    "model": "Local Gaussian reflection pilot; native traced column geometry",
+    "source": "/Users/landers/TemGymCore/examples/sem_reflection/output/calibration_gaussian",
+    "svg_text": "Editable text; diffraction panels embedded as raster images",
+    "title": "Reflection microscope calibration workflow",
+    "width_mm": 180
+  },
+  "renderer": "temgym_core.plotting.export_ray_figure"
+}

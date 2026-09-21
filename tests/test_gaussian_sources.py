@@ -8,12 +8,73 @@ from temgym_core.source import (
     _gaussian_cardinal_coefficients,
     airy_input_wave_for_flat_disk,
     circular_input_wave,
+    decompose_gaussian,
     finite_probe_wave_focused_to_plane,
     make_waist_divergence_rays,
     point_source_wave_focused_to_plane,
     rectangular_input_wave,
     square_input_wave,
+    gaussian_waist,
 )
+
+
+def test_decomposition_preserves_source_and_native_lens_propagation():
+    """Choosing an aperture-plane basis must not change the physical source."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from temgym_core.components import HardEdgeSolenoid, Plane
+    from temgym_core.evaluate import evaluate_gaussians
+    from temgym_core.run import run_to_end
+
+    source = gaussian_waist(z=0., voltage=200e3, rms_size=3e-9,
+                            x=1e-9, y=-2e-9, theta_x=1e-6, theta_y=-2e-6)
+    column = (HardEdgeSolenoid(z=.2, length=.006, q=.22, include_axial_path=False),
+              HardEdgeSolenoid(z=.246, length=.004, q=.4, include_axial_path=False),
+              Plane(z=.253))
+    bundle = decompose_gaussian(source, num_across=96, through=column)
+    assert bundle.x.shape == (96**2,)
+    np.testing.assert_allclose(bundle.z, source.z)
+    fs = FreeSpacePropagator(include_axial_path=False)
+    changed = (column[0], replace(column[1], q=.404), column[2])
+    for components in ((), column, changed):
+        exact = run_to_end(source, components, propagator=fs) if components else source
+        sampled = run_to_end(bundle, components, propagator=fs) if components else bundle
+        rms = np.sqrt(np.asarray(exact.moments()[1])[0, 0])
+        x = np.linspace(-3, 3, 51) * rms + float(exact.x)
+        grid = SimpleNamespace(shape=(51,), coords=jnp.asarray(
+            np.column_stack((x, np.full_like(x, float(exact.y))))))
+        expected = np.asarray(evaluate_gaussians(exact, grid, method="scan"))
+        actual = np.asarray(evaluate_gaussians(sampled, grid, method="scan"))
+        assert np.linalg.norm(actual-expected) / np.linalg.norm(expected) < 2e-4
+
+
+def test_refining_decomposition_resolves_sigmoid_transmission():
+    from types import SimpleNamespace
+    from temgym_core.components import SigmoidAperture
+    from temgym_core.evaluate import evaluate_gaussians
+
+    source = gaussian_waist(z=0., voltage=200e3, rms_size=2e-6)
+    aperture = SigmoidAperture(z=0., radius=2e-6, edge_width=.12e-6)
+    x = np.linspace(1e-6, 3e-6, 81)
+    grid = SimpleNamespace(shape=x.shape, coords=jnp.asarray(
+        np.column_stack((x, np.zeros_like(x)))))
+    expected = np.asarray(evaluate_gaussians(source, grid, method="scan")
+                          * jnp.exp(aperture.log_transmission(grid.coords)))
+    errors = []
+    for n in (128, 256):
+        bundle = decompose_gaussian(source, num_across=n)
+        actual = np.asarray(evaluate_gaussians(aperture(bundle), grid, method="scan"))
+        errors.append(np.linalg.norm(actual-expected) / np.linalg.norm(expected))
+    assert errors[1] < errors[0] / 3
+    assert errors[1] < .01
+
+
+def test_decomposition_rejects_invalid_sampling():
+    source = gaussian_waist(z=0., voltage=200e3, rms_size=3e-9)
+    for kwargs in ({"num_across": 4}, {"num_across": 16, "overlap": 100},
+                   {"num_across": 16, "extent_rms": 0}):
+        with pytest.raises(ValueError):
+            decompose_gaussian(source, **kwargs)
 
 
 def test_gaussian_cardinal_coefficients_reconstruct_square_samples():

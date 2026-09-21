@@ -1,5 +1,5 @@
 {
-  "description": "Literal engineering guesses and hard bounds. No previous fit or generating parameters. Gaps run source to CL1, CL1 to CL3, CL3 to mini, mini to pre-field, pre-field to specimen.",
+  "description": "Literal engineering guesses and hard bounds. No previous fit or generating parameters. Gaps run source to CL1, CL1 to CL3, CL3 to mini, mini to pre-field, pre-field to specimen. Angular spread is the incoherent contribution; the Gaussian diffraction floor is included by the source model.",
   "lens_order": [
     "CL1",
     "CL3",
@@ -35,12 +35,12 @@
       -0.001
     ],
     "source_rms_nm": 10,
-    "source_angular_rms_mrad": 0.06,
     "aperture_gap_fraction": 0.05,
     "aperture_centre_um": [
       0.1,
       -0.1
-    ]
+    ],
+    "source_incoherent_angular_rms_mrad": 0.06
   },
   "bounds_note": "Native log/scaled-coordinate hard bounds retained from the engineering envelope. They add no residual penalties.",
   "bounds_lower": [

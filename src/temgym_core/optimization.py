@@ -9,6 +9,7 @@ before calling this routine when fitting observations with unequal errors.
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -43,8 +44,8 @@ def _projected_gradient(x, lower, upper, scale, jacobian, residual):
     return projected, active
 
 
-@jax.jit
-def _damped_step(x, lower, upper, scale, jacobian, residual, damping):
+@partial(jax.jit, static_argnames=("curvature",))
+def _damped_step(x, lower, upper, scale, jacobian, residual, damping, curvature=None):
     gradient, active = _projected_gradient(x, lower, upper, scale, jacobian, residual)
     matrix = jnp.where(active[None, :], 0.0, jacobian * scale)
     # Normalize the augmented system, not J.T @ J: this avoids squaring its
@@ -64,9 +65,29 @@ def _damped_step(x, lower, upper, scale, jacobian, residual, damping):
     step = jnp.where(active, 0.0, step)
     candidate = jnp.clip(x + scale * step, lower, upper)
     step = (candidate - x) / scale
+    accelerated = jnp.array(False)
+    second = jnp.zeros_like(residual)
+    if curvature is not None:
+        # Follow a curved residual valley without forming a full Hessian.
+        # Reuse the damped SVD for J*a = -r''[step, step].
+        second = curvature(x, scale * step)
+        rhs = jnp.concatenate((-second / normalization, jnp.zeros(n, dtype=x.dtype)))
+        acceleration = vh.T @ ((u.T @ rhs) / singular)
+        acceleration = jnp.where(active, 0.0, acceleration)
+        corrected = x + scale * (step + 0.5 * acceleration)
+        accelerated = (jnp.linalg.norm(acceleration) < jnp.linalg.norm(step)) & jnp.all(
+            jnp.isfinite(corrected) & (corrected >= lower) & (corrected <= upper)
+        )
+        candidate = jnp.where(accelerated, corrected, candidate)
+        step = (candidate - x) / scale
     linear_change = (jacobian * scale) @ step
     prediction = -jnp.dot(gradient, step) - 0.5 * jnp.dot(linear_change, linear_change)
-    return candidate, step, prediction
+    if curvature is not None:
+        model_change = linear_change + jnp.where(accelerated, 0.5 * second, 0.0)
+        prediction = -jnp.dot(residual, model_change) - 0.5 * jnp.dot(
+            model_change, model_change
+        )
+    return candidate, step, prediction, accelerated
 
 
 def least_squares(
@@ -82,7 +103,9 @@ def least_squares(
     ftol: float = 1e-10,
     xtol: float = 1e-10,
     gtol: float = 1e-8,
+    residual_tol: float = 0.0,
     initial_damping: float = 1e-3,
+    geodesic: bool = False,
     jit: bool = True,
 ) -> LeastSquaresResult:
     """Minimize ``0.5 * sum(residual_fun(x)**2)`` inside a finite box.
@@ -102,6 +125,13 @@ def least_squares(
     Numeric ``x_scale`` contains positive physical increments, for example metres for
     positions and radians for angles.  It affects conditioning and the scaled
     projected-gradient and step stopping criteria, not the likelihood.
+
+    ``geodesic=True`` adds a directional second-derivative correction for curved
+    residual valleys. It reuses the step's SVD and falls back to the ordinary
+    step if the correction is large or leaves the bounds. It requires a twice
+    differentiable JAX residual, including when a Jacobian is supplied.
+    ``residual_tol`` optionally stops when every absolute residual is below a
+    stated tolerance. Use it for exact synthetic equations, not noisy data.
 
     Jacobians are evaluated only at accepted iterates.  ``nfev`` counts the
     initial and all trial residual calls; ``njev`` counts separate ``jacfwd``
@@ -157,7 +187,7 @@ def least_squares(
             or limit < minimum
         ):
             raise ValueError(f"{name} must be an integer >= {minimum}")
-    if any(not np.isfinite(t) or t < 0 for t in (ftol, xtol, gtol)):
+    if any(not np.isfinite(t) or t < 0 for t in (ftol, xtol, gtol, residual_tol)):
         raise ValueError("tolerances must be finite and nonnegative (zero disables)")
     if not np.isfinite(initial_damping) or initial_damping <= 0:
         raise ValueError("initial_damping must be positive and finite")
@@ -177,6 +207,15 @@ def least_squares(
     value_fun = jax.jit(residual_fun) if jit else residual_fun
     derivative = jax.jacfwd(residual_fun) if jac is None else jac
     jacobian_fun = jax.jit(derivative) if jit else derivative
+    curvature = None
+    if geodesic:
+
+        def curvature(point, direction):
+            first = lambda x: jax.jvp(
+                lambda z: value_fun(z, *args), (x,), (direction,)
+            )[1]
+            return jax.jvp(first, (point,), (direction,))[1]
+
     residual = jnp.asarray(value_fun(x, *args))
     if residual.ndim != 1 or residual.size == 0 or jnp.iscomplexobj(residual):
         raise ValueError("residual_fun must return a nonempty real vector")
@@ -221,14 +260,16 @@ def least_squares(
             return finish(
                 "nonfinite_gradient", "Scaled projected gradient is nonfinite."
             )
+        if residual_tol > 0 and float(jnp.max(jnp.abs(residual))) <= residual_tol:
+            return finish("residual_tol", "All residuals satisfy residual_tol.", True)
         if gtol > 0 and optimality <= gtol:
             return finish("gtol", "Scaled projected gradient satisfies gtol.", True)
         if nfev >= max_nfev:
             return finish("evaluation_limit", "Residual evaluation budget exhausted.")
         if iteration == max_iter:
             return finish("iteration_limit", "Trial-step iteration budget exhausted.")
-        candidate, step, prediction = _damped_step(
-            x, lower, upper, scale, jacobian, residual, damping
+        candidate, step, prediction, accelerated = _damped_step(
+            x, lower, upper, scale, jacobian, residual, damping, curvature
         )
         nit += 1
         prediction = float(prediction)
@@ -260,6 +301,7 @@ def least_squares(
                 "actual_reduction": reduction,
                 "ratio": ratio,
                 "accepted": accepted,
+                "accelerated": bool(accelerated),
             }
         )
         if accepted:

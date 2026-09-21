@@ -1,50 +1,61 @@
-# Microscope calibration
+# Microscope fitting
 
 Start with [microscope_calibration_pipeline.ipynb](microscope_calibration_pipeline.ipynb).
-It uses one procedure for both halves of the microscope:
 
-**Gaussian images → image measurements → matrix fitting → new-image checks.**
+**TemGym truth model → ray images → measurements from pixels → independent
+matrix fit → geometry check.** The browser shows saved images beside native
+ray diagrams, including the source-to-condenser-mini section.
 
-The notebook imports `from temgym_core import calibration`. No example scripts
-or `sys.path` changes are needed. Install the notebook dependencies with
-`pip install -e '.[inversion]'`; on a supported CUDA system use `.[inversion,gpu]`.
-Enable JAX 64-bit arithmetic as shown in the notebook.
+The selected procedure uses 356 images at 200/195 kV: 216 projector images through
+the 50 µm aperture, 128 condenser images through 20/50 µm apertures and 12 checks.
+Normal illumination is nearly parallel, with focused 40,000×/45,000× baselines.
+Projector controls vary within ±30%; objective current remains fixed. Projector
+calibration keeps one illumination per voltage and uses signed X shifts, X tilts
+and Y tilts. The previous condenser design-curve settings are unchanged.
 
-| Call | Supply | Receive |
-|---|---|---|
-| `simulate_experiment` | Voltages, aperture diameters, output folder | Recorded images, currents and controls |
-| `measure_projector` | Experiment folder | Saved image measurements and covariance |
-| `fit_projector` | Measurements; optional starting guesses and bounds | Projector parameters and uncertainty |
-| `measure_condenser` | Experiment and fitted projector | Specimen-beam estimates with shared uncertainty |
-| `fit_microscope` | Saved measurements; optional condenser guesses | Both fitted halves and joint covariance |
-| `check_full_microscope` | Experiment and fitted microscope | New-image, current and geometry checks |
+For comparison, the notebook retains 572 synthetic images with both apertures.
+`fit_microscope(..., projector_aperture_um=50)` excludes 20 µm projector images
+from both initialization and joint fitting. Setting this argument to `None`
+compares both apertures using the same saved pixels. Condenser images always use
+both apertures; incident dose remains unknown.
 
-The default [presets](../../src/temgym_core/calibration/presets) contain the
-acquisition controls, independent guesses and engineering bounds. They are
-included in the installed package. Pass your own JSON files to the fitting
-calls to replace the guesses or bounds.
+The 256×256 images use 4,194,304 native rays and 32 internal detector samples per
+pixel axis. Exposure stays at 10⁸ incident electrons/image. Image generation and
+fitting are cached. `%matplotlib widget` requires `ipympl` in the notebook kernel.
 
-To refit an existing acquisition in a separate folder, use
-`copy_recorded_experiment(source_directory=..., output_directory=...)`, then
-start at `measure_projector`. This copies known specimen data and recorded
-controls, without previous measurements or fitted answers. Simulated truth is
-copied for the final geometry score; fitting does not read it.
+Both the 20% and 30% experiments pass numerical checks and produce full-rank fits;
+20% has much weaker projector-position precision. The selected 30%/50 µm fit gives
+0.0105 mm source-z error but 0.337 mm local uncertainty, with prediction RMS 1.088.
+Several projector positions still miss the 0.1 mm target. These are synthetic
+ray tests, not a uniqueness or real-microscope accuracy proof. Diffraction is off.
 
-The full demonstration uses 200/195 kV with objective current fixed: 198
-projector images, 144 condenser images and 234 current readings. A separate
-set supplies 72 prediction images and 48 current readings. Images are 256×256.
-The specimen's complex transmission, detector response and calibrated specimen
-tilts/shifts are known. Apertures have known 4/10 µm diameters and an assumed
-0.2 µm centering accuracy. These assumptions matter when interpreting recovery.
+See the [comparison](../generated/microscope_calibration_tilt_y/README.md) and
+[saved validation](calibration_results/tilt_y_30_ray_acquisition/validation.json).
+The previous [40%/X-only 20/50 µm trial](../generated/microscope_calibration_parallel_20_50/README.md)
+and [50/150 µm trial](../generated/microscope_calibration_crossover_search/README.md)
+are preserved. [condenser_design_curve.ipynb](condenser_design_curve.ipynb) retains
+the separate CL1/CL3 design exercise. See also [implementation notes](../../src/temgym_core/calibration/README.md).
 
-The Gaussian model includes interference. The matrix fitter predicts the
-measured statistics, including specimen phase and diffraction, without rendering
-pixels on every iteration. `image_model="intensity"` remains a faster option
-within the same procedure; it also supplies initial beam estimates.
+## Interactive Gaussian smiley
 
-See the [code map and audit](../../src/temgym_core/calibration/README.md),
-[results and limits](COHERENT_INTEGRATION.md), and
-[saved reference result](calibration_results/full_gaussian_recovery.json).
-Earlier calibration experiments are preserved in Git checkpoint `61457c3`.
-The other notebooks here concern microscope design and visualization, not
-alternative fitting procedures.
+[smiley_gaussian_defocus.ipynb](smiley_gaussian_defocus.ipynb) sends exactly
+500,000 coherent Gaussian beamlets by default through a smoothed smiley and the full
+40,000× microscope imaging column onto a 128×128 detector. The full condenser
+supplies its coherent illumination. A sample-height slider (±10 µm) produces
+defocus with fixed lens currents; a second slider adjusts display contrast.
+An optional objective-aberration panel adds twofold astigmatism, axial coma,
+and spherical aberration through a native `KrivanekLens` objective, retaining
+the original objective focal length and magnetic rotation. Its large,
+explicitly labelled coefficient ranges make the effects visible at overview scale.
+Run all cells with the notebook extras and a JAX GPU for interactive updates.
+The notebook includes the calibration ray diagram beside the live image, a saved
+full-column ray overview, image previews, measured timings, and a focus check.
+The companion [smiley_defocus.py](smiley_defocus.py) contains the forward model.
+
+The **Gaussians** selector switches between six counts (10,000–1,000,000).
+Each count has its own compiled renderer and image cache; the focused reference
+and live image update together. Lower counts trade numerical accuracy for speed.
+
+The live ray diagram follows a subset of the actual Gaussian beam centres through
+the specimen and aberrated Krivanek objective. Aberration sliders update the
+downstream trajectories; a dashed guide shows the zero-aberration comparison.

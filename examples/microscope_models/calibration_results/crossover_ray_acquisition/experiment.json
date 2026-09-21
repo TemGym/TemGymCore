@@ -1,0 +1,84 @@
+{
+  "voltages_v": [
+    200000.0,
+    195000.0
+  ],
+  "aperture_diameters_um": [
+    50,
+    150
+  ],
+  "aperture_edge_width_m": 1.5e-07,
+  "aperture_inserted_for_every_image": true,
+  "specimen_region": "vacuum hole; no specimen scattering",
+  "length_scale": "already calibrated; specimen-plane shifts and tilts are known in metres/radians",
+  "kick_order": [
+    "x_m",
+    "y_m",
+    "theta_x_rad",
+    "theta_y_rad"
+  ],
+  "kick_location": "calibrated displacement and angle at specimen; realized by two post-aperture deflectors",
+  "deflector_gap_fractions": [
+    0.3,
+    0.7
+  ],
+  "deflector_positions": "illustrative fractions of the free gap from aperture to mini lens; not measured or fitted",
+  "deflector_alignment": "native DoubleDeflector shift/tilt balances aligned by Newton-Raphson at the specimen",
+  "steering_assumption": "both deflectors are after the aperture, so steering leaves its illumination unchanged",
+  "objective_current": 1.0,
+  "nominal_magnification": 40000.0,
+  "nominal_magnifications": [
+    40000.0,
+    45000.0
+  ],
+  "crossover_fraction_bounds": [
+    0.01,
+    0.99
+  ],
+  "condenser_reference_controls": [
+    2.0616084083155584,
+    3.369147344087322,
+    2.496
+  ],
+  "crossover_assumption": "First source image lies in the free gap between CL1 exit and CL3 entrance; this is a model restriction, not measured geometry.",
+  "shape_yx": [
+    256,
+    256
+  ],
+  "pixel_pitch_m": 0.00011,
+  "psf_sigma_pixels": 1.0,
+  "background_counts": 3.0,
+  "read_noise_counts": 2.0,
+  "random_seed": 24001,
+  "nominal_incident_electrons_per_image": 100000000.0,
+  "dose_assumption": "equal incident dose within each aperture pair; fitted independently for every pair",
+  "source_model": "round partially coherent Gaussian waist, independent at each voltage",
+  "source_parameters_per_voltage": 7,
+  "noise_model": "independent Poisson electrons plus calibrated Gaussian read noise",
+  "data_source": "native weighted ray images",
+  "measurement_noise_added": false,
+  "measurement_noise_seed": 24004,
+  "aperture_diffraction": false,
+  "ray_sample_power": 20,
+  "detector_samples_per_pixel": 8,
+  "moment_margin_pixels": 16,
+  "condenser_reference_controls_per_voltage": [
+    [
+      2.0616084083155584,
+      3.369147344087322,
+      2.496
+    ],
+    [
+      2.038745803036136,
+      3.1420018359245905,
+      2.4595551976084886
+    ]
+  ],
+  "acquisition_design": "Independent CL1/CL3 search around the design curve, first crossover in CL1-CL3 gap; fixed illumination for projector calibration.",
+  "projector_maximum_fractional_change": 0.4,
+  "projector_calibrated_tilt_range_rad": [
+    0.0002013374414605976,
+    0.003
+  ],
+  "detector_psf_truncate_sigmas": 8.0
+}

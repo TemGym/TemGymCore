@@ -3,10 +3,10 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-from scipy.optimize import brentq, least_squares
+from scipy.optimize import least_squares
 
-from temgym_core.run import column_matrix
 from temgym_core.components import solenoid_column
+from temgym_core.run import column_matrix
 
 
 def round_matrix(vector):
@@ -22,8 +22,6 @@ def choose_objective_projector_views(views, objective_command):
     never uses the hidden response slopes. Actual images may differ from these
     planned maps, which is why the image analysis measures a free pattern.
     """
-    from .projector_model import SIGNS, matrix5
-
     p = jnp.asarray(views["calibrated_projector_parameters"])
     matrix = jax.jit(matrix5)
     planned, commands = [], []
@@ -91,23 +89,6 @@ LENSES = ("Objective", "IL1", "IL2", "IL3", "PL1")
 SIGNS = jnp.array([1.0, 1.0, 1.0, -1.0])
 
 
-def public_specification():
-    return {
-        "voltage_v": 200000.0,
-        "pixel_pitch_m": 110e-6,
-        "shape_yx": [128, 128],
-        "feature_sigma_m": 2e-9,
-        "feature_centres_m": (
-            np.array([[-6.0, -5.0], [7.0, -4.0], [-4.0, 7.0]]) * 1e-9
-        ).tolist(),
-        "scope": "Known-shape synthetic three-mark feature with one absolute size calibration; intensities are fitted from each image",
-        "lens_order": list(LENSES),
-        "coordinate_order": ["x", "y", "theta_x", "theta_y", "1"],
-        "illumination_model": "Unknown common round angular spread and wavefront curvature",
-        "control_law": "q_i = signed_gain_i * recorded_control_i; objective control fixed",
-    }
-
-
 def initial_guess():
     """Literal engineering guesses, independently specified from the generator."""
     return np.r_[
@@ -115,9 +96,6 @@ def initial_guess():
         np.log([0.0005, 0.006, 0.004, 0.006, 0.0012]),
         -0.40,
         np.log([0.50, 0.60, 0.50, 0.70]),
-        0.0,
-        np.log(0.0012),
-        0.0,
     ]
 
 
@@ -150,44 +128,8 @@ def matrix5(p, controls):
     return column_matrix(projector_components(p, controls))
 
 
-def predict_observables(p, controls, spec):
-    """Measured log scale, pattern angle, and log Gaussian width in pixels.
-
-    Input mean angles are h*x, so defocused pattern scale measures A+B*h.
-    The angular width is independent of each feature's spatial coordinate;
-    covariance transport supplies the total image width. Pattern translations
-    and individual feature counts are profiled out by image analysis.
-    """
-    matrix = matrix5(p, controls)
-    h = p[16] * 1e4
-    effective_a = matrix[:2, :2] + h * matrix[:2, 2:4]
-    scale2 = jnp.sum(effective_a[:, 0] ** 2)
-    b2 = jnp.sum(matrix[:2, 2] ** 2)
-    variance = scale2 * spec["feature_sigma_m"] ** 2 + b2 * jnp.exp(2 * p[17])
-    return jnp.array(
-        [
-            0.5 * jnp.log(scale2),
-            jnp.arctan2(effective_a[1, 0], effective_a[0, 0]) + p[18],
-            0.5 * jnp.log(variance) - jnp.log(spec["pixel_pitch_m"]),
-        ]
-    )
-
-
-def predict_tilt_displacements(p, controls, angle_changes_rad, pixel_pitch_m):
-    """Image displacement in detector x/y pixels for calibrated specimen tilts.
-
-    One fixed lens setting per tilt pair. A shared image offset cancels when
-    subtracting the two images; input tilt axes use the matrix's x/y basis.
-    """
-    return (
-        jax.vmap(lambda d, angle: matrix5(p, d)[:2, 2:4] @ angle)(
-            jnp.asarray(controls), jnp.asarray(angle_changes_rad)
-        )
-        / pixel_pitch_m
-    )
-
-
-def _generator_parameters():
+def generating_parameters():
+    """Declared synthetic geometry and excitations; never a fitting input."""
     centres = np.array([0.0023, 0.2135239554, 0.2904801564, 0.3529801564, 0.4079834965])
     lengths = np.array([0.0004, 0.005, 0.005, 0.005, 0.001])
     gaps = np.r_[
@@ -196,43 +138,12 @@ def _generator_parameters():
         0.71875 - centres[-1] - lengths[-1] / 2,
     ]
 
-    # Focus the effective objective at a chosen synthetic intermediate plane.
-    def radial(q, length):
-        return np.array(
-            [
-                [np.cos(q), length * np.sinc(q / np.pi)],
-                [-q / length * np.sin(q), np.cos(q)],
-            ]
-        )
-
-    drift = lambda d: np.array([[1.0, d], [0.0, 1.0]])
-    q0 = brentq(
-        lambda q: (
-            drift(0.1881936689 - centres[0] - lengths[0] / 2)
-            @ radial(q, lengths[0])
-            @ drift(gaps[0])
-        )[0, 1],
-        0.3,
-        0.6,
-    )
-    q4 = brentq(
-        lambda q: (
-            drift(gaps[-1])
-            @ radial(q, lengths[-1])
-            @ drift(centres[-1] - lengths[-1] / 2 - 0.4056802138)
-        )[0, 1],
-        0.4,
-        0.9,
-    )
     return np.r_[
         np.log(gaps),
         np.log(lengths),
-        -q0,
+        -0.4257450165772056,
         np.log([0.55, 0.65, 0.45, 0.75]),
-        0.2,
-        np.log(0.001),
-        0.12,
-    ], q4
+    ]
 
 
 def position_prior_coordinates(priors):
@@ -292,3 +203,102 @@ def position_prior_coordinates(priors):
         return jnp.asarray(u).at[:6].set(jnp.log(gaps))
 
     return encode, decode, (bounds[:, 0] - mean) / sigma, (bounds[:, 1] - mean) / sigma
+
+
+def model_to_parameters(model):
+    """Convert named lens geometry and strengths to 16 physical coordinates."""
+    centres = np.array([model["lens_positions_mm"][name] for name in LENSES]) / 1000
+    lengths = np.array([model["lens_lengths_mm"][name] for name in LENSES]) / 1000
+    detector = model["detector_position_mm"] / 1000
+    gaps = np.r_[
+        centres[0] - lengths[0] / 2,
+        np.diff(centres) - (lengths[1:] + lengths[:-1]) / 2,
+        detector - centres[-1] - lengths[-1] / 2,
+    ]
+    gains = np.array([model["excitation_gains"][name] for name in LENSES[1:]])
+    if np.any(gaps <= 0) or np.any(lengths <= 0) or np.any(gains <= 0):
+        raise ValueError(
+            "Starting positions must leave positive gaps; lengths and gain magnitudes must be positive."
+        )
+    return np.r_[
+        np.log(gaps),
+        np.log(lengths),
+        model["objective_strength"],
+        np.log(gains),
+    ]
+
+
+def parameters_to_model(parameters):
+    """Give the fitted numbers physical names and units."""
+    _, lengths, centres, detector = decode_geometry(parameters)
+    return {
+        "lens_positions_mm": dict(zip(LENSES, (np.asarray(centres) * 1000).tolist())),
+        "lens_lengths_mm": dict(zip(LENSES, (np.asarray(lengths) * 1000).tolist())),
+        "detector_position_mm": float(detector) * 1000,
+        "objective_strength": float(parameters[11]),
+        "excitation_gains": dict(zip(LENSES[1:], np.exp(parameters[12:16]).tolist())),
+    }
+
+
+def make_starting_models(
+    *, prior_model, position_priors, number_of_starts, random_seed=482
+):
+    """One declared guess plus reproducible, dispersed starts within the same bounds.
+
+    Position starts cover the inner 80% of the allowed boxes. Lengths and gains
+    vary around the fixed prior model; this is an exploration, not a posterior
+    sample or an exhaustive search of the parameter space.
+    """
+    if number_of_starts < 1:
+        raise ValueError("At least one starting model is required.")
+    p = model_to_parameters(prior_model)
+    encode, decode, lower, upper = position_prior_coordinates(position_priors)
+    centre = np.asarray(encode(p))
+    length_bounds = np.log(np.asarray(position_priors["length_bounds_mm"]) / 1000)
+    rng = np.random.default_rng(random_seed)
+    models = [prior_model]
+    for _ in range(number_of_starts - 1):
+        u = centre.copy()
+        u[:6] = lower + rng.uniform(0.1, 0.9, 6) * (upper - lower)
+        u[6:11] = np.clip(
+            u[6:11] + rng.normal(0, 0.25, 5),
+            length_bounds[:, 0] + 0.01,
+            length_bounds[:, 1] - 0.01,
+        )
+        u[11] = rng.uniform(-0.6, -0.25)
+        u[12:16] += rng.uniform(-0.25, 0.25, 4)
+        models.append(parameters_to_model(np.asarray(decode(u))))
+    return models
+
+
+def at_voltage(parameters, voltage, reference=200000.0):
+    from .condenser_model import magnetic_strength_ratio
+
+    ratio = magnetic_strength_ratio(voltage, reference)
+    return jnp.asarray(parameters).at[11].multiply(ratio).at[12:16].add(jnp.log(ratio))
+
+
+def projector_coordinates(bounds_path):
+    import json
+    from pathlib import Path
+
+    bounds = json.loads(Path(bounds_path).read_text())
+    encode, decode, lo, hi = position_prior_coordinates(bounds)
+    base = initial_guess()
+    lower = np.r_[
+        lo,
+        np.log(np.asarray(bounds["length_bounds_mm"])[:, 0] / 1000),
+        -0.9,
+        base[12:16] - 0.8,
+    ]
+    upper = np.r_[
+        hi,
+        np.log(np.asarray(bounds["length_bounds_mm"])[:, 1] / 1000),
+        -0.15,
+        base[12:16] + 0.8,
+    ]
+
+    def physical(u):
+        return decode(u)
+
+    return encode, physical, lower, upper

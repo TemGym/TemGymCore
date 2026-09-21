@@ -354,6 +354,48 @@ def taylor_expand(
     return dS0, grad, hess
 
 
+def _pupil_action_to_spatial(ray, distance, value, gradient, hessian):
+    """Integrate a quadratic object/pupil action for one incoming Gaussian.
+
+    The kernel is the Fresnel kernel over ``distance`` multiplied by
+    exp(ik * action(object, pupil)). The incident field is specified at the
+    pupil, before this action; its reference object field is the inverse
+    Fresnel propagation. Derivatives are ordered (object_x, object_y,
+    pupil_x, pupil_y), at the unperturbed central-ray endpoints.
+
+    Completing the square in the object integral gives a Schur complement
+    and a complex determinant prefactor. Return their spatial action jet
+    for apply_action_delta. No object coordinates or image conjugate are
+    required. This is exact for a quadratic kernel with a convergent
+    Gaussian integral; higher-order actions need a local approximation.
+    """
+    eye = jnp.eye(2, dtype=ray.Q_inv.dtype)
+    go, ga = gradient[:2], gradient[2:]
+    hoo, hoa = hessian[:2, :2], hessian[:2, 2:]
+    hao, haa = hessian[2:, :2], hessian[2:, 2:]
+    t = eye - distance * ray.Q_inv
+    r = jnp.linalg.solve(eye + distance * t @ hoo, t)
+
+    # This form avoids subtracting 1/distance terms and includes distance=0.
+    d0 = value - 0.5 * distance * go @ r @ go
+    d1 = ga + (eye - distance * hao) @ r @ go
+    d2 = haa + t @ hoo @ r + hao @ r + r @ hoa - distance * hao @ r @ hoa
+    d2 = 0.5 * (d2 + d2.T)
+
+    object_q = jnp.linalg.solve(t, ray.Q_inv)
+
+    def fresnel_root(q):
+        determinant = jnp.linalg.det(eye + distance * q)
+        root = jnp.sqrt(determinant)
+        # Same continuation as FreeSpacePropagator: each modal factor has
+        # imaginary part with the sign of distance for a decaying Gaussian.
+        return jnp.where(distance * jnp.imag(determinant) < 0.0, -root, root)
+
+    factor = fresnel_root(object_q) / fresnel_root(object_q + hoo)
+    d0 = d0 - 1j * jnp.log(factor) / ray.k
+    return d0, d1, d2
+
+
 def apply_action_delta(
     ray: GaussianBeam,
     dS0: complex,

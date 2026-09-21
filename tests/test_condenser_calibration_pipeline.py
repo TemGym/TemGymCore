@@ -5,11 +5,9 @@ from pathlib import Path
 
 import jax
 import numpy as np
-import pytest
 
 EXAMPLES = Path(__file__).parents[1] / "src/temgym_core/calibration/presets"
 jax.config.update("jax_enable_x64", True)
-from temgym_core.calibration.condenser_images import make_image_operator
 from temgym_core.calibration.projector_model import matrix5 as projector_matrix5
 
 
@@ -24,35 +22,83 @@ def test_calibrated_views_are_real_projector_maps_with_fixed_objective():
         np.testing.assert_allclose(view["matrix"], expected, rtol=2e-12, atol=1e-08)
 
 
-def test_image_operator_conserves_dose_on_a_large_detector_and_rejects_astigmatism():
-    template = {
-        "axis_m": np.array([-5e-09, 5e-09]),
-        "intensity": np.array([[1.0, 2.0], [3.0, 4.0]]),
-    }
-    detector = {
-        "shape_yx": [64, 64],
-        "sample_kernel_sigma_m": 1e-09,
-        "pixel_pitch_m": 1e-06,
-        "psf_sigma_pixels": 0.5,
-    }
-    matrices = np.eye(5)[None].copy()
-    matrices[0, :2, :2] *= 1000
-    operator = make_image_operator(
-        projector_matrices=matrices, template=template, detector=detector
+def test_condenser_design_changes_size_at_one_real_plane():
+    import jax
+    import numpy as np
+
+    from temgym_core.calibration.condenser_model import (
+        condenser_components,
+        design_condenser_curve,
+        generating_parameters,
     )
-    beam = np.array(
-        [0, 0, 0, 0, np.log(1e-08), 0, np.log(1e-05), np.log(100000.0), np.log(2)]
+    from temgym_core.components import Plane
+    from temgym_core.ray import Ray
+    from temgym_core.run import column_matrix, run_to_end
+
+    jax.config.update("jax_enable_x64", True)
+    parameters = generating_parameters()
+    curve = design_condenser_curve(
+        parameters, image_magnifications=[0.05, 0.1, 0.2, 0.3]
     )
-    frame = np.asarray(operator(beam))[0]
-    assert (frame - 2).sum() == pytest.approx(100000.0, rel=1e-08)
-    changed = matrices.copy()
-    changed[0, :2, :2] *= 1.01
-    rebuilt = make_image_operator(
-        projector_matrices=changed, template=template, detector=detector
+    source_z = -np.exp(parameters[:9]).sum()
+    for target, controls, matrix in zip(
+        curve["image_magnifications"], curve["controls"], curve["image_matrices"]
+    ):
+        column = condenser_components(parameters, controls)
+        assert column[1].z + column[1].length < curve["image_plane_z_m"] < column[2].z
+        np.testing.assert_allclose(np.linalg.svd(matrix[:2, :2])[1], target, atol=1e-10)
+        np.testing.assert_allclose(matrix[:2, 2:4], 0, atol=1e-10)
+        # Trace a finite off-axis source point at different angles: it must
+        # arrive at the same image position, including native lens rotation.
+        for angle in [-1e-4, 1e-4]:
+            ray = Ray(
+                x=8e-9,
+                y=-3e-9,
+                dx=angle,
+                dy=angle / 2,
+                z=source_z,
+                pathlength=0.0,
+                voltage=200e3,
+            )
+            image = run_to_end(ray, (*column[:2], Plane(z=curve["image_plane_z_m"])))
+            np.testing.assert_allclose(
+                [image.x, image.y],
+                matrix[:2, :2] @ [8e-9, -3e-9],
+                atol=1e-13,
+            )
+        full = np.asarray(column_matrix(column, source_z=source_z))
+        np.testing.assert_allclose(full[2:4, 2:4], 0, atol=1e-8)
+    np.testing.assert_array_equal(curve["controls"][:, 2], 1.5)
+    assert np.all(np.diff(curve["controls"][:, 0]) < 0)
+    assert np.all(np.diff(curve["controls"][:, 1]) > 0)
+
+
+def test_condenser_design_rejects_virtual_image_plane():
+    import pytest
+
+    from temgym_core.calibration.condenser_model import (
+        design_condenser_curve,
+        generating_parameters,
     )
-    np.testing.assert_allclose(operator(beam, changed), rebuilt(beam), rtol=1e-12)
-    matrices[0, 0, 0] *= 2
-    with pytest.raises(ValueError, match="round"):
-        make_image_operator(
-            projector_matrices=matrices, template=template, detector=detector
+
+    with pytest.raises(ValueError, match="real front focal plane"):
+        design_condenser_curve(
+            generating_parameters(), image_magnifications=[0.1], mini_control=1.0
+        )
+
+
+def test_condenser_design_rejects_unreachable_size():
+    import pytest
+
+    from temgym_core.calibration.condenser_model import (
+        design_condenser_curve,
+        generating_parameters,
+    )
+
+    with pytest.raises(ValueError, match="No accurate condenser design"):
+        design_condenser_curve(
+            generating_parameters(),
+            image_magnifications=[0.1],
+            initial_controls=(0.15, 0.15),
+            control_bounds=(0.1, 0.2),
         )

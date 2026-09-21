@@ -1,331 +1,350 @@
-"""Synthetic two-voltage condenser acquisition with fixed objective current."""
+"""Record the beam-only experiment: two apertures stay inserted throughout."""
 
 import json
+from functools import lru_cache
 from pathlib import Path
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 
-from .apertures import aperture_specification, make_focus_transmission
-from .condenser_model import (
-    condenser_at_voltage,
-    magnetic_strength_ratio,
-    projector_at_voltage,
-)
+from .condenser_model import design_condenser_curve, magnetic_strength_ratio
+from .condenser_model import generating_parameters as generating_condenser
+from .projector_model import choose_objective_projector_views
+from .projector_model import generating_parameters as generating_projector
+
+PRESETS = Path(__file__).parent / "presets"
 
 
-def simulate_voltage_experiment(
-    *,
-    protocol_path,
-    projector_views_path,
-    output_directory,
-    focus_counts_path=None,
-    voltages_v=(200000.0, 198000.0),
-    view_indices=(0, 1, 2),
-    random_seed=13001,
-    voltage_offset_v=0.0,
-):
-    """Recorded controls and calibrated maps -> fresh MAGICAL pixels and counts.
+def prepare_experiment(*, directory, voltages_v, aperture_diameters_um, random_seed):
+    """Save recorded controls/calibrations separately from simulation parameters."""
+    root = Path(directory)
+    root.mkdir(parents=True, exist_ok=True)
+    pp = generating_projector()
+    base = np.r_[generating_condenser(), np.log(0.0025 / (0.056 - 0.0025)), 0.2, -0.15]
+    # Synthetic pre-field: f ≈ 2.2 mm keeps the aperture halo on the camera.
+    # This is a generating parameter, never supplied as a fitting constraint.
+    base[12] = np.log(0.70)
+    second = np.r_[base[0], base[13:19]]
+    second[0] = np.log(np.exp(base[0]) + 0.05e-3)
+    second[1:5] += [0.02, -0.01, 0.001, -0.001]
+    second[5:] += np.log([1.03, 0.98])
+    cp = np.r_[base, second, 0.12, -0.08]
 
-    One 4 micrometre aperture, 39 focus-scan settings per voltage, and an open
-    reference for each reading. Source properties deliberately change between
-    voltages. Only this generating function reads generating lens parameters.
-    No ellipse measurement or objective-current sweep is acquired.
-    """
-    from .condenser_images import make_image_operator, predict_beam_coordinates
-    from .condenser_model import generating_parameters
-    from .projector_images import make_magical_template
-    from .projector_model import choose_objective_projector_views
+    protocol = json.loads((PRESETS / "beam_measurement_protocol.json").read_text())
+    views = [
+        {"controls": list(protocol["projector_reference_controls"]), "target": [m, 0.0]}
+        for m in protocol["nominal_magnifications"]
+    ]
+    illumination = design_condenser_curve(
+        base,
+        image_magnifications=[protocol["condenser_image_magnification"]],
+        mini_control=protocol["mini_control"],
+    )["controls"][0]
+    curve = design_condenser_curve(
+        base,
+        image_magnifications=protocol["condenser_curve_magnifications"],
+        mini_control=protocol["mini_control"],
+    )
+    rows = []
+    group = 0
 
-    folder = Path(output_directory)
-    folder.mkdir(parents=True, exist_ok=True)
-    protocol = json.loads(Path(protocol_path).read_text())
-    views = json.loads(Path(projector_views_path).read_text())
-    (folder / "reference_projector.json").write_text(json.dumps(views, indent=2))
-    base_controls = np.asarray(protocol["calibration_controls"])
-    if "current_controls" in protocol:
-        base_scan = np.asarray(protocol["current_controls"])
-    else:
-        scan_indices = np.concatenate(
-            [np.arange(g * 41 + 14, g * 41 + 27) for g in range(3)]
+    def record(vi, controls, command, kick, purpose, group, mag, change):
+        rows.append(
+            (
+                vi,
+                controls.copy(),
+                command.copy(),
+                np.asarray(kick),
+                purpose,
+                group,
+                mag,
+                change,
+            )
         )
-        base_scan = np.load(focus_counts_path)["controls"][scan_indices]
-    base = np.r_[generating_parameters(), np.log(0.0025 / (0.056 - 0.0025)), 0.2, -0.15]
-    source0 = np.r_[base[0], base[13:19]]
-    sources = [source0]
-    for index in range(1, len(voltages_v)):
-        # Independent waist shifts 0.05 mm; size +3%, divergence -2% per step.
-        source = source0.copy()
-        source[0] = np.log(np.exp(source0[0]) + index * 0.05e-3)
-        source[1:5] += index * np.array([0.02, -0.01, 0.001, -0.001])
-        source[5:] += index * np.log([1.03, 0.98])
-        sources.append(source)
-    rng = np.random.default_rng(random_seed)
-    for index, voltage in enumerate(voltages_v):
-        target = folder / f"voltage_{index}"
-        target.mkdir(exist_ok=True)
+
+    for vi, voltage in enumerate(voltages_v):
         ratio = float(magnetic_strength_ratio(voltage, voltages_v[0]))
-        actual_voltage = voltage + (voltage_offset_v if index else 0.0)
-        effective = condenser_at_voltage(
-            base,
-            actual_voltage,
-            reference_voltage_v=voltages_v[0],
-            source_parameters=sources[index],
-        )
-        calibration = json.loads(json.dumps(views))
-        calibration["views"] = [calibration["views"][i] for i in view_indices]
-        p = np.asarray(calibration["calibrated_projector_parameters"])
-        p[11] *= ratio
-        p[12:16] += np.log(ratio)
-        calibration["calibrated_projector_parameters"] = p.tolist()
-        try:
-            maps, projector_controls = choose_objective_projector_views(
-                calibration, 1.0
-            )
-        except RuntimeError:
-            # Follow the calibrated branch in small voltage steps when a direct
-            # change gives the underdetermined projector solver a poor start.
-            continuation = json.loads(json.dumps(views))
-            continuation["views"] = [continuation["views"][i] for i in view_indices]
-            for intermediate in np.linspace(
-                voltages_v[0], voltage, max(3, int(np.ceil(abs(ratio - 1) / 0.002)) + 1)
-            )[1:]:
-                step_ratio = float(magnetic_strength_ratio(intermediate, voltages_v[0]))
-                adjusted = np.asarray(views["calibrated_projector_parameters"]).copy()
-                adjusted[11] *= step_ratio
-                adjusted[12:16] += np.log(step_ratio)
-                continuation["calibrated_projector_parameters"] = adjusted.tolist()
-                maps, projector_controls = choose_objective_projector_views(
-                    continuation, 1.0
-                )
-                for view, command in zip(continuation["views"], projector_controls):
-                    view["controls"] = command.tolist()
-        actual_maps = np.asarray(
-            [
-                projector_at_voltage(
-                    jnp.asarray(views["calibrated_projector_parameters"]),
-                    command,
-                    actual_voltage,
-                    reference_voltage_v=voltages_v[0],
-                )
-                for command in projector_controls
-            ]
-        )
-        template, _ = make_magical_template(
-            voltage, pitch_m=5e-9, illumination_radius_m=130e-9
-        )
-        detector = {
-            "pixel_pitch_m": 220e-6,
-            "shape_yx": [64, 64],
-            "read_noise_e": 2.0,
-            "psf_sigma_pixels": 0.5,
-            "sample_kernel_sigma_m": 2.5e-9,
-            "voltage_v": voltage,
-        }
-        render = make_image_operator(
-            projector_matrices=actual_maps, template=template, detector=detector
-        )
-        controls = base_controls / ratio
-        # Instrument setup keeps the illuminated specimen feature visible.
-        # At a new voltage an old condenser setting can focus to a sub-nm spot.
-        # Adjust only such settings, record the mini-lens command, and do not
-        # supply a target beam size as an extra observation to the fitter.
-        from scipy.optimize import brentq
-
-        beam_size = jax.jit(
-            lambda command, effective=effective: jnp.exp(
-                predict_beam_coordinates(effective, command)[4]
-            )
-        )
-        adjusted_settings = []
-        for row, control in enumerate(controls):
-            size = float(beam_size(control))
-            if 10e-9 <= size <= 90e-9:
-                continue
-            target_size = 30e-9 if size < 10e-9 else 60e-9
-            grid = control[2] * np.linspace(0.95, 1.05, 41)
-
-            def size_error(
-                mini, control=control, target_size=target_size, beam_size=beam_size
-            ):
-                return (
-                    float(beam_size(jnp.asarray(control).at[2].set(mini))) - target_size
-                )
-
-            errors = [size_error(value) for value in grid]
-            roots = [
-                brentq(size_error, a, b, xtol=1e-12)
-                for a, b, fa, fb in zip(grid[:-1], grid[1:], errors[:-1], errors[1:])
-                if fa * fb < 0
-            ]
-            if not roots:
-                raise RuntimeError(
-                    "Could not keep the specimen feature illuminated in the allowed mini-lens range."
-                )
-            controls[row, 2] = min(roots, key=lambda value: abs(value - control[2]))
-            adjusted_settings.append(row)
-        if adjusted_settings:
-            print(
-                f"{voltage / 1000:g} kV: adjusted mini lens for visible illumination at settings {adjusted_settings}",
-                flush=True,
-            )
-        frames = []
-        for control in controls:
-            beam = predict_beam_coordinates(effective, control)
-            exposure = np.tile(np.log([4e7, 3.0]), len(maps))
-            expected = np.asarray(render(np.r_[beam, exposure]))
-            frames.append(rng.poisson(expected) + rng.normal(0, 2.0, expected.shape))
-        np.savez_compressed(
-            target / "images.npz",
-            images=frames,
-            controls=controls,
-            projector_matrices=maps,
-            projector_controls=projector_controls,
-        )
-        np.savez_compressed(target / "template.npz", **template)
-        (target / "detector.json").write_text(json.dumps(detector, indent=2))
-        spec = aperture_specification()
-        spec.update(radii_m=[2e-6], voltage_v=actual_voltage)
-        transmit = make_focus_transmission(specification=spec)
-        scan = base_scan / ratio
-        fractions = np.asarray(jax.vmap(transmit, in_axes=(None, 0))(effective, scan))
-        if (
-            not np.all(np.isfinite(fractions))
-            or fractions.min() < 0
-            or fractions.max() > 1.000002
+        # Follow the focused branch in voltage while holding objective current fixed.
+        for intermediate in np.linspace(
+            voltages_v[0], voltage, max(2, int(abs(voltage - voltages_v[0]) / 1000) + 1)
         ):
-            raise RuntimeError("Invalid aperture integration.")
-        incident = 2e7 * np.exp(rng.normal(0, 0.1, len(scan)))
-        np.savez_compressed(
-            target / "counts.npz",
-            controls=scan,
-            transmitted_electrons=rng.poisson(incident[:, None] * fractions),
-            reference_electrons=rng.poisson(incident),
-        )
-        spec["voltage_v"] = voltage
-        (target / "aperture.json").write_text(json.dumps(spec, indent=2))
-        print(
-            f"{voltage / 1000:g} kV: {len(frames) * len(maps)} images, {2 * len(scan)} current readings",
-            flush=True,
-        )
-    (folder / "experiment.json").write_text(
-        json.dumps(
-            {
-                "voltages_v": list(voltages_v),
-                "reference_voltage_v": voltages_v[0],
-                "view_indices": list(view_indices),
-                "random_seed": random_seed,
-                "objective_current": 1.0,
-                "aperture_diameter_um": 4.0,
-                "source_parameters_per_voltage": 7,
-                "aperture_centred_by_current_scan": False,
-                "calibration_assumption": "Known projector model and voltage scaling; exact in this first synthetic experiment.",
-            },
-            indent=2,
-        )
-    )
-    (folder / "scoring_truth.json").write_text(
-        json.dumps(
-            {
-                "parameters": np.r_[base, np.asarray(sources[1:]).ravel()].tolist(),
-                "voltage_offset_v": voltage_offset_v,
-            },
-            indent=2,
-        )
-    )
-    return folder
-
-
-def simulate_voltage_prediction_images(
-    *, experiment_directory, protocol_path, random_seed=14001
-):
-    """Generate six new condenser settings per voltage for frozen prediction checks.
-
-    This is a generator: it may read scoring truth. The analysis and prediction
-    checker below do not. New controls are recorded in a separate prediction folder.
-    """
-    from .condenser_images import make_image_operator, predict_beam_coordinates
-
-    folder = Path(experiment_directory)
-    experiment = json.loads((folder / "experiment.json").read_text())
-    truth = json.loads((folder / "scoring_truth.json").read_text())
-    p = np.asarray(truth["parameters"])
-    base_controls = np.asarray(
-        json.loads(Path(protocol_path).read_text())["prediction_controls"]
-    )
-    rng = np.random.default_rng(random_seed)
-    calibration = json.loads((folder / "reference_projector.json").read_text())
-    for index, voltage in enumerate(experiment["voltages_v"]):
-        reference = folder / f"voltage_{index}"
-        target = reference / "prediction"
-        target.mkdir(exist_ok=True)
-        recorded = np.load(reference / "images.npz")
-        maps = recorded["projector_matrices"]
-        actual_voltage = voltage + (
-            truth.get("voltage_offset_v", 0.0) if index else 0.0
-        )
-        actual_maps = np.asarray(
-            [
-                projector_at_voltage(
-                    jnp.asarray(calibration["calibrated_projector_parameters"]),
-                    command,
-                    actual_voltage,
-                    reference_voltage_v=experiment["reference_voltage_v"],
-                )
-                for command in recorded["projector_controls"]
-            ]
-        )
-        template = dict(np.load(reference / "template.npz"))
-        detector = json.loads((reference / "detector.json").read_text())
-        render = make_image_operator(
-            projector_matrices=actual_maps, template=template, detector=detector
-        )
-        effective = condenser_at_voltage(
-            p,
-            actual_voltage,
-            reference_voltage_v=experiment["reference_voltage_v"],
-            source_parameters=p[22 + 7 * (index - 1) : 22 + 7 * index]
-            if index
-            else None,
-        )
-        controls = base_controls / float(
-            magnetic_strength_ratio(voltage, experiment["reference_voltage_v"])
-        )
-        frames = []
-        for control in controls:
-            beam = predict_beam_coordinates(effective, control)
-            expected = np.asarray(
-                render(np.r_[beam, np.tile(np.log([4e7, 3.0]), len(maps))])
+            r = float(magnetic_strength_ratio(intermediate, voltages_v[0]))
+            adjusted = pp.copy()
+            adjusted[11] *= r
+            adjusted[12:16] += np.log(r)
+            _, commands = choose_objective_projector_views(
+                {"calibrated_projector_parameters": adjusted.tolist(), "views": views},
+                1.0,
             )
-            frames.append(rng.poisson(expected) + rng.normal(0, 2.0, expected.shape))
-        np.savez_compressed(
-            target / "images.npz",
-            images=frames,
-            controls=controls,
-            projector_matrices=maps,
-            projector_controls=recorded["projector_controls"],
+            for view, command in zip(views, commands):
+                view["controls"] = command.tolist()
+        baseline = illumination / ratio
+        for mag, command in zip(protocol["nominal_magnifications"], commands):
+            projector_states = [("Baseline", command)]
+            for lens, fraction in protocol["projector_wobble_fractions"].items():
+                index = ["Objective", "IL1", "IL2", "IL3", "PL1"].index(lens)
+                for sign in [-1, 1]:
+                    control = command.copy()
+                    control[index] *= 1 + sign * fraction
+                    projector_states.append((f"{lens} {sign * fraction:+.2%}", control))
+            for label, control in projector_states:
+                # Round lenses: X shifts/tilts determine the two isotropic 2x2 blocks.
+                # Independent Y inputs are reserved for prediction checks below.
+                for kick in (
+                    [protocol["shift_m"], 0.0, 0.0, 0.0],
+                    [0.0, 0.0, protocol["tilt_rad"], 0.0],
+                ):
+                    for sign in [1, -1]:
+                        record(
+                            vi,
+                            baseline,
+                            control,
+                            sign * np.asarray(kick),
+                            "projector",
+                            group,
+                            mag,
+                            label,
+                        )
+                    group += 1
+            record(vi, baseline, command, np.zeros(4), "condenser", -1, mag, "Baseline")
+            for index, lens in enumerate(["CL1", "CL3", "Mini"]):
+                for fraction in protocol["condenser_wobble_fractions"][lens]:
+                    for sign in [-1, 1]:
+                        control = baseline.copy()
+                        control[index] *= 1 + sign * fraction
+                        record(
+                            vi,
+                            control,
+                            command,
+                            np.zeros(4),
+                            "condenser",
+                            -1,
+                            mag,
+                            f"{lens} {sign * fraction:+.2%}",
+                        )
+            for size, control in zip(curve["image_magnifications"], curve["controls"]):
+                record(
+                    vi,
+                    control / ratio,
+                    command,
+                    np.zeros(4),
+                    "condenser",
+                    -1,
+                    mag,
+                    f"Coupled source image ×{size:g}",
+                )
+            record(
+                vi,
+                baseline * np.array([1.0007, 0.9993, 1.001]),
+                command,
+                np.zeros(4),
+                "check",
+                -1,
+                mag,
+                "Combined condenser check",
+            )
+            record(
+                vi,
+                baseline,
+                command,
+                [0.0, protocol["shift_m"], 0.0, 0.0],
+                "check",
+                -1,
+                mag,
+                "Y shift check",
+            )
+            record(
+                vi,
+                baseline,
+                command,
+                [0.0, 0.0, 0.0, protocol["tilt_rad"]],
+                "check",
+                -1,
+                mag,
+                "Y tilt check",
+            )
+    keys = [
+        "voltage_index",
+        "condenser_controls",
+        "projector_controls",
+        "specimen_kick",
+        "purpose",
+        "response_group",
+        "nominal_magnification",
+        "lens_change",
+    ]
+    np.savez_compressed(
+        root / "settings.npz",
+        **{key: np.asarray(values) for key, values in zip(keys, zip(*rows))},
+    )
+    specification = {
+        "voltages_v": list(voltages_v),
+        "aperture_diameters_um": list(aperture_diameters_um),
+        "aperture_edge_width_m": 150e-9,
+        "aperture_inserted_for_every_image": True,
+        "specimen_region": "vacuum hole; no specimen scattering",
+        "length_scale": "already calibrated; specimen-plane shifts and tilts are known in metres/radians",
+        "kick_order": ["x_m", "y_m", "theta_x_rad", "theta_y_rad"],
+        "kick_location": "calibrated displacement and angle at specimen; realized by two post-aperture deflectors",
+        "deflector_gap_fractions": [0.3, 0.7],
+        "deflector_positions": "illustrative fractions of the free gap from aperture to mini lens; not measured or fitted",
+        "deflector_alignment": "native DoubleDeflector shift/tilt balances aligned by Newton-Raphson at the specimen",
+        "steering_assumption": "both deflectors are after the aperture, so steering leaves its illumination unchanged",
+        "objective_current": 1.0,
+        "nominal_magnification": 40000.0,
+        "nominal_magnifications": protocol["nominal_magnifications"],
+        "crossover_fraction_bounds": protocol["crossover_fraction_bounds"],
+        "condenser_reference_controls": illumination.tolist(),
+        "crossover_assumption": "First source image lies in the free gap between CL1 exit and CL3 entrance; this is a model restriction, not measured geometry.",
+        "shape_yx": [256, 256],
+        "pixel_pitch_m": 110e-6,
+        "psf_sigma_pixels": 1.0,
+        "background_counts": 3.0,
+        "read_noise_counts": 2.0,
+        "random_seed": random_seed,
+        "nominal_incident_electrons_per_image": protocol[
+            "nominal_incident_electrons_per_image"
+        ],
+        "dose_assumption": "equal incident dose within each aperture pair; fitted independently for every pair",
+        "source_model": "round partially coherent Gaussian waist, independent at each voltage",
+        "source_parameters_per_voltage": 7,
+        "noise_model": "independent Poisson electrons plus calibrated Gaussian read noise",
+    }
+    (root / "experiment.json").write_text(json.dumps(specification, indent=2) + "\n")
+    (root / "scoring_truth.json").write_text(
+        json.dumps(
+            {"projector_parameters": pp.tolist(), "condenser_parameters": cp.tolist()},
+            indent=2,
         )
-        np.savez_compressed(target / "template.npz", **template)
-        (target / "detector.json").write_text(json.dumps(detector, indent=2))
-        # Independent current predictions also test the upstream scale and aperture.
-        spec = json.loads((reference / "aperture.json").read_text())
-        spec["voltage_v"] = actual_voltage
-        transmit = make_focus_transmission(specification=spec)
-        current_controls = np.array(
-            [[cl1, cl3, 1.0] for cl3 in [0.65, 0.85, 1.15, 1.4] for cl1 in [1.75, 1.95]]
+        + "\n"
+    )
+    return root
+
+
+def _column_source(spec, settings, model, row, aperture):
+    """Use the recorded voltage, currents and kicks with native components."""
+    from .apertures import aperture_centres, effective_parameters
+    from .condenser_model import (
+        condenser_with_aperture,
+        condenser_with_steering,
+        source_moments,
+    )
+    from .projector_model import at_voltage, projector_components
+
+    vi = int(settings["voltage_index"][row])
+    voltage, reference = spec["voltages_v"][vi], spec["voltages_v"][0]
+    cp = effective_parameters(model["condenser_parameters"], voltage, reference, vi)
+    pp = at_voltage(model["projector_parameters"], voltage, reference)
+    column = condenser_with_aperture(
+        cp,
+        settings["condenser_controls"][row],
+        radius_m=spec["aperture_diameters_um"][aperture] * 0.5e-6,
+        edge_width_m=spec["aperture_edge_width_m"],
+        centre_m=aperture_centres(cp, 2)[aperture] * 1e-6,
+    )
+    column = condenser_with_steering(
+        column,
+        settings["specimen_kick"][row],
+        voltage_v=voltage,
+        gap_fractions=spec.get("deflector_gap_fractions", (0.3, 0.7)),
+    )
+    column = (
+        *column,
+        *projector_components(pp, settings["projector_controls"][row]),
+    )
+    mean, covariance = map(np.asarray, source_moments(cp, voltage))
+    return column, mean, covariance, -np.exp(np.asarray(cp[:9])).sum(), voltage
+
+
+@lru_cache(maxsize=4)
+def _ray_renderer(shape):
+    """Compile native ray transport and weighted detector binning once per shape."""
+    import jax
+    import jax.numpy as jnp
+
+    from temgym_core.components import Detector, SigmoidAperture
+    from temgym_core.run import run_iter
+
+    @jax.jit
+    def render(column, source_rays, pixel_pitch):
+        weights = jnp.ones_like(source_rays.x)
+        for component, rays in run_iter(source_rays, column):
+            if isinstance(component, SigmoidAperture):
+                # Native Rays have no amplitude; accumulate intensity separately.
+                weights *= jnp.exp(2 * component.log_transmission(rays.r_xy))
+        detector = Detector(
+            z=rays.z, shape=shape, pixel_size=(pixel_pitch, pixel_pitch)
         )
-        current_controls /= float(
-            magnetic_strength_ratio(voltage, experiment["reference_voltage_v"])
+        iy, ix = detector.metres_to_pixels((rays.x, rays.y))
+        inside = (iy >= 0) & (iy < shape[0]) & (ix >= 0) & (ix < shape[1])
+        index = jnp.where(inside, iy * shape[1] + ix, 0)
+        return (
+            jnp.bincount(
+                index, weights=jnp.where(inside, weights, 0), length=shape[0] * shape[1]
+            ).reshape(shape)
+            / weights.size
         )
-        fractions = np.asarray(
-            jax.vmap(transmit, in_axes=(None, 0))(effective, current_controls)
-        )[:, 0]
-        incident = 2e7 * np.exp(rng.normal(0, 0.1, len(current_controls)))
-        np.savez_compressed(
-            target / "current_counts.npz",
-            controls=current_controls,
-            transmitted_electrons=rng.poisson(incident * fractions),
-            reference_electrons=rng.poisson(incident),
+
+    return render
+
+
+@lru_cache(maxsize=1)
+def _source_samples(power):
+    from scipy.special import ndtri
+    from scipy.stats import qmc
+
+    # Fixed, evenly distributed samples reduce sampling speckle between settings.
+    return ndtri(qmc.Sobol(d=4, scramble=True, seed=24003).random_base2(power))
+
+
+def render_ray_image(spec, settings, model, row, aperture):
+    """Render detector signal from native rays; no aperture diffraction or noise."""
+    from scipy.signal import fftconvolve
+
+    from temgym_core.ray import Ray
+
+    column, mean, covariance, source_z, voltage = _column_source(
+        spec, settings, model, row, aperture
+    )
+    samples = (
+        mean
+        + _source_samples(spec.get("ray_sample_power", 18))
+        @ np.linalg.cholesky(covariance).T
+    )
+    rays = Ray(*samples.T, z=source_z, pathlength=0.0, voltage=voltage)
+    # Apply the detector PSF before integrating detector pixels. A fine internal
+    # grid avoids rounding sparse rays to whole pixels before the blur.
+    sampling = spec.get("detector_samples_per_pixel", 1)
+    height, width = spec["shape_yx"]
+    image = np.asarray(
+        _ray_renderer((height * sampling, width * sampling))(
+            column, rays, spec["pixel_pitch_m"] / sampling
         )
-    return folder
+    )
+    # Blur only occupied rows/columns plus the complete PSF support. Keeping the
+    # crop on pixel boundaries gives the same image without filtering empty space.
+    occupied = [np.flatnonzero(image.any(axis=axis)) for axis in (1, 0)]
+    result = np.zeros((height, width))
+    if all(len(indices) for indices in occupied):
+        halo = int(np.ceil(8 * spec["psf_sigma_pixels"])) + 1
+        bounds = [
+            (max(0, indices[0] // sampling - halo),
+             min(size, indices[-1] // sampling + halo + 1))
+            for indices, size in zip(occupied, (height, width))
+        ]
+        (y0, y1), (x0, x1) = bounds
+        crop = image[y0 * sampling:y1 * sampling, x0 * sampling:x1 * sampling]
+        # Separable FFT convolution is fast even on the fine detector grid.
+        # Retain eight sigma: four-sigma truncation biases high-dose beam widths.
+        sigma = spec["psf_sigma_pixels"] * sampling
+        blurred = crop
+        if sigma > 0:
+            radius = int(8 * sigma + 0.5)
+            kernel = np.exp(-0.5 * (np.arange(-radius, radius + 1) / sigma) ** 2)
+            kernel /= kernel.sum()
+            blurred = fftconvolve(crop, kernel[:, None], mode="same", axes=0)
+            blurred = fftconvolve(blurred, kernel[None, :], mode="same", axes=1)
+            blurred = np.maximum(blurred, 0)  # Remove FFT round-off below zero.
+        result[y0:y1, x0:x1] = blurred.reshape(
+            y1 - y0, sampling, x1 - x0, sampling
+        ).sum(axis=(1, 3))
+    return result * spec["nominal_incident_electrons_per_image"]

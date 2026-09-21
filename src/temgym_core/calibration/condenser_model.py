@@ -5,7 +5,8 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.constants import c, electron_mass, elementary_charge
 
-from temgym_core.run import solenoid_column_matrix
+from temgym_core.components import solenoid_column
+from temgym_core.run import column_matrix
 
 from .projector_model import matrix5 as projector_matrix5
 
@@ -42,26 +43,6 @@ def physical_geometry(parameters):
     ]
 
 
-def beam_to_moments(beam):
-    size2 = jnp.exp(2 * beam[4])
-    h = beam[5] * 1e4
-    spread2 = jnp.exp(2 * beam[6])
-    return jnp.r_[
-        beam[:4], size2 / 1e-14, h * size2 / 1e-10, (h * h * size2 + spread2) / 1e-6
-    ]
-
-
-def model_moments(parameters, controls):
-    mean, cov = specimen_moments(parameters, controls)
-    return jnp.r_[
-        mean[:2] / 1e-7,
-        mean[2:] / 1e-3,
-        cov[0, 0] / 1e-14,
-        cov[0, 2] / 1e-10,
-        cov[2, 2] / 1e-6,
-    ]
-
-
 def physical_quantity(parameters, quantity):
     """A shared geometry quantity or the second voltage's independent source waist."""
     p = jnp.asarray(parameters)
@@ -94,26 +75,233 @@ def generating_parameters():
     ]
 
 
-def matrix5(parameters, controls):
-    """Map an unknown source waist to the specimen through four finite lenses."""
+def condenser_components(parameters, controls):
+    """Native lenses from the source waist to the specimen at z=0."""
     p = jnp.asarray(parameters)
     gaps, lengths = jnp.exp(p[:5]), jnp.exp(p[5:9])
     strengths = jnp.exp(p[9:13]) * jnp.r_[jnp.asarray(controls), -1.0]
-    return solenoid_column_matrix(gaps, lengths, strengths)
+    source_z = -jnp.sum(gaps) - jnp.sum(lengths)
+    return solenoid_column(gaps, lengths, strengths, source_z=source_z)
 
 
-def source_moments(parameters):
+def design_condenser_curve(
+    parameters,
+    *,
+    image_magnifications,
+    mini_control=1.5,
+    initial_controls=(3.5, 1.5),
+    control_bounds=(0.05, 7.0),
+):
+    """Design CL1/CL3 settings with one fixed source-image plane before mini.
+
+    Parameters use the same geometry/excitation law as ``condenser_components``.
+    Mini and objective stay fixed. Their combined front focal plane sets the
+    image plane: a point there leaves the downstream optics parallel (D=0).
+    At that plane solve A=m*R and B=0, allowing the native Larmor rotation R.
+    Magnifications refer to the source image, not the illuminated specimen area.
+
+    Return the image-plane z [m], requested magnifications, native 5x5 image
+    matrices, and rows of [CL1, CL3, mini] relative currents. These are synthetic
+    design settings, not amperes/DACs or additional observations for inference.
+    Interpolated currents are only guesses; solve again for an exact condition.
+    """
+    from temgym_core.components import Plane
+    from temgym_core.optimization import least_squares
+
+    if not jax.config.x64_enabled:
+        raise ValueError("Enable jax_enable_x64 for condenser design.")
+    targets = np.asarray(image_magnifications, dtype=float)
+    if (
+        targets.ndim != 1
+        or targets.size == 0
+        or not np.all(np.isfinite(targets) & (targets > 0))
+    ):
+        raise ValueError(
+            "Supply a nonempty vector of positive source-image magnifications."
+        )
+    if not np.isfinite(mini_control) or mini_control <= 0:
+        raise ValueError("The fixed mini control must be positive and finite.")
+    p = jnp.asarray(parameters)
+    column = condenser_components(p, jnp.array([1.0, 1.0, mini_control]))
+    source_z = -jnp.sum(jnp.exp(p[:9]))
+    downstream = np.asarray(column_matrix(column[2:], source_z=column[2].z))
+    cc, dd = downstream[2:4, :2], downstream[2:4, 2:4]
+    distance = -np.sum(cc * dd) / np.sum(cc * cc)
+    image_z = float(column[2].z) - distance
+    if not float(column[1].z + column[1].length) < image_z < float(column[2].z):
+        raise ValueError(
+            "Choose a mini control with a real front focal plane between CL3 and mini."
+        )
+
+    def image_matrix(controls):
+        lenses = condenser_components(p, jnp.r_[controls, mini_control])
+        return column_matrix((*lenses[:2], Plane(z=image_z)), source_z=source_z)
+
+    def residual(controls, target):
+        matrix = image_matrix(controls)
+        angle = jnp.dot(jnp.exp(p[9:11]), controls)
+        rotation = jnp.array(
+            [[jnp.cos(angle), jnp.sin(angle)], [-jnp.sin(angle), jnp.cos(angle)]]
+        )
+        return jnp.r_[
+            (matrix[:2, :2] / target - rotation).ravel(),
+            (matrix[:2, 2:4] / (image_z - source_z)).ravel(),
+        ]
+
+    current = np.asarray(initial_controls, dtype=float)
+    controls, matrices = [], []
+    for target in targets:
+        fit = least_squares(
+            residual,
+            current,
+            args=(target,),
+            bounds=control_bounds,
+            x_scale="jac",
+            ftol=1e-13,
+            xtol=1e-13,
+            gtol=1e-12,
+            max_iter=300,
+        )
+        if not np.all(np.isfinite(fit.residual)) or np.max(np.abs(fit.residual)) > 1e-9:
+            raise ValueError(
+                f"No accurate condenser design at source-image magnification {target:g}."
+            )
+        current = np.asarray(fit.x)
+        controls.append(np.r_[current, mini_control])
+        matrices.append(np.asarray(image_matrix(current)))
+    return {
+        "image_plane_z_m": image_z,
+        "image_magnifications": targets,
+        "controls": np.asarray(controls),
+        "image_matrices": np.asarray(matrices),
+    }
+
+
+def condenser_with_aperture(parameters, controls, *, radius_m, edge_width_m, centre_m):
+    """Native source-to-specimen column with the aperture just after CL3."""
+    from temgym_core.components import SigmoidAperture
+
+    column = condenser_components(parameters, controls)
+    z = (
+        column[1].z
+        + column[1].length
+        + jax.nn.sigmoid(parameters[19]) * jnp.exp(parameters[2])
+    )
+    aperture = SigmoidAperture(
+        z=z, radius=radius_m, edge_width=edge_width_m, x0=centre_m[0], y0=centre_m[1]
+    )
+    return (*column[:2], aperture, *column[2:])
+
+
+def first_crossover_fraction(parameters, controls):
+    """Source-image distance after CL1, divided by the free gap to CL3.
+
+    B+tD=0 gives the source conjugate in a drift after the native first lens.
+    Values between zero and one put it in the gap. This is an optical image
+    plane, not a threshold on the finite beam radius or an aperture measurement.
+    Use the first excitation branch (CL1 q < pi/2) for a first crossover.
+    """
+    p = jnp.asarray(parameters)
+    first = condenser_components(p, controls)[:1]
+    matrix = column_matrix(first, source_z=-jnp.sum(jnp.exp(p[:9])))
+    bb, dd = matrix[:2, 2:4], matrix[2:4, 2:4]
+    distance = -jnp.sum(bb * dd) / jnp.maximum(jnp.sum(dd * dd), 1e-24)
+    return distance / jnp.exp(p[1])
+
+
+def condenser_with_steering(
+    column, specimen_kick, *, voltage_v, gap_fractions=(0.3, 0.7)
+):
+    """Align a native DoubleDeflector and set its calibrated specimen response.
+
+    Illustrative positions lie in the free gap AFTER the aperture and before
+    the mini lens. They are not measured or fitted hardware locations. Changing
+    these positions and recalibrating the kicks preserves the specimen response.
+    This equivalence requires unchanged aperture illumination; upstream steering
+    that changes clipping needs a different acquisition/forward model.
+    """
+    from temgym_core.components import DoubleDeflector, SigmoidAperture
+    from temgym_core.ray import Ray
+
+    if not 0 < gap_fractions[0] < gap_fractions[1] < 1:
+        raise ValueError("Place two ordered deflectors strictly inside the free gap.")
+    index = next(i for i, c in enumerate(column) if isinstance(c, SigmoidAperture))
+    aperture, downstream = column[index], column[index + 1 :]
+    z1, z2 = aperture.z + jnp.asarray(gap_fractions) * (downstream[0].z - aperture.z)
+    transfer = column_matrix(downstream, source_z=z2, voltage=voltage_v)[:4, :4]
+    reference = Ray.origin().derive(z=z1, voltage=voltage_v)
+
+    def steering(commands, balances):
+        return DoubleDeflector(
+            z=z1,
+            spacing=z2 - z1,
+            shift_x=commands[0],
+            shift_y=commands[1],
+            tilt_x=commands[2],
+            tilt_y=commands[3],
+            shift_balance_x=balances[0],
+            shift_balance_y=balances[1],
+            tilt_balance_x=balances[2],
+            tilt_balance_y=balances[3],
+            include_axial_path=False,
+        )
+
+    def response(balances):
+        def trace(commands):
+            ray = steering(commands, balances)(reference)
+            return transfer @ jnp.stack((ray.x, ray.y, ray.dx, ray.dy))
+
+        return jax.jacfwd(trace)(jnp.zeros(4))
+
+    def alignment_error(balances):
+        matrix = response(balances)
+        # Shift must not tilt; tilt must not move the beam at the specimen.
+        # Divide position by spacing to put both errors in angular units.
+        return 0.5 * (
+            jnp.sum(matrix[2:, :2] ** 2) + jnp.sum((matrix[:2, 2:] / (z2 - z1)) ** 2)
+        )
+
+    # Newton–Raphson on the alignment gradient. The error is quadratic in
+    # these four ratios, so one Newton step aligns this linear column.
+    gradient = jax.grad(alignment_error)
+    initial = jnp.ones(4)
+    balances = initial - jnp.linalg.solve(
+        jax.jacfwd(gradient)(initial), gradient(initial)
+    )
+    commands = jnp.linalg.solve(response(balances), jnp.asarray(specimen_kick))
+    return (
+        *column[: index + 1],
+        steering(commands, balances),
+        *downstream,
+    )
+
+
+def matrix5(parameters, controls):
+    """Differentiate ray propagation through the same native condenser lenses."""
+    column = condenser_components(parameters, controls)
+    source_z = -jnp.sum(jnp.exp(jnp.asarray(parameters)[:9]))
+    return column_matrix(column, source_z=source_z)
+
+
+def source_moments(parameters, voltage_v=200000.0):
+    """Gaussian waist plus incoherent tilt spread; the diffraction floor is exact."""
+    from temgym_core.constants import energy2wavelength
+
     p = jnp.asarray(parameters)
     mean = jnp.r_[p[13:15] * 1e-8, p[15:17] * 1e-4]
+    angular_variance = (
+        jnp.exp(2 * p[18])
+        + (energy2wavelength(voltage_v) / (4 * jnp.pi * jnp.exp(p[17]))) ** 2
+    )
     covariance = jnp.diag(
-        jnp.r_[jnp.repeat(jnp.exp(2 * p[17]), 2), jnp.repeat(jnp.exp(2 * p[18]), 2)]
+        jnp.r_[jnp.repeat(jnp.exp(2 * p[17]), 2), jnp.repeat(angular_variance, 2)]
     )
     return mean, covariance
 
 
-def specimen_moments(parameters, controls):
+def specimen_moments(parameters, controls, voltage_v=200000.0):
     transfer = matrix5(parameters, controls)[:4, :4]
-    mean, covariance = source_moments(parameters)
+    mean, covariance = source_moments(parameters, voltage_v)
     return transfer @ mean, transfer @ covariance @ transfer.T
 
 
@@ -207,3 +395,49 @@ def projector_at_voltage(
     ratio = magnetic_strength_ratio(voltage_v, reference_voltage_v)
     p = jnp.asarray(parameters).at[11].multiply(ratio).at[12:16].add(jnp.log(ratio))
     return projector_matrix5(p, controls)
+
+
+def condenser_starting_guesses(
+    *, starting_guess_path, number_of_broad_starts=4, number_of_apertures=1
+):
+    """Four engineering guesses and broad starts; no earlier fit or truth is loaded."""
+    import json
+    from pathlib import Path
+
+    from scipy.stats import qmc
+
+    from .apertures import equivalent_aperture_model
+    from .condenser_model import initial_parameters
+
+    settings = json.loads(Path(starting_guess_path).read_text())
+    model = settings["model"]
+    fraction = model["aperture_gap_fraction"]
+    p = np.r_[
+        np.log(np.asarray(model["gaps_mm"]) / 1000),
+        np.log(np.asarray(model["lens_lengths_mm"]) / 1000),
+        np.log(model["strength_magnitudes"]),
+        np.asarray(model["source_position_nm"]) / 10,
+        np.asarray(model["source_angle_mrad"]) * 10,
+        np.log(model["source_rms_nm"] * 1e-9),
+        np.log(model["source_incoherent_angular_rms_mrad"] * 1e-3),
+        np.log(fraction / (1 - fraction)),
+        model["aperture_centre_um"],
+    ]
+
+    def extend(base):
+        return np.r_[
+            base, base[0], base[13:19], np.tile(base[20:22], number_of_apertures - 1)
+        ]
+
+    starts = [extend(p), extend(np.r_[initial_parameters(), -3.0, 0.1, -0.1])]
+    starts += [
+        extend(equivalent_aperture_model(p, objective_strength=-q))
+        for q in [0.35, 0.65]
+    ]
+    lower, upper = extend(settings["bounds_lower"]), extend(settings["bounds_upper"])
+    if number_of_broad_starts:
+        sample = qmc.LatinHypercube(d=len(lower), seed=713).random(
+            number_of_broad_starts
+        )
+        starts += list(qmc.scale(sample, lower + 1e-7, upper - 1e-7))
+    return starts, lower, upper

@@ -1,0 +1,11 @@
+{
+  "seed": 7,
+  "frames": 129,
+  "max_pixel_quadrature_error_noise_units": 1.5154664938413583e-10,
+  "expected_order_counts": [
+    2241547.760118679,
+    6432978.129932453,
+    2241547.760118679
+  ],
+  "note": "Checks numerical integration of the reduced Gaussian model, not full angular reflection."
+}

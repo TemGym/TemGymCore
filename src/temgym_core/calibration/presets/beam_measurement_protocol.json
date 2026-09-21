@@ -1,0 +1,48 @@
+{
+  "description": "Two focused projector baselines with individual lens wobbles. Each projector state uses equal/opposite X shifts and X tilts; the round-lens model supplies the Y symmetry. Condenser states use one illumination baseline and independent lens wobbles. Apertures remain inserted. Relative controls are synthetic, not calibrated hardware DACs.",
+  "nominal_magnifications": [
+    40000.0,
+    45000.0
+  ],
+  "projector_reference_controls": [
+    1.0,
+    0.6156826056827933,
+    0.5675232215801136,
+    1.7562259961484548,
+    0.8387606122572018
+  ],
+  "projector_wobble_fractions": {
+    "IL1": 0.01,
+    "IL2": 0.05,
+    "IL3": 0.05,
+    "PL1": 0.05
+  },
+  "condenser_image_magnification": 0.2,
+  "mini_control": 2.4,
+  "condenser_wobble_fractions": {
+    "CL1": [
+      0.0005,
+      0.001
+    ],
+    "CL3": [
+      0.0002,
+      0.0004
+    ],
+    "Mini": [
+      0.01,
+      0.02
+    ]
+  },
+  "shift_m": 2e-08,
+  "tilt_rad": 0.003,
+  "nominal_incident_electrons_per_image": 100000000.0,
+  "crossover_fraction_bounds": [
+    0.01,
+    0.99
+  ],
+  "condenser_curve_magnifications": [
+    0.1,
+    0.5,
+    1.0
+  ]
+}

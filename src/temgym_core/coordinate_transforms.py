@@ -1,3 +1,4 @@
+import jax_dataclasses as jdc
 import jax.numpy as jnp
 import jax.lax as lax
 from . import Degrees, Radians, ShapeYX, CoordsXY, ScaleYX
@@ -139,3 +140,48 @@ def apply_transformation(y, x, transformation):
     r_transformed = transformation @ r.T
     y_transformed, x_transformed, _ = r_transformed
     return y_transformed, x_transformed
+
+
+# A posed surface/detector lives in three dimensions; it is not an axial plane.
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class PlaneFrame:
+    """Orthonormal right-handed plane frame in laboratory XYZ, in metres.
+
+    u_xyz and v_xyz are orthogonal unit vectors within the plane; their cross
+    product points along the local normal. Supply an orthonormal basis. This
+    is geometry only and does not imply a Gaussian scattering interaction.
+    """
+
+    origin_xyz: jnp.ndarray
+    u_xyz: jnp.ndarray
+    v_xyz: jnp.ndarray
+
+    @property
+    def normal_xyz(self):
+        return jnp.cross(jnp.asarray(self.u_xyz), jnp.asarray(self.v_xyz))
+
+    @property
+    def basis_xyz(self):
+        return jnp.stack((self.u_xyz, self.v_xyz, self.normal_xyz), axis=-1)
+
+    def to_world(self, local_xyz):
+        return jnp.asarray(self.origin_xyz) + jnp.asarray(local_xyz) @ self.basis_xyz.T
+
+    def to_local(self, world_xyz):
+        return (jnp.asarray(world_xyz) - self.origin_xyz) @ self.basis_xyz
+
+    def intersect_line(self, origin_xyz, direction_xyz):
+        """Return (world hit, line parameter); parallel lines return NaNs.
+
+        The line is origin + parameter*direction. With a unit direction the
+        parameter is signed travel distance. Negative values intersect behind
+        the supplied origin; the caller decides whether that is admissible.
+        """
+        origin, direction = jnp.asarray(origin_xyz), jnp.asarray(direction_xyz)
+        denominator = jnp.sum(direction * self.normal_xyz, axis=-1)
+        numerator = jnp.sum((self.origin_xyz - origin) * self.normal_xyz, axis=-1)
+        denominator = jnp.where(jnp.abs(denominator) > 1e-14, denominator, jnp.nan)
+        distance = numerator / denominator
+        return origin + distance[..., None] * direction, distance

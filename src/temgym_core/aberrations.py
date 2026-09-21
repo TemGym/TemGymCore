@@ -110,6 +110,58 @@ def grad_W_krivanek(alpha_x, alpha_y, p):
     return dWx, dWy
 
 
+def _krivanek_cartesian_terms(alpha_x, alpha_y, p):
+    """Wave aberration and its gradient, using only real polynomials.
+
+    alpha**n cos(m(phi-phi0)) is
+    (x*x+y*y)**((n-m)//2) Re[(x+iy)**m exp(-im phi0)].
+    The recurrence avoids polar coordinates and is smooth on axis at every
+    derivative order. Inputs may be scalars or broadcast-compatible arrays.
+    """
+    x, y = alpha_x, alpha_y
+    radius2 = x*x + y*y
+    real = [jnp.ones_like(radius2)]
+    imag = [jnp.zeros_like(radius2)]
+    for m in range(1, 7):
+        previous_real, previous_imag = real[-1], imag[-1]
+        real.append(x*previous_real - y*previous_imag)
+        imag.append(y*previous_real + x*previous_imag)
+    value = jnp.zeros_like(radius2)
+    gx, gy = jnp.zeros_like(radius2), jnp.zeros_like(radius2)
+    for n in range(2, 7):
+        for m in range(n % 2, n + 1, 2):
+            coefficient = getattr(p, f"C{n-1}{m}") / n
+            angle = 0.0 if m == 0 else m * getattr(p, f"phi{n-1}{m}")
+            cosine, sine = jnp.cos(angle), jnp.sin(angle)
+            harmonic = real[m]*cosine + imag[m]*sine
+            power = (n-m)//2
+            radial = radius2**power
+            value = value + coefficient * radial * harmonic
+            if power:
+                radial_derivative = 2*power * radius2**(power-1) * harmonic
+                gx = gx + coefficient * x * radial_derivative
+                gy = gy + coefficient * y * radial_derivative
+            if m:
+                gx = gx + coefficient * radial * m * (
+                    real[m-1]*cosine + imag[m-1]*sine
+                )
+                gy = gy + coefficient * radial * m * (
+                    -imag[m-1]*cosine + real[m-1]*sine
+                )
+    return value, gx, gy
+
+
+def W_krivanek_cartesian(alpha_x, alpha_y, p: KrivanekCoeffs):
+    """Krivanek wave aberration with a nonsingular Cartesian representation."""
+    return _krivanek_cartesian_terms(alpha_x, alpha_y, p)[0]
+
+
+def grad_W_krivanek_cartesian(alpha_x, alpha_y, p: KrivanekCoeffs):
+    """Cartesian wave-aberration gradient, including at the optical axis."""
+    _, gx, gy = _krivanek_cartesian_terms(alpha_x, alpha_y, p)
+    return gx, gy
+
+
 @jdc.pytree_dataclass(frozen=True)
 class SeidelCoeffs:
     A: float = 0.0  # Pure Phase Shift

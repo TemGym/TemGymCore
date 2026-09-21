@@ -1,0 +1,21 @@
+{
+  "dpi": 160,
+  "figure_size_inches": [
+    15.0,
+    8.6
+  ],
+  "formats": [
+    "png",
+    "svg",
+    "pdf"
+  ],
+  "metadata": {
+    "envelope_scale": 60,
+    "models": [
+      "Initial guess",
+      "Fitted model"
+    ],
+    "record": 1
+  },
+  "renderer": "temgym_core.plotting.export_ray_figure"
+}

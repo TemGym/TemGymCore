@@ -6,9 +6,8 @@ from scipy.special import ndtr
 
 from temgym_core.components import solenoid_column
 from temgym_core.constants import energy2wavelength
-from temgym_core.calibration.condenser_images import illuminate_gaussian_spots
-from temgym_core.moments import SampledTransmission
 from temgym_core.evaluate import gaussian_intensity_image, normal_interval_probability
+from temgym_core.moments import SampledTransmission, measure_detector_moments
 from temgym_core.run import column_matrix, propagate_gaussian_mixture
 from temgym_core.source import gaussian_waist
 
@@ -180,20 +179,6 @@ def test_detector_matches_independent_pixel_integrals_and_loses_offscreen_flux()
     assert 0.399 < float(actual.sum()) < 0.4
 
 
-def test_specimen_gaussian_product_matches_direct_product():
-    spot_centres = jnp.array([[1.0, -2.0]])
-    mean = jnp.array([-0.3, 0.1])
-    centres, variance, weights = illuminate_gaussian_spots(
-        spot_centres, jnp.array([0.7]), 0.5, mean, 1.2
-    )
-    points = jnp.array([[0.0, 0.0], [1.0, -1.0], [2.0, -3.0]])
-    direct = -0.5 * jnp.sum((points - mean) ** 2, axis=1) / 1.2
-    direct += -0.5 * jnp.sum((points - spot_centres[0]) ** 2, axis=1) / 0.5
-    product = -0.5 * jnp.sum((points - centres[0]) ** 2, axis=1) / variance
-    np.testing.assert_allclose(direct - direct[0], product - product[0], atol=2e-14)
-    np.testing.assert_allclose(weights, [1.0])
-
-
 def test_nonnegative_exposure_background_matches_active_set_reference():
     from scipy.optimize import nnls
 
@@ -228,20 +213,54 @@ def test_mixture_uses_source_voltage_for_current_controlled_lenses():
     from temgym_core.gaussian import FreeSpacePropagator
     from temgym_core.run import run_to_end
 
-    voltage = 100_000.
-    source = gaussian_waist(z=0., voltage=voltage, rms_size=1e-6)
-    lens = ElectromagneticLens(z=.1, turns=100., current=1.,
-                              Gc=float(effective_accelerating_potential(voltage)) / (.08 * 100**2))
-    column = (lens, Plane(z=.3))
-    extra = jnp.diag(jnp.array((0., 0., 1e-6, 2e-6)))
+    voltage = 100_000.0
+    source = gaussian_waist(z=0.0, voltage=voltage, rms_size=1e-6)
+    lens = ElectromagneticLens(
+        z=0.1,
+        turns=100.0,
+        current=1.0,
+        Gc=float(effective_accelerating_potential(voltage)) / (0.08 * 100**2),
+    )
+    column = (lens, Plane(z=0.3))
+    extra = jnp.diag(jnp.array((0.0, 0.0, 1e-6, 2e-6)))
     _, mixed_covariance = propagate_gaussian_mixture(source, column, extra)
-    coherent = run_to_end(source, column, propagator=FreeSpacePropagator(include_axial_path=False))
+    coherent = run_to_end(
+        source, column, propagator=FreeSpacePropagator(include_axial_path=False)
+    )
     angle = float(lens.rotation_angle(voltage))
-    rotation = np.array(((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle))))
+    rotation = np.array(
+        ((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle)))
+    )
     identity, zero = np.eye(2), np.zeros((2, 2))
-    before = np.block([[identity, .1 * identity], [zero, identity]])
-    after = np.block([[identity, .2 * identity], [zero, identity]])
-    kick = np.block([[rotation, zero], [-rotation / .08, rotation]])
+    before = np.block([[identity, 0.1 * identity], [zero, identity]])
+    after = np.block([[identity, 0.2 * identity], [zero, identity]])
+    kick = np.block([[rotation, zero], [-rotation / 0.08, rotation]])
     matrix = after @ kick @ before
     expected = coherent.moments()[1] + matrix @ extra @ matrix.T
     np.testing.assert_allclose(mixed_covariance, expected, rtol=1e-10, atol=1e-18)
+
+
+def test_joint_flux_and_moment_covariance_matches_pixel_finite_differences():
+    yy, xx = np.indices((7, 9))
+    image = 3.0 + 100 * np.exp(-((xx - 3.2) ** 2 + (yy - 2.8) ** 2) / 4.0)
+
+    def measure(frame):
+        result = measure_detector_moments(
+            images=frame[None], background_counts=3.0, read_noise_counts=2.0
+        )
+        return np.r_[result["values"][0], result["signal_counts"][0]]
+
+    jac = []
+    step = 1e-4
+    for index in range(image.size):
+        delta = np.zeros_like(image)
+        delta.flat[index] = step
+        jac.append((measure(image + delta) - measure(image - delta)) / (2 * step))
+    jac = np.asarray(jac).T
+    expected = (jac * (image.ravel() + 4.0)) @ jac.T
+    result = measure_detector_moments(
+        images=image[None], background_counts=3.0, read_noise_counts=2.0
+    )
+    np.testing.assert_allclose(
+        result["covariance_with_flux"][0], expected, rtol=1e-5, atol=1e-8
+    )

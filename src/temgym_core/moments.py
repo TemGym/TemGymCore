@@ -23,6 +23,8 @@ def measure_detector_moments(
 ):
     """Measure five image moments with full covariance from independent pixels.
 
+    Coordinates follow the native Detector: x increases rightward and y
+    upward. Covariance xy and its uncertainty use those same physical axes.
     Calibrated dark background is subtracted without clipping signal values.
     Shot/read noise propagates through the normalized moments using the delta
     method. Drift moves centroids; unknown drift must be fitted or eliminated
@@ -31,9 +33,12 @@ def measure_detector_moments(
     images = np.asarray(images, dtype=float)
     if images.ndim != 3 or not np.isfinite(images).all():
         raise ValueError("Supply finite images of shape (frames, height, width).")
-    yy, xx = np.indices(images.shape[1:], dtype=float)
-    xx -= (images.shape[2] - 1) / 2
-    yy -= (images.shape[1] - 1) / 2
+    from .components import Detector
+
+    # Unit pixels keep the measurements in pixel units, with TemGym's x/y axes.
+    detector = Detector(z=0.0, shape=images.shape[1:], pixel_size=(1.0, 1.0))
+    xy = np.asarray(detector.coords).reshape(*images.shape[1:], 2)
+    xx, yy = xy[..., 0], xy[..., 1]
     regions = (
         np.ones(images.shape, dtype=bool)
         if regions is None
@@ -65,10 +70,24 @@ def measure_detector_moments(
         measurement_derivative,
         measurement_derivative,
     )
-    return {"values": values, "covariance": measurement_covariance, "signal_counts": flux}
+    # Retain correlations when intensity is fitted alongside normalized moments.
+    flux_cross = np.einsum("nyx,nyxi->ni", pixel_noise_variance, measurement_derivative)
+    joint_covariance = np.zeros((len(images), 6, 6))
+    joint_covariance[:, :5, :5] = measurement_covariance
+    joint_covariance[:, :5, 5] = flux_cross
+    joint_covariance[:, 5, :5] = flux_cross
+    joint_covariance[:, 5, 5] = pixel_noise_variance.sum(axis=(1, 2))
+    return {
+        "values": values,
+        "covariance": measurement_covariance,
+        "signal_counts": flux,
+        "covariance_with_flux": joint_covariance,
+    }
 
 
-def predict_detector_moments(matrix, mean, covariance, *, pixel_pitch_m, psf_sigma_pixels):
+def predict_detector_moments(
+    matrix, mean, covariance, *, pixel_pitch_m, psf_sigma_pixels
+):
     """Predict [mean x, mean y, var x, cov xy, var y] in detector pixel units.
 
     The 5×5 matrix acts on [x, y, theta_x, theta_y, 1]. The specimen mean and
@@ -82,7 +101,12 @@ def predict_detector_moments(matrix, mean, covariance, *, pixel_pitch_m, psf_sig
     image_covariance = mapping @ covariance @ mapping.T / pixel_pitch_m**2
     image_covariance += jnp.eye(2) * (psf_sigma_pixels**2 + 1 / 12)
     return jnp.array(
-        [*centre, image_covariance[0, 0], image_covariance[0, 1], image_covariance[1, 1]]
+        [
+            *centre,
+            image_covariance[0, 0],
+            image_covariance[0, 1],
+            image_covariance[1, 1],
+        ]
     )
 
 
@@ -128,18 +152,33 @@ def moment_regions(
 
 @dataclass(frozen=True)
 class SampledTransmission:
-    """Known complex specimen sampled on a uniform integration grid.
+    """Known complex transmission sampled at integration points.
 
     ``intensity`` is |t|², ``log_amplitude_gradient`` is grad(log|t|) in 1/m,
     and ``path_gradient`` is grad(optical path), in radians of ray slope.
-    Arrays are flattened over the same grid. Constant cell area cancels in
-    the normalized moments; refine this grid independently of Gaussian count.
+    Arrays are flattened over the same points. Optional quadrature weights
+    support nonuniform grids; equal cell areas cancel in normalized moments.
+    Refine this integration independently of the Gaussian beamlet count.
     """
 
     coordinates_m: jax.Array
     intensity: jax.Array
     log_amplitude_gradient: jax.Array
     path_gradient: jax.Array
+    quadrature_weights: jax.Array | None = None
+
+    @classmethod
+    def from_component(cls, component, coordinates_m, *, quadrature_weights=None):
+        """Sample a native component's amplitude, phase and their derivatives."""
+        xy = jnp.asarray(coordinates_m)
+        log_amplitude = jax.vmap(component.log_transmission)(xy)
+        return cls(
+            xy,
+            jnp.exp(2 * log_amplitude),
+            jax.vmap(jax.grad(component.log_transmission))(xy),
+            jax.vmap(jax.grad(component.phase_shift))(xy),
+            quadrature_weights,
+        )
 
     def _exit_moments(
         self,
@@ -150,7 +189,10 @@ class SampledTransmission:
         wavelength,
     ):
         xy = jnp.asarray(self.coordinates_m)
-        weights = softmax(log_illumination + jnp.log(jnp.asarray(self.intensity)))
+        log_weights = log_illumination + jnp.log(jnp.asarray(self.intensity))
+        if self.quadrature_weights is not None:
+            log_weights += jnp.log(jnp.asarray(self.quadrature_weights))
+        weights = softmax(log_weights)
         state = jnp.concatenate((xy, angles + self.path_gradient), axis=1)
         mean = weights @ state
         centred = state - mean
@@ -215,7 +257,11 @@ class SampledTransmission:
         angles = angle_rad + curvature_per_m * delta
         extra_angular_covariance = jnp.eye(2) * angular_rms_rad**2
         return self._exit_moments(
-            log_intensity, amplitude_gradient, angles, extra_angular_covariance, wavelength
+            log_intensity,
+            amplitude_gradient,
+            angles,
+            extra_angular_covariance,
+            wavelength,
         )
 
 

@@ -25,9 +25,12 @@ For microscope calibration, start with the [fitting notebook](examples/microscop
 TemGymCore also propagates coherent Gaussian beamlets through the same component
 models. Gaussian bundles can be constructed with `make_gaussian`, propagated
 directly as batches, and evaluated on a detector with `evaluate_gaussians`.
-Focused point/probe and Airy-input constructors live in `temgym_core.source`,
-while `diagnose_gaussian_action_sampling` reports when a component is not well
-represented by a beamlet's local quadratic approximation.
+Focused point/probe and Airy-input constructors live in `temgym_core.source`.
+`BraggSample.from_unit_cell` creates explicit Gaussian diffraction orders from
+a periodic thin specimen's complex transmission; the existing
+[Bragg notebook](examples/gaussians/diffraction_bragg.ipynb) checks its intensities
+and flux against a sinusoidal phase grating. Other thin specimen components
+use a local quadratic approximation, which requires sufficiently narrow beamlets.
 
 `wavelength_unit` defines the coordinate unit for the complete Gaussian model,
 not only the wavelength. Keep source dimensions, component positions, and grid
@@ -311,3 +314,7 @@ from temgym_core.run import run_iter
 for step_idx, (component, ray) in enumerate(run_iter(ray_in, model)):
     print(f"Step {step_idx}: {ray}")
 ```
+
+### SEM reflection example
+
+[SEM reflection diffraction](examples/sem_reflection/README.md) contains an executed notebook with a 1 nm Gaussian probe, a posed silicon surface, fixed-pivot deflector rocking, and a coherent million-packet Medipix detector render. It uses the shared Matplotlib plotting module and explicitly documents its kinematic approximations.

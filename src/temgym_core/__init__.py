@@ -90,6 +90,7 @@ _EXPORTS = {
     **dict.fromkeys(
         (
             "plot_model",
+            "plot_reflection_column",
             "plot_model_plotly",
             "plot_abcd_profile",
             "PlotParams",
@@ -102,6 +103,8 @@ _EXPORTS = {
         "microscope",
     ),
     "InterpolatedSample2D": "components",
+    "BraggSample": "components",
+    "PotentialStepResponse": "scattering",
 }
 
 

@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from numba import njit
@@ -772,6 +773,155 @@ def sample_input_wave(
         wavelength_unit=wavelength_unit,
     )
     return beam
+
+
+def decompose_gaussian(
+    beam: GaussianBeam, *, num_across: int, through=(),
+    extent_rms: float = 6.0, overlap: float = 1.1,
+) -> GaussianBeam:
+    """Represent one round coherent Gaussian by ``num_across**2`` beamlets.
+
+    The returned bundle starts at the input beam's plane. ``through`` is an
+    optional lossless, linear, round column ending at a sampling plane (usually
+    just before an aperture). Choose narrow beamlets there, then map them back
+    to the source. Propagating the bundle forward uses the ordinary components.
+    The physical source stays the same as the sampling is refined.
+
+    ``extent_rms`` is the lattice half-width in intensity RMS units at that
+    plane. ``overlap`` is each beamlet's amplitude 1/e radius / lattice spacing.
+    Gaussian convolution sets the weights, rather than treating the beamlets
+    as independent emitters. Sum their complex fields, not their intensities.
+    This constructs a fixed numerical basis; it is not a differentiable fit.
+    """
+    import operator
+    from .components import ABCDTransfer
+    from .gaussian import FreeSpacePropagator
+    from .run import column_matrix, run_to_end
+
+    num_across = operator.index(num_across)
+    if num_across < 8:
+        raise ValueError("num_across must be at least 8.")
+    if not np.isfinite(extent_rms) or extent_rms <= 0:
+        raise ValueError("extent_rms must be finite and positive.")
+    if not np.isfinite(overlap) or overlap <= 0:
+        raise ValueError("overlap must be finite and positive.")
+    if np.shape(beam.x) != () or np.shape(beam.Q_inv) != (2, 2):
+        raise ValueError("Supply one Gaussian, not a beamlet bundle.")
+    through = tuple(through)
+    propagator = FreeSpacePropagator(include_axial_path=False)
+    target = run_to_end(beam, through, propagator=propagator) if through else beam
+    q = np.asarray(target.Q_inv)
+    if not np.allclose(q, q[0, 0] * np.eye(2), rtol=1e-9, atol=1e-12):
+        raise ValueError("The Gaussian must be round at the sampling plane.")
+    k, curvature = float(target.k), float(q[0, 0].real)
+    if not np.isfinite(q).all() or q[0, 0].imag <= 0:
+        raise ValueError("The Gaussian must have finite, positive width.")
+    width = np.sqrt(2 / (k * q[0, 0].imag))
+    step = extent_rms * width / num_across  # intensity RMS = width / 2
+    waist = overlap * step
+    weight_width2 = width**2 - waist**2
+    if weight_width2 <= 0:
+        raise ValueError("Increase num_across: beamlets must be narrower than the beam.")
+    axis = (jnp.arange(num_across) - 0.5 * (num_across - 1)) * step
+    x, y = jnp.meshgrid(axis, axis)
+    x, y = x.ravel(), y.ravel()
+    weights = (step**2 * width**2 / (jnp.pi * waist**2 * weight_width2)
+               * jnp.exp(-(x*x + y*y) / weight_width2))
+    sampled = GaussianBeam(
+        x=target.x + x, y=target.y + y,
+        dx=target.dx + curvature*x, dy=target.dy + curvature*y,
+        z=target.z, voltage=target.voltage, amplitude=target.amplitude * weights,
+        Q_inv=jnp.broadcast_to((curvature + 2j / (k * waist**2)) * jnp.eye(2),
+                              (num_across**2, 2, 2)),
+        pathlength=target.pathlength + target.dx*x + target.dy*y
+        + 0.5 * curvature * (x*x + y*y),
+    )
+    if not through:
+        return sampled
+
+    matrix = column_matrix(through, source_z=beam.z, voltage=beam.voltage)
+    inverse = jnp.linalg.inv(matrix[:4, :4])
+    offset = matrix[:4, 4]
+    shifted = sampled.derive(x=sampled.x-offset[0], y=sampled.y-offset[1],
+                             dx=sampled.dx-offset[2], dy=sampled.dy-offset[3])
+    source = ABCDTransfer(A=inverse[:2, :2], B=inverse[:2, 2:],
+                          C=inverse[2:, :2], D=inverse[2:, 2:])(shifted).derive(
+        z=beam.z, amplitude=jnp.ones_like(weights), pathlength=jnp.zeros_like(x),
+    )
+    # Let the native column supply its own action and Gouy factor. Undo these
+    # on the source so a forward pass reconstructs the desired sampling basis.
+    returned = run_to_end(source, through, propagator=propagator)
+    return source.derive(amplitude=sampled.amplitude / returned.amplitude,
+                         pathlength=sampled.pathlength - returned.pathlength)
+
+
+def decompose_gaussian_angular(
+    beam: GaussianBeam, *, num_across: int, through=(),
+    broadening: float = 8.0, extent_sigma: float = 6.0,
+) -> GaussianBeam:
+    """Represent one coherent Gaussian by wider packets with sampled tilts.
+
+    Gaussian angular quadrature reconstructs the original field by interference.
+    Increasing num_across refines the quadrature without shrinking packet widths
+    or increasing its angular extent. This is useful for nanometre probes where
+    a very fine spatial decomposition would create nonparaxial narrow packets.
+    broadening multiplies each packet's spatial width at the sampling plane.
+    through optionally selects that plane via a lossless linear optical column;
+    the returned bundle is mapped back to the input plane for native propagation.
+    Construction is a fixed host-side choice of basis, not a differentiable fit.
+    """
+    import operator
+    from .gaussian import FreeSpacePropagator
+    from .run import run_to_end
+
+    num_across = operator.index(num_across)
+    if num_across < 8:
+        raise ValueError("num_across must be at least 8.")
+    if not np.isfinite(broadening) or broadening <= 1:
+        raise ValueError("broadening must be finite and greater than one.")
+    if not np.isfinite(extent_sigma) or extent_sigma <= 0:
+        raise ValueError("extent_sigma must be finite and positive.")
+    if np.shape(beam.x) != () or np.shape(beam.Q_inv) != (2, 2):
+        raise ValueError("Supply one Gaussian, not a beamlet bundle.")
+    through = tuple(through)
+    propagator = FreeSpacePropagator(include_axial_path=False)
+    target = run_to_end(beam, through, propagator=propagator) if through else beam
+    q = np.asarray(target.Q_inv)
+    k = float(target.k)
+    covariance = k * q.imag * (1 - broadening**-2)
+    if not np.isfinite(covariance).all() or np.linalg.eigvalsh(covariance).min() <= 0:
+        raise ValueError("The Gaussian envelope must have positive definite precision.")
+    root = np.linalg.cholesky(covariance)
+    step = 2 * extent_sigma / num_across
+    axis = (np.arange(num_across) + 0.5) * step - extent_sigma
+    xx, yy = np.meshgrid(axis, axis)
+    standard = np.column_stack((xx.ravel(), yy.ravel()))
+    weights = step**2 / (2 * np.pi) * np.exp(-0.5 * np.sum(standard**2, axis=1))
+    slopes = jnp.asarray(standard @ root.T / k)
+    count = num_across**2
+    sampled = jax.tree.map(lambda value: jnp.repeat(value, count, axis=0), target.to_vector())
+    sampled = sampled.derive(
+        dx=target.dx + slopes[:, 0], dy=target.dy + slopes[:, 1],
+        amplitude=target.amplitude * jnp.asarray(weights),
+        Q_inv=jnp.broadcast_to(jnp.asarray(q.real + 1j*q.imag/broadening**2), (count, 2, 2)),
+    )
+    if not through:
+        return sampled
+    from .components import ABCDTransfer
+    from .run import column_matrix
+
+    matrix = column_matrix(through, source_z=beam.z, voltage=beam.voltage)
+    inverse = jnp.linalg.inv(matrix[:4, :4])
+    offset = matrix[:4, 4]
+    shifted = sampled.derive(x=sampled.x-offset[0], y=sampled.y-offset[1],
+                             dx=sampled.dx-offset[2], dy=sampled.dy-offset[3])
+    source = ABCDTransfer(A=inverse[:2, :2], B=inverse[:2, 2:],
+                          C=inverse[2:, :2], D=inverse[2:, 2:])(shifted).derive(
+        z=beam.z, amplitude=jnp.ones(count), pathlength=jnp.zeros(count),
+    )
+    returned = run_to_end(source, through, propagator=propagator)
+    return source.derive(amplitude=sampled.amplitude / returned.amplitude,
+                         pathlength=sampled.pathlength - returned.pathlength)
 
 
 def gaussian_waist(*, z, voltage, rms_size, x=0.0, y=0.0, theta_x=0.0, theta_y=0.0):

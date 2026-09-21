@@ -530,3 +530,34 @@ def test_plot_model_r_side_by_sign_places_rays_on_both_sides_without_mirroring()
         assert has_pos and has_neg
     finally:
         plt.close(fig)
+
+
+def test_geometric_envelope_resolves_crossovers_and_stops_at_aperture():
+    from temgym_core.components import SigmoidAperture
+    from temgym_core.plotting import trace_ray_envelope
+
+    rays = Ray(x=np.array([-1e-6, 1e-6]), y=0.,
+               dx=np.array([1e-3, -1e-3]), dy=0., z=0., pathlength=0.)
+    segments = trace_ray_envelope((Plane(z=.002),), rays, ray_coordinate="x")
+    z, bounds = segments[0]
+    np.testing.assert_allclose(bounds[np.argmin(abs(z - .001))], 0., atol=1e-12)
+    aperture = SigmoidAperture(z=.002, radius=.2e-6, edge_width=.01e-6)
+    blocked = trace_ray_envelope((aperture, Plane(z=.004)), rays)
+    assert blocked[-1][0][-1] == pytest.approx(.002)
+
+
+def test_geometric_solenoid_envelope_matches_native_endpoint_after_clipping():
+    from temgym_core.components import HardEdgeSolenoid, SigmoidAperture
+    from temgym_core.plotting import trace_ray_envelope
+    from temgym_core.run import run_to_end_vmapped
+
+    rays = Ray(x=np.linspace(-3e-6, 3e-6, 13), y=0., dx=0., dy=0.,
+               z=0., pathlength=0.)
+    aperture = SigmoidAperture(z=.002, radius=1.6e-6, edge_width=.1e-6)
+    lens = HardEdgeSolenoid(z=.003, length=.005, q=.37)
+    column = (aperture, lens, Plane(z=.03))
+    segments = trace_ray_envelope(column, rays)
+    survivors = rays[np.flatnonzero(abs(rays.x) <= aperture.radius)]
+    end = run_to_end_vmapped(survivors, column)
+    x = np.asarray(end.x) * np.cos(-lens.q) + np.asarray(end.y) * np.sin(-lens.q)
+    np.testing.assert_allclose(segments[-1][1][-1], [x.min(), x.max()], rtol=2e-5, atol=1e-12)

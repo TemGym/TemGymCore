@@ -1,118 +1,127 @@
-"""Independent aperture centres, alignment accuracy and shared current references."""
-
-import json
-from pathlib import Path
+"""Native aperture moments include clipping, diffraction and narrow crossovers."""
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy.optimize import minimize_scalar
 
-from temgym_core.calibration.apertures import (
-    alignment_residual,
-    aperture_centres,
-    aperture_moments,
-    aperture_specification,
-    current_fractions,
-    make_aperture_transmission,
-    make_focus_transmission,
-    simulate_aligned_apertures,
+from temgym_core.calibration.apertures import make_aperture_moments
+from temgym_core.calibration.condenser_model import (
+    condenser_with_aperture,
+    generating_parameters,
+    source_moments,
+    specimen_moments,
 )
-from temgym_core.calibration.inference import condenser_starting_guesses
+from temgym_core.components import SigmoidAperture
+from temgym_core.run import column_matrix
 
 
-def initial(number_of_apertures):
-    return jnp.asarray(
-        condenser_starting_guesses(
-            starting_guess_path=Path(__file__).parents[1]
-            / "src/temgym_core/calibration/presets/microscope_condenser_starting_guess.json",
-            number_of_apertures=number_of_apertures,
-            number_of_broad_starts=0,
-        )[0][0]
+def parameters():
+    return jnp.r_[
+        generating_parameters(), np.log(0.0025 / (0.056 - 0.0025)), 0.2, -0.15
+    ]
+
+
+def test_aperture_is_an_inserted_native_component_between_cl3_and_mini():
+    p = parameters()
+    column = condenser_with_aperture(
+        p, jnp.ones(3), radius_m=2e-6, edge_width_m=150e-9, centre_m=p[20:22] * 1e-6
     )
+    aperture = column[2]
+    assert isinstance(aperture, SigmoidAperture)
+    assert column[1].z + column[1].length < aperture.z < column[3].z
+    np.testing.assert_allclose([aperture.x0, aperture.y0], p[20:22] * 1e-6)
 
 
-def test_independent_centres_reduce_to_common_centre_and_have_local_derivatives():
-    p = initial(3)
-    spec = aperture_specification()
-    old = make_focus_transmission(specification=spec)
-    new = make_aperture_transmission(
-        specification={**spec, "independent_centres": True}
+def test_large_inserted_aperture_approaches_lossless_native_transport():
+    p = parameters()
+    controls = jnp.array([1.37, 0.814, 1.145])
+    predict = make_aperture_moments(
+        radius_m=200e-6, edge_width_m=150e-9, voltage_v=200000.0
     )
-    command = jnp.array([1.75, 0.75, 1.0])
-    np.testing.assert_allclose(new(p, command), old(p, command), rtol=1e-11, atol=1e-13)
-    jac = np.asarray(jax.jacfwd(lambda x: new(x, command))(p))
-    np.testing.assert_array_equal(jac[0, 29:], 0.0)
-    np.testing.assert_array_equal(jac[1, 31:], 0.0)
-    np.testing.assert_array_equal(jac[2, 29:31], 0.0)
-    assert np.linalg.norm(jac[1, 29:31]) > 0
+    mean, cov, flux = predict(p, controls, p[20:22] * 1e-6)
+    expected_mean, expected_cov = specimen_moments(p, controls)
+    units = np.sqrt(np.diag(expected_cov))
+    scale = units[:, None] * units[None, :]
+    np.testing.assert_allclose(mean, expected_mean, atol=1e-12)
+    np.testing.assert_allclose(cov / scale, expected_cov / scale, atol=1e-7)
+    np.testing.assert_allclose(flux, 1.0, atol=1e-9)
 
 
-def test_alignment_is_finite_accuracy_for_each_hole_and_can_be_removed():
-    p = initial(3)
-    controls = jnp.array([1.75, 0.75, 1.0])
-    mean, _ = aperture_moments(p, controls, "after")
-    centre = mean * 1000000.0 + p[20:22]
-    p = p.at[20:22].set(centre).at[29:].set(jnp.tile(centre, 2))
-    constraint = {
-        "lens_controls": controls.tolist(),
-        "mean_minus_aperture_centre_m": [0.0, 0.0],
-        "isotropic_sigma_m": 2e-07,
-        "number_of_apertures": 3,
-    }
-    np.testing.assert_allclose(alignment_residual(p, constraint), 0.0, atol=1e-14)
-    p = p.at[29].add(0.2)
-    np.testing.assert_allclose(
-        alignment_residual(p, constraint), [0, 0, -1, 0, 0, 0], atol=1e-14
+def test_aperture_integral_and_derivatives_converge():
+    p = parameters()
+    controls = jnp.array([1.37, 0.814, 1.145])
+    centre = p[20:22] * 1e-6
+    coarse = make_aperture_moments(
+        radius_m=2e-6, edge_width_m=150e-9, voltage_v=200000.0
     )
-    assert alignment_residual(p, {**constraint, "enabled": False}).shape == (0,)
-
-
-def test_current_ratios_preserve_shared_reference_covariance():
-    values, cov = current_fractions([[20, 60]], [100])
-    np.testing.assert_allclose(values, [[0.2, 0.6]])
-    np.testing.assert_allclose(cov, [[[0.0024, 0.0012], [0.0012, 0.0096]]])
-    one, one_cov = current_fractions([20], [100])
-    assert one.shape == (1, 1) and one_cov.shape == (1, 1, 1)
-
-
-def test_two_and_three_holes_share_data_but_have_distinct_alignment_errors(tmp_path):
-    for count in [2, 3]:
-        root = tmp_path / str(count)
-        root.mkdir()
-        (root / "experiment.json").write_text(
-            json.dumps(
-                {"voltages_v": [200000.0, 195000.0], "reference_voltage_v": 200000.0}
-            )
-        )
-        (root / "scoring_truth.json").write_text(
-            json.dumps({"parameters": np.asarray(initial(1)).tolist()})
-        )
-        for index in [0, 1]:
-            folder = root / f"voltage_{index}"
-            (folder / "prediction").mkdir(parents=True)
-            (folder / "aperture.json").write_text(json.dumps(aperture_specification()))
-            for name in ["counts.npz", "prediction/current_counts.npz"]:
-                np.savez(folder / name, controls=[[1.75, 0.75, 1.0], [1.8, 1.0, 1.0]])
-        simulate_aligned_apertures(
-            experiment_directory=root,
-            diameters_um=[4.0, 10.0, 20.0][:count],
-            centering_sigma_um=0.2,
-        )
-    for index in [0, 1]:
-        two = np.load(tmp_path / f"2/voltage_{index}/counts.npz")
-        three = np.load(tmp_path / f"3/voltage_{index}/counts.npz")
-        np.testing.assert_array_equal(
-            two["transmitted_electrons"], three["transmitted_electrons"][:, :2]
-        )
-        np.testing.assert_array_equal(
-            two["reference_electrons"], three["reference_electrons"]
-        )
-    truth = json.loads((tmp_path / "3/scoring_truth.json").read_text())
-    centres = np.asarray(aperture_centres(truth["parameters"], 3))
-    assert not np.allclose(centres[0], centres[1])
-    constraint = json.loads(
-        (tmp_path / "3/alignment/alignment_constraint.json").read_text()
+    fine = make_aperture_moments(
+        radius_m=2e-6,
+        edge_width_m=150e-9,
+        voltage_v=200000.0,
+        radial_order=384,
+        angular_order=128,
     )
-    assert constraint["isotropic_sigma_m"] == 2e-07
-    assert constraint["current_readings"] == 0
-    assert not (tmp_path / "3/alignment/scan.npz").exists()
+    a, b = coarse(p, controls, centre), fine(p, controls, centre)
+    for x, y in zip(a, b):
+        np.testing.assert_allclose(x, y, atol=1e-14, rtol=1e-7)
+
+    def observable(p):
+        m, s, f = coarse(p, controls, p[20:22] * 1e-6)
+        return jnp.r_[
+            m / jnp.array([1e-7, 1e-7, 1e-3, 1e-3]), s[0, 0] / 1e-14, s[2, 2] / 1e-6, f
+        ]
+
+    direction = (
+        jnp.zeros(22)
+        .at[jnp.array([0, 5, 9, 19, 20])]
+        .set(jnp.array([0.1, -0.15, 0.05, 0.2, 0.03]))
+    )
+    derivative = jax.jacfwd(observable)(p) @ direction
+    step = 1e-5
+    difference = (
+        observable(p + step * direction) - observable(p - step * direction)
+    ) / (2 * step)
+    np.testing.assert_allclose(derivative, difference, rtol=3e-5, atol=1e-6)
+
+
+def test_crossover_is_resolved_away_from_aperture_grid_centre():
+    p = parameters()
+    centre = jnp.array([0.2e-6, -0.15e-6])
+
+    def aperture_variance(cl1):
+        column = condenser_with_aperture(
+            p,
+            jnp.array([cl1, 1.0, 1.0]),
+            radius_m=2e-6,
+            edge_width_m=150e-9,
+            centre_m=centre,
+        )
+        matrix = column_matrix(column[:3], source_z=-jnp.sum(jnp.exp(p[:9])))[:4, :4]
+        _, cov = source_moments(p)
+        return (matrix @ cov @ matrix.T)[0, 0]
+
+    variance = jax.jit(aperture_variance)
+    cl1 = minimize_scalar(
+        lambda c: float(variance(c)),
+        bounds=(1.3, 3.0),
+        method="bounded",
+        options={"xatol": 1e-12},
+    ).x
+    coarse = make_aperture_moments(
+        radius_m=2e-6, edge_width_m=150e-9, voltage_v=200000.0
+    )
+    fine = make_aperture_moments(
+        radius_m=2e-6,
+        edge_width_m=150e-9,
+        voltage_v=200000.0,
+        radial_order=384,
+        angular_order=128,
+    )
+    a, b = (
+        coarse(p, jnp.array([cl1, 1.0, 1.0]), centre),
+        fine(p, jnp.array([cl1, 1.0, 1.0]), centre),
+    )
+    assert float(a[2]) > 0.999
+    for x, y in zip(a, b):
+        np.testing.assert_allclose(x, y, atol=1e-13, rtol=1e-6)

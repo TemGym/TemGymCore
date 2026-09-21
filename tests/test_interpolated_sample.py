@@ -281,3 +281,144 @@ def test_near_opaque_map_has_finite_gaussian_update():
     output = jax.jit(lambda b: sample(b))(beam)
     assert all(np.isfinite(leaf).all() for leaf in jax.tree.leaves(output))
     np.testing.assert_allclose(abs(output.amplitude), np.exp(-50), rtol=1e-12)
+
+
+def _bragg_grating(*, max_order=8, samples=128, amplitude=1.0):
+    from temgym_core.components import BraggSample
+
+    phase = np.cos(2 * np.pi * np.arange(samples) / samples)
+    transmission = np.broadcast_to(amplitude * np.exp(1j * phase), (4, samples))
+    orders = np.column_stack((np.arange(-max_order, max_order + 1),
+                             np.zeros(2 * max_order + 1, dtype=int)))
+    return BraggSample.from_unit_cell(
+        transmission, periods_xy=(5e-9, 5e-9), orders_hk=orders,
+    )
+
+
+def test_bragg_coefficients_match_bessel_orders_without_renormalization():
+    from scipy.special import jv
+
+    sample = _bragg_grating(amplitude=0.7)
+    orders = np.arange(-8, 9)
+    expected = 0.7 * (1j ** orders) * jv(orders, 1.0)
+    np.testing.assert_allclose(sample.coefficients, expected, atol=1e-15)
+    refined = _bragg_grating(samples=256, amplitude=0.7)
+    np.testing.assert_allclose(refined.coefficients, sample.coefficients, atol=1e-15)
+    truncated = _bragg_grating(max_order=0, amplitude=0.7)
+    np.testing.assert_allclose(truncated.coefficients, [0.7 * jv(0, 1.0)], atol=1e-15)
+    # Independent off-grid points check transmission, not the FFT input knots.
+    points = jnp.asarray(np.random.default_rng(3).uniform(-20e-9, 20e-9, (500, 2)))
+    exact = 0.7 * jnp.exp(1j * jnp.cos(2 * jnp.pi * points[:, 0] / 5e-9))
+    np.testing.assert_allclose(sample.evaluate_complex(points), exact, atol=8e-9)
+
+
+@pytest.mark.parametrize("unit, scale", [("m", 1.0), ("nm", 1e9)])
+def test_bragg_2d_transmission_preserves_displaced_coherent_field(unit, scale):
+    from temgym_core.components import BraggSample, Detector, Plane
+    from temgym_core.evaluate import evaluate_gaussians
+    from temgym_core.run import run_to_end
+
+    periods = np.array([5e-9, 7e-9]) * scale
+    origin = np.array([0.6e-9, -1.1e-9]) * scale
+    # A passive transmission with known positive and negative 2D orders.
+    def transmission(u, v):
+        return 0.6 + 0.1 * jnp.exp(2j * jnp.pi * (2*u + v)) + 0.12j * jnp.exp(-2j * jnp.pi * (u + 2*v))
+
+    u, v = np.meshgrid(np.arange(12)/12, np.arange(9)/9)
+    sample = BraggSample.from_unit_cell(
+        transmission(u, v), periods_xy=periods,
+        orders_hk=[(0, 0), (2, 1), (-1, -2)], origin_xy=origin, z=2e-6 * scale,
+    )
+    beam = make_gaussian(
+        x=jnp.array([1.7e-9, -3.1e-9]) * scale,
+        y=jnp.array([-0.4e-9, 2e-9]) * scale,
+        dx=jnp.array([1e-4, -2e-4]), amp=jnp.array([1.0, 0.4j]),
+        waist_x=20e-9 * scale, waist_y=25e-9 * scale,
+        voltage=jnp.array([200e3, 200e3]), wavelength_unit=unit,
+    )
+    incident = run_to_end(beam, (Plane(z=sample.z),))
+    output = run_to_end(beam, (sample,))
+    detector = Detector(z=sample.z, pixel_size=(0.91e-9 * scale, 0.67e-9 * scale), shape=(24, 64))
+    coords = (detector.coords - origin) / periods
+    exact_transmission = transmission(coords[:, 0], coords[:, 1]).reshape(detector.shape)
+    expected = evaluate_gaussians(incident, detector, method="scan") * exact_transmission
+    actual = evaluate_gaussians(output, detector, method="scan")
+    np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-9)
+    assert output.x.shape == (6,)
+    assert output.Q_inv.shape == (6, 2, 2)
+    assert output.wavelength_unit == unit
+
+
+def test_bragg_sample_is_jittable_and_origin_derivative_preserves_order_phase():
+    from dataclasses import replace
+    from temgym_core import BraggSample
+    from temgym_core.components import BraggSample as ComponentBraggSample
+
+    assert BraggSample is ComponentBraggSample
+    sample = _bragg_grating(max_order=3)
+    beam = make_gaussian(x=1.3e-9, y=-0.7e-9, voltage=200e3, waist_x=40e-9, waist_y=30e-9)
+    eager = sample(beam)
+    compiled = jax.jit(lambda s, b: s(b))(sample, beam)
+    for a, b in zip(jax.tree.leaves(eager), jax.tree.leaves(compiled)):
+        np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-15)
+
+    def amplitudes(origin_x_nm):
+        shifted = replace(sample, origin_xy=jnp.array([origin_x_nm * 1e-9, 0.0]))
+        return shifted(beam).amplitude
+
+    derivative = jax.jacfwd(amplitudes)(0.0)
+    expected = -1j * sample.q_xy[:, 0] * 1e-9 * eager.amplitude
+    np.testing.assert_allclose(derivative, expected, rtol=1e-12, atol=1e-14)
+
+
+def test_bragg_grating_lens_intensities_and_total_flux_match_analytic_orders():
+    from scipy.special import jv
+    from temgym_core.components import Detector, Lens
+    from temgym_core.evaluate import gaussian_image
+    from temgym_core.gaussian import FreeSpacePropagator
+    from temgym_core.run import run_to_end
+
+    sample = _bragg_grating()
+    waist, focal_length = 40e-9, 2.3e-3
+    beam = make_gaussian(x=1.85e-9, voltage=200e3, waist_x=waist, waist_y=waist)
+    detector = Detector(z=2*focal_length, pixel_size=(12e-9, 12e-9), shape=(64, 2048))
+    output = run_to_end(
+        beam, (sample, Lens(z=focal_length, focal_length=focal_length), detector),
+        propagator=FreeSpacePropagator(include_axial_path=False),
+    )
+    pixels = np.asarray(gaussian_image(output, detector, samples_per_pixel=2))
+    incident_power = np.pi * waist**2 / 2
+    np.testing.assert_allclose(pixels.sum() / incident_power, 1.0, atol=1e-9, rtol=0)
+    x = np.asarray(detector.coords).reshape(*detector.shape, 2)[..., 0]
+    spacing = float(beam.wavelength) * focal_length / 5e-9
+    for order in range(-3, 4):
+        mask = np.abs(x - order*spacing) < spacing/2
+        power = pixels[mask].sum()
+        np.testing.assert_allclose(power / incident_power, jv(order, 1.0)**2, rtol=1e-8, atol=1e-12)
+        np.testing.assert_allclose((pixels[mask]*x[mask]).sum()/power, order*spacing, atol=1e-12, rtol=0)
+
+
+@pytest.mark.parametrize("changes, message", [
+    ({"transmission_yx": np.ones(8)}, "2D unit-cell"),
+    ({"transmission_yx": np.full((8, 8), np.nan)}, "finite"),
+    ({"periods_xy": (0.0, 1.0)}, "positive finite"),
+    ({"origin_xy": (np.nan, 0.0)}, "finite"),
+    ({"z": np.inf}, "finite"),
+    ({"orders_hk": []}, "nonempty"),
+    ({"orders_hk": [(0.5, 0)]}, "integers"),
+    ({"orders_hk": [(0, 0), (0, 0)]}, "unique"),
+    ({"orders_hk": [(4, 0)]}, "Nyquist"),
+])
+def test_bragg_unit_cell_rejects_ambiguous_or_invalid_sampling(changes, message):
+    from temgym_core.components import BraggSample
+
+    kwargs = dict(transmission_yx=np.ones((8, 8)), periods_xy=(1., 1.), orders_hk=[(0, 0)])
+    with pytest.raises(ValueError, match=message):
+        BraggSample.from_unit_cell(**(kwargs | changes))
+
+
+def test_bragg_sample_rejects_singular_rays():
+    from temgym_core.ray import Ray
+
+    with pytest.raises(NotImplementedError, match="BraggSample"):
+        _bragg_grating()(Ray(x=0., y=0., dx=0., dy=0., z=0., pathlength=0.))

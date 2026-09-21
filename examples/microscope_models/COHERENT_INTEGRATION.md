@@ -1,7 +1,12 @@
-# Full microscope calibration
+> Historical Gaussian integration checks. The active `microscope_calibration_pipeline.ipynb` now uses direct native moments for fitting experiments; image generation is parked. Numerical values below refer to the earlier benchmark.
 
-[The notebook](microscope_calibration_pipeline.ipynb) now runs the full two-voltage
-Gaussian-image calibration. The [portable result](calibration_results/full_gaussian_recovery.json)
+# Historical full microscope calibration
+
+This page records the earlier specimen-image and aperture-out-reference
+experiment. The active notebook now uses aperture-in beam images; see the
+[current workflow](README.md). The results below do not validate that new protocol.
+
+The earlier notebook ran a full two-voltage Gaussian-image calibration. The [portable result](calibration_results/full_gaussian_recovery.json)
 contains the measurements' provenance, all fitting stages, numerical checks,
 geometry errors and prediction results.
 

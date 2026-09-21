@@ -34,13 +34,13 @@ from .gaussian import (
     FreeSpacePropagator,
     GaussianBeam,
     _solve_2x2,
+    _pupil_action_to_spatial,
     apply_action_delta,
     taylor_expand,
 )
 from .aberrations import (
     KrivanekCoeffs,
     SeidelCoeffs,
-    Seidel_aperture_pos_aperture_slope,
     Seidel_object_pos_aperture_pos,
     W_krivanek,
     grad_W_krivanek,
@@ -388,7 +388,7 @@ class KrivanekLens(Lens):
     the aberration value; it does not accumulate the ideal-lens optical path.
     """
 
-    coeffs: Dict = dataclasses.field(default_factory=dict)
+    coeffs: KrivanekCoeffs = dataclasses.field(default_factory=KrivanekCoeffs)
     axis_eps: float = 1e-24
 
     def _call_gaussian(self, ray: GaussianBeam):
@@ -428,7 +428,13 @@ class KrivanekLens(Lens):
             return -0.5 * rho2 / f - W_krivanek(alpha, phi, self.coeffs)
 
         def _on_axis(_):
-            return -0.5 * rho2 / f
+            # Quadratic terms retain a nonzero Hessian at the origin. Avoid
+            # polar-coordinate derivatives here without dropping astigmatism.
+            astigmatism = self.coeffs.C12 * (
+                (x*x-y*y)*jnp.cos(2*self.coeffs.phi12)
+                + 2*x*y*jnp.sin(2*self.coeffs.phi12)
+            )
+            return -0.5 * rho2 / f - 0.5 * (self.coeffs.C10*rho2 + astigmatism) / f**2
 
         return lax.cond(rho2 > self.axis_eps, _with_aberrations, _on_axis, operand=None)
 
@@ -445,6 +451,19 @@ class AberratedLensKrivanek(KrivanekLens):
 
 @jdc.pytree_dataclass
 class SeidelLens(Lens):
+    """Local Gaussian approximation to the Seidel object-to-pupil kernel.
+
+    Position, slope, and object_plane_dist determine the reference object
+    coordinate internally. A joint quadratic expansion about the aberrated
+    central ray is integrated analytically, then applied as a spatial
+    complex-action increment. The kernel uses the Fresnel amplitude and
+    exp(-ik W); field-dependent pupil apodization is not included.
+
+    The central-ray solve assumes a smooth branch near the ideal ray, and
+    beam widths must resolve the omitted higher-order terms. ``object_xy``
+    optionally selects the prescribed point-object pupil phase instead.
+    """
+
     object_plane_dist: float = 0.0
     coeffs: SeidelCoeffs = dataclasses.field(default_factory=SeidelCoeffs)
     object_xy: tuple[float, float] | None = None
@@ -457,29 +476,26 @@ class SeidelLens(Lens):
     def log_transmission(self, xy):
         return 0.0
 
-    def phase_shift(self, xy, dxy):
+    def _seidel_coefficients(self):
+        return self.coeffs
+
+    def _phase_shift_at_object(self, xy, object_xy):
         xy = jnp.asarray(xy)
         x_a, y_a = xy[..., 0], xy[..., 1]
         rho2 = (x_a - self.x0) ** 2 + (y_a - self.y0) ** 2
-        if self.object_xy is not None:
-            aberration = Seidel_object_pos_aperture_pos(
-                self.object_xy[0],
-                self.object_xy[1],
-                x_a,
-                y_a,
-                self.coeffs,
-            )
-        else:
-            dxy = jnp.asarray(dxy)
-            aberration = Seidel_aperture_pos_aperture_slope(
-                x_a,
-                y_a,
-                dxy[..., 0],
-                dxy[..., 1],
-                self.object_plane_dist,
-                self.coeffs,
-            )
+        aberration = Seidel_object_pos_aperture_pos(
+            object_xy[..., 0], object_xy[..., 1], x_a, y_a,
+            self._seidel_coefficients(),
+        )
         return -0.5 * rho2 / self.focal_length - aberration
+
+    def phase_shift(self, xy, dxy):
+        object_xy = (
+            jnp.asarray(self.object_xy)
+            if self.object_xy is not None
+            else jnp.asarray(xy) - self.object_plane_dist * jnp.asarray(dxy)
+        )
+        return self._phase_shift_at_object(xy, object_xy)
 
     def complex_action(self, xy: jnp.ndarray, dxy: jnp.ndarray, k: float) -> complex:
         logA = self.log_transmission(xy)
@@ -490,51 +506,65 @@ class SeidelLens(Lens):
         return _call_single_or_batched_gaussian(ray, self._call_gaussian_single)
 
     def _call_gaussian_single(self, ray: GaussianBeam) -> GaussianBeam:
-        dS0, dS1, dS2 = taylor_expand(
-            self.complex_action,
-            ray.r_xy,
-            ray.d_xy,
-            ray.k,
-        )
-        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(
-            ray,
-            dS0=dS0,
-            dS1=dS1,
-            dS2=dS2,
-        )
+        if self.object_xy is None:
+            terms = self._joint_action_terms(ray)
+        else:
+            def action_at_object(xy):
+                log_amplitude = jnp.logaddexp(self.log_transmission(xy), -50.0)
+                return self._phase_shift_at_object(
+                    xy, jnp.asarray(self.object_xy)
+                ) - 1j * log_amplitude / ray.k
+
+            terms = taylor_expand(action_at_object, ray.r_xy)
+
+        r_xy, d_xy, amplitude, pathlength, Q_new = apply_action_delta(ray, *terms)
         return ray.derive(
-            x=r_xy[..., 0],
-            y=r_xy[..., 1],
-            dx=d_xy[..., 0],
-            dy=d_xy[..., 1],
-            z=ray.z,
-            amplitude=amplitude,
-            pathlength=pathlength,
-            Q_inv=Q_new,
+            x=r_xy[..., 0], y=r_xy[..., 1], dx=d_xy[..., 0], dy=d_xy[..., 1],
+            z=ray.z, amplitude=amplitude, pathlength=pathlength, Q_inv=Q_new,
         )
+
+    def _joint_action_terms(self, ray: GaussianBeam):
+        distance = self.object_plane_dist
+        # This is the same reparameterization as W(aperture, slope). Object
+        # coordinates are internal integration variables, not extra inputs.
+        object_xy = ray.r_xy - distance * ray.d_xy
+
+        def phase(endpoints):
+            return self._phase_shift_at_object(endpoints[2:], endpoints[:2])
+
+        def central_ray_step(_, aperture_xy):
+            endpoints = jnp.concatenate((object_xy, aperture_xy))
+            gradient = jax.grad(phase)(endpoints)
+            hessian = jax.hessian(phase)(endpoints)
+            residual = aperture_xy - ray.r_xy - distance * gradient[:2]
+            jacobian = jnp.eye(2) - distance * hessian[:2, 2:]
+            return aperture_xy - jnp.linalg.solve(jacobian, residual)
+
+        aperture_xy = lax.fori_loop(0, 6, central_ray_step, ray.r_xy)
+
+        def action(endpoints):
+            log_amplitude = jnp.logaddexp(self.log_transmission(endpoints[2:]), -50.0)
+            return phase(endpoints) - 1j * log_amplitude / ray.k
+
+        endpoints = jnp.concatenate((object_xy, aperture_xy))
+        value, gradient, hessian = taylor_expand(action, endpoints)
+        # Express this polynomial at the original endpoints before reducing
+        # it to a spatial action. The aberrated expansion centre is retained.
+        shift = jnp.concatenate((jnp.zeros(2), ray.r_xy - aperture_xy))
+        value = value + gradient @ shift + 0.5 * shift @ hessian @ shift
+        gradient = gradient + hessian @ shift
+        return _pupil_action_to_spatial(ray, distance, value, gradient, hessian)
 
 
 @jdc.pytree_dataclass
 class DistortedLens(SeidelLens):
+    """Radial and tangential terms of the Seidel wave aberration."""
+
     IsoDist: float = 0.0
     AnisoDist: float = 0.0
 
-    def phase_shift(self, xy, dxy):
-        xy = jnp.asarray(xy)
-        dxy = jnp.asarray(dxy)
-        x_a, y_a = xy[..., 0], xy[..., 1]
-        x_ap, y_ap = dxy[..., 0], dxy[..., 1]
-
-        rho2 = x_a * x_a + y_a * y_a
-        coeffs = SeidelCoeffs(E=self.IsoDist, e=self.AnisoDist)
-        return -0.5 * rho2 / self.focal_length - Seidel_aperture_pos_aperture_slope(
-            x_a,
-            y_a,
-            x_ap,
-            y_ap,
-            self.object_plane_dist,
-            coeffs,
-        )
+    def _seidel_coefficients(self):
+        return SeidelCoeffs(E=self.IsoDist, e=self.AnisoDist)
 
 
 @jdc.pytree_dataclass(kw_only=True)
@@ -946,6 +976,8 @@ class DoubleDeflector(Component):
 
     User-facing commands (shift/tilt) are combined with hardware calibration
     ratios to produce the two physical kicks in each axis.
+    ``include_axial_path=False`` omits the common straight-path phase, as in
+    the Gaussian free-space propagator.
     """
 
     z: float
@@ -960,6 +992,7 @@ class DoubleDeflector(Component):
     shift_balance_y: float = 1.0
     tilt_balance_x: float = 1.0
     tilt_balance_y: float = 1.0
+    include_axial_path: jdc.Static[bool] = True
 
     @property
     def z_second(self) -> float:
@@ -987,31 +1020,29 @@ class DoubleDeflector(Component):
             -self.tilt_balance_y * self.tilt_y
         )
 
-    @staticmethod
-    def _apply_kick(ray: Ray | GaussianBeam, def_x, def_y):
-        """Apply a deflection kick to a ray or beam.
-
-        A transverse kick (def_x, def_y) imparts phase shift: def_x * x + def_y * y
-        """
-        return ray.derive(
-            dx=ray.dx + def_x * ray._one,
-            dy=ray.dy + def_y * ray._one,
-            pathlength=ray.pathlength + def_x * ray.x + def_y * ray.y,
+    @property
+    def deflectors(self):
+        """The two physical kicks, including the shift/tilt balance mixing."""
+        return (
+            Deflector(self.z, self.def1_x, self.def1_y),
+            Deflector(self.z_second, self.def2_x, self.def2_y),
         )
 
     def _call_ray(self, ray: Ray):
         from .propagator import FreeSpaceParaxial
 
-        ray = self._apply_kick(ray, self.def1_x, self.def1_y)
-        ray = FreeSpaceParaxial()(ray, self.spacing)
-        ray = self._apply_kick(ray, self.def2_x, self.def2_y)
-        return ray
+        first, second = self.deflectors
+        ray = FreeSpaceParaxial()(first(ray), self.spacing)
+        if not self.include_axial_path:
+            ray = ray.derive(pathlength=ray.pathlength - self.spacing)
+        return second(ray)
 
     def _call_gaussian(self, ray: GaussianBeam):
-        ray = self._apply_kick(ray, self.def1_x, self.def1_y)
-        ray = FreeSpacePropagator()(ray, self.spacing)
-        ray = self._apply_kick(ray, self.def2_x, self.def2_y)
-        return ray
+        first, second = self.deflectors
+        ray = FreeSpacePropagator(include_axial_path=self.include_axial_path)(
+            first(ray), self.spacing
+        )
+        return second(ray)
 
 
 @jdc.pytree_dataclass
@@ -1471,7 +1502,148 @@ class RandomPhaseSample(GaussianActionComponent):
         return self.strength * mask * combined
 
 
-# Interpolated specimens
+# Specimens
+
+@jdc.pytree_dataclass(kw_only=True)
+class BraggSample(Component):
+    """Thin periodic transmission represented by explicit Fourier orders.
+
+    The field multiplier is sum(c_m exp(i q_m . (xy - origin_xy))). Each
+    incident Gaussian produces one child per retained order, with amplitude
+    c_m and slope increment q_m/k; the phase at its centre is preserved.
+    Coordinates, z and periods use the beam's length unit; q_xy uses radians
+    per that unit. Coefficients describe transmission at the chosen energy,
+    not a potential that is automatically rescaled with beam voltage.
+
+    Use run_to_end on a scalar beam or a directly batched bundle. This sample
+    changes the beam count: N inputs and M orders produce N*M outputs. A
+    separate vmap over inputs would retain an extra parent-beam axis.
+    This is an infinite periodic projected specimen, not dynamical diffraction.
+
+    angular_response optionally supplies a complex field multiplier as a
+    function of grazing angle and voltage. surface_normal_xyz is the outward
+    surface normal in the incoming beam frame (unit length is recommended).
+    Ordinary __call__ still uses forward/folded-frame thin-grating geometry;
+    it does not itself reflect a 3D surface. A reflection adapter can instead
+    use coefficients_at with its physical incident angles. Angular response
+    is constant within each Gaussian packet: use a narrow angular basis when
+    the response varies across the illumination.
+    """
+
+    q_xy: jnp.ndarray
+    coefficients: jnp.ndarray
+    z: float = 0.0
+    origin_xy: tuple = (0.0, 0.0)
+    angular_response: Any = None
+    surface_normal_xyz: tuple = (0.0, 0.0, -1.0)
+
+    def coefficients_at(self, grazing_angle_rad, voltage):
+        """Order field coefficients with an optional complex angular response.
+
+        Returns shape (..., M), without renormalizing retained orders. Surface
+        reflection adapters should call this with physical incidence angles.
+        The ordinary __call__ retains the thin forward/folded-frame geometry;
+        an angular response alone does not reverse the propagation direction.
+        """
+        angles = jnp.asarray(grazing_angle_rad)
+        c = jnp.broadcast_to(jnp.asarray(self.coefficients), angles.shape + (len(self.coefficients),))
+        if self.angular_response is not None:
+            c = c*self.angular_response.amplitude(angles, voltage)[...,None]
+        return c
+
+    def order_action(self, grazing_angle_rad, voltage, k):
+        """Complex order action: exp(i*k*action) equals coefficients_at.
+
+        An exactly zero order has infinite attenuation; direct coefficient
+        multiplication in propagation preserves exact zeros without log(0).
+        """
+        return -1j*jnp.log(self.coefficients_at(grazing_angle_rad, voltage).astype(complex))/jnp.asarray(k)[...,None]
+
+    @classmethod
+    def from_unit_cell(
+        cls, transmission_yx, *, periods_xy, orders_hk, z=0.0,
+        origin_xy=(0.0, 0.0),
+    ):
+        """Fourier-expand a rectangular unit cell of complex field transmission.
+
+        T[j,i] is sampled at (i*period_x/nx, j*period_y/ny) relative to
+        origin_xy, without duplicate endpoints. Supply physical transmission,
+        e.g. exp(1j*phase_radians), in image (y,x) order. orders_hk is a fixed
+        (M,2) list of integer reciprocal indices, including (0,0) if desired.
+
+        Construction runs on the host; subsequent propagation supports JAX.
+        Refine the unit-cell grid and retained orders independently. Truncated
+        coefficients are never renormalized: omitted orders remain omitted.
+        A grid's Nyquist limit alone does not establish convergence.
+        """
+        transmission = np.asarray(transmission_yx, dtype=np.complex128)
+        periods = np.asarray(periods_xy, dtype=float)
+        orders = np.asarray(orders_hk)
+        origin = np.asarray(origin_xy, dtype=float)
+        if transmission.ndim != 2 or min(transmission.shape) < 2:
+            raise ValueError("Supply a 2D unit-cell transmission with at least two samples per axis.")
+        if not np.isfinite(transmission).all():
+            raise ValueError("Unit-cell transmission must be finite.")
+        if periods.shape != (2,) or not np.isfinite(periods).all() or np.any(periods <= 0):
+            raise ValueError("periods_xy must contain two positive finite periods.")
+        if origin.shape != (2,) or not np.isfinite(origin).all() or not np.isfinite(z):
+            raise ValueError("Supply a finite origin_xy pair and z position.")
+        if orders.ndim != 2 or orders.shape[1] != 2 or len(orders) == 0:
+            raise ValueError("orders_hk must be a nonempty (M,2) list of integer orders.")
+        if not np.isfinite(orders).all() or not np.equal(orders, np.round(orders)).all():
+            raise ValueError("orders_hk must contain integers.")
+        ny, nx = transmission.shape
+        if np.any(2 * np.abs(orders) >= np.array([nx, ny])):
+            raise ValueError("Retained orders must lie strictly inside the unit-cell Nyquist limits.")
+        orders = orders.astype(int)
+        if len(np.unique(orders, axis=0)) != len(orders):
+            raise ValueError("orders_hk must contain unique orders.")
+        spectrum = np.fft.fft2(transmission) / transmission.size
+        coefficients = spectrum[orders[:, 1] % ny, orders[:, 0] % nx]
+        return cls(
+            q_xy=jnp.asarray(2 * np.pi * orders / periods),
+            coefficients=jnp.asarray(coefficients), z=z,
+            origin_xy=jnp.asarray(origin),
+        )
+
+    def evaluate_complex(self, xy, *, grazing_angle_rad=None, voltage=None):
+        """Evaluate the retained field multiplier at specimen coordinates.
+
+        Angle and voltage are required when angular_response is enabled.
+        """
+        coefficients = jnp.asarray(self.coefficients)
+        if self.angular_response is not None:
+            if grazing_angle_rad is None or voltage is None:
+                raise ValueError("Supply grazing_angle_rad and voltage for an angular response.")
+            coefficients = self.coefficients_at(grazing_angle_rad, voltage)
+        phase = (jnp.asarray(xy) - jnp.asarray(self.origin_xy)) @ jnp.asarray(self.q_xy).T
+        return jnp.sum(coefficients * jnp.exp(1j * phase), axis=-1)
+
+    def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
+        ray = ray.to_vector()
+        q = jnp.asarray(self.q_xy)
+        coefficients = jnp.asarray(self.coefficients)
+        if q.ndim != 2 or q.shape[1] != 2 or q.shape[0] == 0:
+            raise ValueError("q_xy must have shape (M,2) with at least one order.")
+        if coefficients.shape != (q.shape[0],):
+            raise ValueError("Supply one complex coefficient per q_xy order.")
+        phase = (ray.r_xy - jnp.asarray(self.origin_xy)) @ q.T
+        if self.angular_response is not None:
+            direction = jnp.column_stack((ray.dx, ray.dy, jnp.ones_like(ray.dx)))
+            direction /= jnp.linalg.norm(direction, axis=-1, keepdims=True)
+            normal = jnp.asarray(self.surface_normal_xyz)
+            normal = normal/jnp.linalg.norm(normal)
+            grazing = jnp.arcsin(jnp.clip(-direction @ normal, -1., 1.))
+            coefficients = self.coefficients_at(grazing, ray.voltage)
+        amplitude = ray.amplitude[:, None] * coefficients * jnp.exp(1j * phase)
+        slopes = ray.d_xy[:, None, :] + q[None, :, :] / ray.k[:, None, None]
+        # to_vector broadcasts shared scalar fields before repeating parents.
+        children = jax.tree.map(lambda value: jnp.repeat(value, q.shape[0], axis=0), ray)
+        return children.derive(
+            dx=slopes[..., 0].ravel(), dy=slopes[..., 1].ravel(),
+            amplitude=amplitude.ravel(),
+        )
+
 
 class ScalarActionJet2D(NamedTuple):
     value: jnp.ndarray
@@ -1983,6 +2155,7 @@ __all__ = [
     "QuadraticAmplitudeShift",
     "MagneticPhaseSample",
     "RandomPhaseSample",
+    "BraggSample",
     "InterpolatedSample2D",
     "sample_interpolant",
     "InterpolatedFields3D",

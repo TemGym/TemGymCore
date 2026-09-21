@@ -17,6 +17,7 @@ from .components import (
     Detector,
     DoubleDeflector,
     ElectromagneticLens,
+    HardEdgeSolenoid,
     InterpolatedSample2D,
     Lens,
     MagneticPhaseSample,
@@ -300,8 +301,7 @@ def _compute_cumulative_rotation(
     """Compute the cumulative Larmor rotation angle at each ray step.
 
     `run_iter` yields 2 steps per component: (propagation, application).
-    Rotation is applied only during the application step of
-    `ElectromagneticLens` components.
+    Rotation is applied during electromagnetic-lens and solenoid steps.
 
     Returns an array of shape ``(n_steps,)`` for scalar voltage, or
     ``(n_steps, n_rays)`` for per-ray voltage, with cumulative angles
@@ -333,6 +333,8 @@ def _compute_cumulative_rotation(
             cum = np.asarray(cum, dtype=float) + np.asarray(
                 c.rotation_angle(voltage_use), dtype=float
             )
+        elif isinstance(c, HardEdgeSolenoid):
+            cum = np.asarray(cum, dtype=float) - np.asarray(c.q, dtype=float)
         angles.append(np.asarray(cum, dtype=float).copy())
 
     return np.asarray(angles, dtype=float)
@@ -345,7 +347,7 @@ def plot_model(
     solution_rays: Ray | None = None,
     plot_params: PlotParams = legacy_beam_plot_params(),
     ax: mpl.axes.Axes | None = None,
-    band_mode: str = "fill",  # "fill" (envelope fill) or "lines" (draw lines between rays)
+    band_mode: str = "fill",  # "fill", "gradient", or "lines"
     ray_coordinate: str = "x",  # "x", "y", "x_rot", "y_rot", or "r"
     ray_half_sign: int | None = None,  # None=all rays, +1=positive half, -1=negative half
     r_side_by_sign: bool = False,
@@ -371,7 +373,7 @@ def plot_model(
         scene geometry fixed across frames (useful for animations).
     ax : matplotlib.axes.Axes, optional
         Axes to draw on. If None, a new figure and axes are created.
-    band_mode : {"fill", "lines"}, default "fill"
+    band_mode : {"fill", "gradient", "lines"}, default "fill"
         "fill": fill between the two edge rays (envelope).
         "lines": draw horizontal line segments between adjacent rays at each z.
     ray_coordinate : {"x", "y", "x_rot", "y_rot", "r"}, default "x"
@@ -681,8 +683,10 @@ def plot_ray_bundle(
         z positions corresponding to rows in X.
     p : PlotParams
         Plot styling parameters.
-    band_mode : {"fill", "lines"}
-        "fill": fill between edge rays; "lines": horizontal segments between rays.
+    band_mode : {"fill", "gradient", "lines"}
+        "fill": fill between edge rays; "gradient": soft transverse shading
+        within the pointwise envelope; "lines": horizontal segments between
+        rays. Gradient shading is a display style, not calibrated intensity.
     break_same_z_jumps : bool, default True
         If True, insert NaN separators where equal-z samples would otherwise
         draw horizontal jump segments.
@@ -700,7 +704,7 @@ def plot_ray_bundle(
     if p.solid_beam and nrays >= 2:
         order0 = np.argsort(X[0, :])
         interior_idx = order0[1:-1]
-        if interior_idx.size > 0:
+        if interior_idx.size > 0 and p.interior_ray_alpha > 0:
             ray_lines += ax.plot(
                 X_plot[:, interior_idx],
                 Z_plot[:, None],
@@ -709,7 +713,7 @@ def plot_ray_bundle(
                 alpha=p.interior_ray_alpha,
                 zorder=1,
             )
-        if nrays >= 3:
+        if nrays >= 3 and p.center_ray_alpha > 0:
             center_idx = int(order0[nrays // 2])
             center_lines += ax.plot(
                 X_plot[:, center_idx],
@@ -736,7 +740,29 @@ def plot_ray_bundle(
         min_x_idx = int(np.argmin(X[0, :]))
         max_x_idx = int(np.argmax(X[0, :]))
 
-        if mode == "fill":
+        if mode == "gradient":
+            # Nested vector fills avoid a bitmap and remain smooth in SVG/PDF.
+            # Min/max at each plane preserves the envelope through crossings.
+            lower, upper = np.min(X_plot,axis=1), np.max(X_plot,axis=1)
+            centre = .5*(lower+upper)
+            radius = .5*(upper-lower)
+            previous_opacity = 0.
+            for fraction in np.linspace(1.,0.,40,endpoint=False):
+                profile = (np.exp(-2*fraction**2)-np.exp(-2))/(1-np.exp(-2))
+                opacity = np.clip(p.fill_alpha,0.,1.)*(.025+.975*profile)
+                layer_alpha = (opacity-previous_opacity)/max(1-previous_opacity,np.finfo(float).eps)
+                band_artists.append(ax.fill_betweenx(
+                    Z_plot,centre-fraction*radius,centre+fraction*radius,
+                    facecolor=p.fill_color,edgecolor="none",linewidth=0.,
+                    antialiased=False,alpha=layer_alpha,zorder=0,
+                ))
+                previous_opacity = opacity
+            if p.edge_lw > 0:
+                for edge in (lower,upper):
+                    edge_lines += ax.plot(edge,Z_plot,color=p.ray_color,
+                        linewidth=p.edge_lw,alpha=p.ray_alpha,zorder=1,
+                        solid_joinstyle="round",solid_capstyle="round")
+        elif mode == "fill":
             band_artists.append(
                 ax.fill_betweenx(
                     Z_plot,
@@ -1591,6 +1617,58 @@ def trace_ray_paths(
         cumulative_rotation=rotation,
     )
     return Z, X
+
+
+def trace_ray_envelope(components, rays, *, ray_coordinate="x_rot"):
+    """Return ``(z, lower/upper bounds)`` segments of a geometric ray bundle.
+
+    Trace native components, resolving solenoid bodies with 16 slices and
+    free-space crossovers with 65 samples. At a sigmoid aperture, rays outside
+    its nominal circular radius stop. This diagram is a geometric illustration;
+    it does not represent the smooth transmission or diffracted wave intensity.
+    Separate segments preserve aperture clipping and scanner position jumps.
+    """
+    mode = _normalize_ray_coordinate_mode(ray_coordinate)
+    rotation, segments = 0.0, []
+    voltage = _plotting_voltage_from_rays(rays)
+
+    def coordinate(ray, angle):
+        x, y = np.broadcast_arrays(np.asarray(ray.x), np.asarray(ray.y))
+        if mode == "x_rot":
+            return x * np.cos(angle) + y * np.sin(angle)
+        if mode == "y_rot":
+            return -x * np.sin(angle) + y * np.cos(angle)
+        return {"x": x, "y": y, "r": np.hypot(x, y)}[mode]
+
+    for component in components:
+        pieces = (component,)
+        if isinstance(component, DoubleDeflector):
+            pieces = component.deflectors
+        elif isinstance(component, HardEdgeSolenoid):
+            pieces = tuple(
+                replace(component, z=component.z + i * component.length / 16,
+                        length=component.length / 16, q=component.q / 16)
+                for i in range(16)
+            )
+        for piece in pieces:
+            entrance, exit_ray = run_iter_vmapped(rays, (piece,))
+            delta = _compute_cumulative_rotation(
+                (piece,), voltage=voltage, include_input_rays=False
+            )[-1]
+            for end, angle in ((entrance, rotation), (exit_ray, rotation + delta)):
+                start_x, end_x = coordinate(rays, rotation), coordinate(end, angle)
+                t = np.linspace(0, 1, 65)[:, None]
+                x = (1 - t) * start_x + t * end_x
+                z = np.linspace(float(np.mean(rays.z)), float(np.mean(end.z)), len(t))
+                segments.append((z, np.column_stack((x.min(axis=1), x.max(axis=1)))))
+                rays, rotation = end, angle
+            if isinstance(piece, SigmoidAperture):
+                keep = np.hypot(np.asarray(rays.x) - piece.x0,
+                                np.asarray(rays.y) - piece.y0) <= piece.radius
+                if not np.any(keep):
+                    return segments
+                rays = rays[np.flatnonzero(keep)]
+    return segments
 
 
 def _reference_ray(
@@ -3712,3 +3790,271 @@ def export_ray_figure(
     )
     outputs["metadata"] = metadata_path
     return outputs
+
+
+class _ColumnSymbolTransform(mpl.transforms.Affine2DBase):
+    """Rigid point-sized symbol anchored to a posed column in display space.
+
+    Input coordinates are (transverse, axial) offsets in typographic points.
+    Recompute the displayed column direction after axis limits, layout or DPI
+    change. Transverse and axial directions stay perpendicular on the page.
+    """
+
+    def __init__(self, ax, pose, z):
+        super().__init__()
+        self._axes, self._pose, self._z = ax, pose, float(z)
+        self.set_children(ax.transData, ax.figure.dpi_scale_trans, pose)
+
+    def get_matrix(self):
+        positions = self._axes.transData.transform(
+            self._pose.transform(np.array([[0., self._z], [0., self._z + .001]]))
+        )
+        axial = positions[1] - positions[0]
+        axial /= np.linalg.norm(axial)
+        transverse = np.array([-axial[1], axial[0]])
+        scale = self._axes.figure.dpi / 72.
+        return np.array([[transverse[0]*scale, axial[0]*scale, positions[0,0]],
+                         [transverse[1]*scale, axial[1]*scale, positions[0,1]],
+                         [0.,0.,1.]])
+
+
+def plot_reflection_column(
+    components: Sequence[Component],
+    trace: PositionAngleTrace,
+    *,
+    sample_z: float,
+    outgoing_paths_xz: np.ndarray,
+    detector_segment_xz: np.ndarray,
+    surface_angle_rad: float = 0.0,
+    column_frame=None,
+    component_labels: Sequence[str] | None = None,
+    order_weights: np.ndarray | None = None,
+    envelope_scale: float | None = None,
+    incident_envelope: np.ndarray | None = None,
+    plot_params: PlotParams | None = None,
+    title: str = "SEM reflection geometry",
+    specimen_label: str = "Si(001)",
+    show_section_labels: bool = True,
+    ax: mpl.axes.Axes | None = None,
+) -> tuple[mpl.figure.Figure, mpl.axes.Axes]:
+    """Pose the existing plot_model drawing in a horizontal laboratory view.
+
+    column_frame maps incident-column (x,y,z) into laboratory XYZ. Supplied
+    reflected paths and detector endpoints are laboratory (X,Z), in metres.
+    The sample is at local (0,0,sample_z). surface_angle_rad is its laboratory
+    tilt, zero for a flat crystal. The column must lie in the laboratory XZ
+    plane. Only the incident Gaussian envelope is magnified; axes show physical
+    laboratory positions with independent horizontal/vertical display scales.
+
+    incident_envelope optionally supplies (z, centroid, radius) rows in metres
+    from Gaussian propagation, including an aberrated objective. Otherwise the
+    envelope is reconstructed from the supplied linear basis trace.
+
+    Uses plot_model and its PlotParams/deflector symbols, together with
+    plot_ray_bundle for the smooth Gaussian envelope. Paired coil-and-yoke
+    glyphs retain the reflection example's lens appearance. Component symbols
+    use point-sized rigid display transforms, perpendicular to the displayed
+    column axis, so unequal data scales cannot shear or stretch them.
+    """
+    from .coordinate_transforms import PlaneFrame
+
+    paths = np.asarray(outgoing_paths_xz, dtype=float)
+    screen = np.asarray(detector_segment_xz, dtype=float)
+    if paths.ndim != 3 or paths.shape[-1] != 2 or paths.shape[0] == 0 or paths.shape[1] < 2:
+        raise ValueError("outgoing_paths_xz must have shape (orders, points>=2, 2).")
+    if screen.shape != (2, 2) or not np.isfinite(screen).all() or not np.isfinite(paths).all():
+        raise ValueError("Supply finite reflected paths and two detector (X,Z) endpoints.")
+    if not np.isfinite(surface_angle_rad) or not np.isfinite(sample_z):
+        raise ValueError("Supply finite specimen geometry.")
+    labels = tuple(component_labels) if component_labels is not None else tuple(_as_name(c) for c in components)
+    if len(labels) != len(components):
+        raise ValueError("Provide one label per incident-column component.")
+    weights = np.ones(paths.shape[0]) if order_weights is None else np.asarray(order_weights, dtype=float)
+    if weights.shape != (paths.shape[0],) or not np.isfinite(weights).all() or np.any(weights < 0):
+        raise ValueError("Provide a finite nonnegative weight per reflected path.")
+    z = np.asarray(trace.z, dtype=float)
+    if z.size < 2 or np.any(np.diff(z) < 0) or not np.isfinite(z).all():
+        raise ValueError("The incident trace must contain finite ordered axial positions.")
+    if not np.isclose(z[-1], sample_z, rtol=0, atol=1e-12):
+        raise ValueError("The incident trace must end at sample_z.")
+    if column_frame is None:
+        column_frame = PlaneFrame(origin_xyz=np.zeros(3), u_xyz=np.array([1.,0.,0.]),
+                                  v_xyz=np.array([0.,1.,0.]))
+    basis = np.asarray(column_frame.basis_xyz)
+    origin = np.asarray(column_frame.origin_xyz)
+    if not np.allclose(basis.T @ basis, np.eye(3), atol=1e-12):
+        raise ValueError("column_frame must be orthonormal.")
+    if not np.allclose(basis[1,[0,2]], 0., atol=1e-12):
+        raise ValueError("This side view requires a column in the laboratory XZ plane.")
+    # Native plot_model coordinates are (transverse x, axial z). Reuse its
+    # artists, applying the physical pose and a metres-to-mm display transform.
+    matrix = np.array([[basis[2,0]*1e3, basis[2,2]*1e3, origin[2]*1e3],
+                       [basis[0,0]*1e3, basis[0,2]*1e3, origin[0]*1e3], [0.,0.,1.]])
+    pose = mpl.transforms.Affine2D(matrix)
+    p = plot_params if plot_params is not None else legacy_beam_plot_params(
+        figsize=(14., 5.), fill_color="#269F83", fill_alpha=.55,
+        ray_color="#207E69", edge_lw=0., interior_ray_alpha=0.,
+        center_ray_lw=.55, center_ray_alpha=.4,
+        fixed_xmax=.004, component_half_width_frac=.92,
+        auto_lens_height=False, lens_height=.0015, show_side_guides=False,
+    )
+    if ax is None:
+        fig, ax = plt.subplots(figsize=p.figsize)
+    else:
+        fig = ax.figure
+    before = set(ax.get_children())
+    basis_rays = make_waist_divergence_rays(trace.position_scale, voltage=trace.voltage, z=z[0])
+    plot_model(components, rays=basis_rays, plot_params=p, ax=ax)
+    # Keep plot_model's actual optical symbols. Replace only its vertical
+    # labels and sparse two-ray display with the supplied Gaussian trace.
+    for artist in tuple(ax.get_children()):
+        if artist in before:
+            continue
+        if isinstance(artist, mpl.text.Text) or (
+            isinstance(artist, (mpl.lines.Line2D, mpl.collections.Collection)) and artist.get_zorder() < 100
+        ):
+            artist.remove()
+        elif isinstance(artist, (mpl.lines.Line2D, mpl.patches.Patch)):
+            artist.set_transform(pose + ax.transData)
+
+    # Deflectors keep plot_model's red/blue style, but their transverse
+    # direction must be perpendicular to the *displayed* microscope axis.
+    deflector_positions = []
+    for component in components:
+        if isinstance(component, (Deflector, DoubleDeflector)):
+            deflector_positions.append(float(component.z))
+            if isinstance(component, DoubleDeflector):
+                deflector_positions.append(float(component.z_second))
+    for deflector_z in deflector_positions:
+        lines = [line for line in ax.lines if line not in before
+                 and line.get_zorder() >= 100
+                 and np.allclose(line.get_ydata(), deflector_z, rtol=0, atol=1e-12)]
+        half_width = max((float(np.max(np.abs(line.get_xdata()))) for line in lines), default=0.)
+        if half_width > 0:
+            transform = _ColumnSymbolTransform(ax, pose, deflector_z)
+            for line in lines:
+                line.set_xdata(np.asarray(line.get_xdata()) * 20. / half_width)
+                line.set_ydata(np.zeros_like(line.get_ydata()))
+                line.set_transform(transform)
+                line.set_gid("reflection_deflector")
+
+    # Retain the paired coil-and-yoke models as rigid square symbols. Their
+    # dimensions are in points, not physical manufactured polepiece sizes.
+    for patch in tuple(ax.patches):
+        if isinstance(patch, mpl.patches.Arc) and patch not in before:
+            patch.remove()
+    for component in components:
+        if not isinstance(component, (Lens, ElectromagneticLens, HardEdgeSolenoid, ThickLens)):
+            continue
+        transform = _ColumnSymbolTransform(ax, pose, float(component.z))
+        for sign in (-1, 1):
+            left = 15. if sign > 0 else -27.
+            ax.add_patch(mpl.patches.FancyBboxPatch(
+                (left, -6.), 12., 12.,
+                boxstyle="round,pad=0,rounding_size=0.8",
+                transform=transform, facecolor="#DCE4EA", edgecolor="#223447",
+                linewidth=1.1, zorder=999, gid="reflection_lens_yoke",
+            ))
+            ax.add_patch(mpl.patches.Rectangle(
+                (left+2., -4.), 8., 8., transform=transform,
+                facecolor="#C49657", edgecolor="#8B673D", linewidth=.7,
+                hatch="|||", zorder=1000, gid="reflection_lens_coil",
+            ))
+
+    dense_z = np.unique(np.concatenate((z, np.linspace(z[0], sample_z, 2000))))
+    position = np.interp(dense_z, z, trace.position)
+    angle = np.interp(dense_z, z, trace.angle)
+    centre = np.interp(dense_z, z, trace.centroid)
+    radius = gaussian_basis_envelope(position, angle)
+    if incident_envelope is not None:
+        envelope = np.asarray(incident_envelope, dtype=float)
+        if (envelope.ndim != 2 or envelope.shape[1] != 3 or envelope.shape[0] < 2
+                or not np.isfinite(envelope).all() or np.any(np.diff(envelope[:, 0]) < 0)
+                or np.any(envelope[:, 2] < 0)
+                or not np.isclose(envelope[0, 0], z[0], rtol=0, atol=1e-12)
+                or not np.isclose(envelope[-1, 0], sample_z, rtol=0, atol=1e-12)):
+            raise ValueError("incident_envelope must contain ordered finite (z, centroid, radius) rows spanning the column.")
+        dense_z = np.unique(np.concatenate((dense_z, envelope[:, 0])))
+        centre = np.interp(dense_z, envelope[:, 0], envelope[:, 1])
+        radius = np.interp(dense_z, envelope[:, 0], envelope[:, 2])
+    if envelope_scale is None:
+        envelope_scale = .0015 / max(float(radius.max()), np.finfo(float).eps)
+    if not np.isfinite(envelope_scale) or envelope_scale <= 0:
+        raise ValueError("envelope_scale must be finite and positive.")
+    rays = np.column_stack((centre-envelope_scale*radius,centre,centre+envelope_scale*radius))
+    artists = plot_ray_bundle(ax,rays,dense_z,p,band_mode="gradient")
+    for group in artists.values():
+        for artist in group:
+            artist.set_transform(pose + ax.transData)
+
+    def world_xz(local_x, local_z):
+        return pose.transform(np.column_stack((np.atleast_1d(local_x), np.atleast_1d(local_z))))
+
+    sample = world_xz(0.,sample_z)[0]
+    source = world_xz(trace.centroid[0],z[0])[0]
+    ax.plot(*source, marker="o", ms=4, color=p.text_color, zorder=1001)
+    ax.annotate("Source", source, xytext=(-4,-24), textcoords="offset points", ha="center", fontsize=11)
+    # Stagger close objective/deflector labels without changing their positions.
+    for component, label in zip(components,labels):
+        if isinstance(component, Plane):
+            continue
+        location = world_xz(0.,float(component.z))[0]
+        offset = 39 if isinstance(component, Deflector) else -69
+        ax.annotate(label, location, xytext=(0,offset),textcoords="offset points",
+                    ha="center", va="bottom" if offset > 0 else "top", fontsize=10,
+                    arrowprops=dict(arrowstyle="-",lw=.45,color=".55",shrinkA=5,shrinkB=18))
+    # Layered lattice schematic; the beam-facing edge stays on the physical plane.
+    length = 48.  # schematic crystal length in mm
+    tangent = np.array([np.cos(surface_angle_rad),np.sin(surface_angle_rad)])
+    up = np.array([-tangent[1],tangent[0]])
+    ends = sample + np.array([-.5,.5])[:,None]*length*tangent
+    crystal = np.array([ends[0],ends[1],ends[1]+2*up,ends[0]+2*up])
+    ax.add_patch(mpl.patches.Polygon(crystal, facecolor="#E5EDF6",
+        edgecolor="#536C86", lw=.8, zorder=1000))
+    # Atom rows illustrate crystallinity, not a literal atomic cross section.
+    for row in range(4):
+        lateral = np.linspace(-.45, .45, 13) * length
+        if row % 2:
+            lateral = lateral[:-1] + length*.0375
+        atoms = sample + lateral[:,None]*tangent + (.25 + row*.45)*up
+        ax.plot(atoms[:,0], atoms[:,1], color="#ABC0D4", lw=.45, zorder=1001)
+        ax.scatter(atoms[:,0], atoms[:,1], s=5 if row else 8,
+            color="#688BAA" if row else "#C29452", edgecolors="white",
+            linewidths=.25, zorder=1002)
+    ax.plot(ends[:,0],ends[:,1],color="#314E69",lw=1.4,zorder=1001)
+    ax.text(sample[0],sample[1]+4.5,specimen_label,ha="center",fontsize=10)
+    ax.scatter(*sample,s=15,color="black",zorder=1002)
+    # Opposite lateral orders can coincide in an XZ side projection. Draw
+    # that geometric path once and combine its display weight, rather than
+    # accumulating dark strokes on top of each other.
+    projected = {}
+    for path,weight in zip(paths,weights):
+        key = tuple(np.round(path,12).ravel())
+        if key in projected:
+            projected[key][1] += weight
+        else:
+            projected[key] = [path,float(weight)]
+    maximum = max(max(weight for _,weight in projected.values()),np.finfo(float).eps)
+    for path,weight in projected.values():
+        if weight <= 0:
+            continue
+        fraction = np.sqrt(weight/maximum)
+        ax.plot(path[:,1]*1e3,path[:,0]*1e3,color=p.ray_color,lw=.55+.55*fraction,
+                alpha=.3+.45*fraction,zorder=3,solid_capstyle="round",solid_joinstyle="round")
+    ax.plot(screen[:,1]*1e3,screen[:,0]*1e3,color="dimgrey",lw=5,solid_capstyle="butt",zorder=1000)
+    endpoint = screen[np.argmax(screen[:,0]),[1,0]]*1e3
+    ax.annotate("Medipix3",endpoint,xytext=(0,15),textcoords="offset points",ha="center",fontsize=11)
+    # Context labels occupy clear space between the column and reflected fan.
+    if show_section_labels:
+        ax.text(.23,1.01,"SEM column",transform=ax.transAxes,ha="center",fontsize=12)
+        ax.text(.76,1.01,"Reflected diffraction",transform=ax.transAxes,ha="center",fontsize=12)
+    ax.set_title(title,loc="left",fontsize=15,pad=39 if show_section_labels else 12)
+    all_points = np.concatenate((paths.reshape(-1,2)[:,::-1]*1e3,screen[:,::-1]*1e3,source[None,:],crystal))
+    lo,hi = all_points.min(axis=0),all_points.max(axis=0)
+    ax.set(xlim=(lo[0]-25,hi[0]+30),ylim=(lo[1]-8,hi[1]+9),
+           xlabel="Laboratory horizontal position (mm)",ylabel="Height (mm)")
+    ax.set_yticks(np.arange(np.ceil((lo[1]-8)/5)*5,hi[1]+9,5))
+    ax.grid(False)
+    ax.tick_params(labelsize=9,length=0,colors=".4")
+    ax.xaxis.label.set_color(".4"); ax.yaxis.label.set_color(".4")
+    return fig,ax

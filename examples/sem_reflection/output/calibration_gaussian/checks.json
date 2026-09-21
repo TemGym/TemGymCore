@@ -1,0 +1,36 @@
+{
+  "held_out_frames": 18,
+  "prediction_rms_noise_units": 1.0112674283294938,
+  "fit_rms_noise_units": 1.0127399462254953,
+  "max_lateral_tail_fraction": 1.03509423847073e-16,
+  "max_order_field_overlap_bound": 3.8865933955782474e-16,
+  "rank": 9,
+  "near_bounds": [],
+  "objective_working_distance_mm": 40.15395340430102,
+  "note": "Local errors condition on the known source model, incidence, detector pose/PSF and surface response.",
+  "separated_order_approximation_passed": true,
+  "prediction_noise_consistent": true,
+  "validated": true,
+  "truth": [
+    -350.0,
+    -270.0,
+    -130.0,
+    -40.0,
+    40.0,
+    25.714285714285715,
+    21.176470588235293,
+    1.91,
+    120.0
+  ],
+  "errors": [
+    2.197617431842218,
+    0.7297968746201491,
+    -0.5514911235777049,
+    -0.15395340430102067,
+    -0.6103182879469671,
+    -0.020278359296412418,
+    0.10269554838317063,
+    -0.021095969123953173,
+    -0.00011987934902890629
+  ]
+}

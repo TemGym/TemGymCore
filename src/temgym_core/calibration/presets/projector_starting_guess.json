@@ -20,8 +20,5 @@
     "IL2": 0.6,
     "IL3": 0.5,
     "PL1": 0.7
-  },
-  "beam_curvature_per_m": 0.0,
-  "angular_spread_mrad": 1.2,
-  "sample_rotation_deg": 0.0
+  }
 }

@@ -1,0 +1,11 @@
+{
+  "frames": 129,
+  "fingerprint": "4bc81c816a37cd3811154c53710b569f6108334a3d6a1a4636a705a1766eb63d",
+  "statistics": [
+    "mean u (pixel)",
+    "mean v (pixel)",
+    "variance u (pixel\u00b2)",
+    "variance v (pixel\u00b2)"
+  ],
+  "note": "No truth read; order intensity is a nuisance and is not fitted."
+}
