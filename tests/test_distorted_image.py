@@ -150,3 +150,49 @@ def test_distortion_centres_follow_cubic_law_for_a_batched_field():
     obj = np.asarray(source.r_xy)
     kick = np.sum(obj**2, axis=1)[:, None] * (-3e12 * obj + 2e12 * np.c_[-obj[:, 1], obj[:, 0]])
     np.testing.assert_allclose(out.r_xy, -obj - distance * kick, rtol=1e-11, atol=1e-18)
+
+
+@pytest.mark.parametrize('distortion', [-5e10, -1e11])
+def test_negative_projector_distortion_preserves_decaying_gaussians(distortion):
+    """Near a distortion fold, rotation/drift must not turn decay into growth."""
+    from temgym_core.components import ABCDTransfer, HardEdgeSolenoid
+    from temgym_core.gaussian import GaussianBeam
+
+    distance = .0023032826918525534
+    # Two beamlets from the failing 500,000-Gaussian microscope image;
+    # rescale their coordinates to probe the same fold at either coefficient.
+    scale = jnp.sqrt(5e10 / abs(distortion))
+    position = scale*jnp.asarray([[2.4082105728813265e-5, -4.788765146492331e-5],
+                                  [3.341067852639786e-5, -4.191540933314771e-5]])
+    slope = scale*jnp.asarray([[-3.858622473851133e-5, 7.672932352482012e-5],
+                               [-5.3533190361475685e-5, 6.716013220556671e-5]])
+    cross = .889268526762256+10.236644481126522j
+    curvature = jnp.asarray([
+        [-.08206534534012783+23.5492040449277j, cross],
+        [cross, -.9017741802664251+14.113282708780778j]])
+    beam = GaussianBeam(x=position[:, 0], y=position[:, 1],
+                        dx=slope[:, 0], dy=slope[:, 1],
+                        z=.7329834964770994, amplitude=1e-5+0j,
+                        pathlength=0., Q_inv=curvature, voltage=200e3)
+    lens = DistortedLens(z=beam.z, focal_length=.002286337233069289,
+                         object_plane_dist=distance, IsoDist=distortion)
+    rotation = jnp.asarray([[jnp.cos(.37), -jnp.sin(.37)],
+                            [jnp.sin(.37), jnp.cos(.37)]])
+    rotate = ABCDTransfer(A=rotation, B=jnp.zeros((2, 2)), D=rotation)
+    drift = FreeSpacePropagator(include_axial_path=False)
+
+    @jax.jit
+    def transport(beam):
+        pupil = lens(beam)
+        rotated = rotate(pupil)
+        finite = HardEdgeSolenoid(z=lens.z, length=.001, q=-.63,
+                                  include_axial_path=False)(pupil)
+        return pupil, rotated, drift(rotated, 1.04375-lens.z), finite
+
+    for out in transport(beam):
+        q = np.asarray(out.Q_inv)
+        assert np.isfinite(q).all()
+        assert (np.linalg.eigvalsh(q.imag) > 0).all()
+        assert np.isfinite(np.asarray(out.amplitude)).all()
+        values = field_at(out, np.asarray(out.r_xy))
+        assert np.isfinite(values).all()

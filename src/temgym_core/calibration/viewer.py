@@ -51,7 +51,7 @@ def _draw_ray_section(
         DoubleDeflector,
         ElectromagneticLens,
         HardEdgeSolenoid,
-        KrivanekLens,
+        Lens,
         SigmoidAperture,
     )
     from temgym_core.plotting import (
@@ -159,7 +159,7 @@ def _draw_ray_section(
             and not (section == 3 and isinstance(component, HardEdgeSolenoid))
         ):
             annotations.append((z, label))
-            if isinstance(component, (HardEdgeSolenoid, ElectromagneticLens, KrivanekLens)):
+            if isinstance(component, (HardEdgeSolenoid, ElectromagneticLens, Lens)):
                 height = max(float(getattr(component, "length", 0.)),
                              0.012 * (z1 - z0)) * 1000
                 for a, b, depth in [(180, 360, -0.5), (0, 180, 4)]:

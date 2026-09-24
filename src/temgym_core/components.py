@@ -455,8 +455,8 @@ class SeidelLens(Lens):
 
     Position, slope, and object_plane_dist determine the reference object
     coordinate internally. A joint quadratic expansion about the aberrated
-    central ray is integrated analytically, then applied as a spatial
-    complex-action increment. The kernel uses the Fresnel amplitude and
+    central ray is integrated analytically, retaining its positive decay
+    curvature explicitly. The kernel uses the Fresnel amplitude and
     exp(-ik W); field-dependent pupil apodization is not included.
 
     The central-ray solve assumes a smooth branch near the ideal ray, and
@@ -507,7 +507,7 @@ class SeidelLens(Lens):
 
     def _call_gaussian_single(self, ray: GaussianBeam) -> GaussianBeam:
         if self.object_xy is None:
-            terms = self._joint_action_terms(ray)
+            return self._joint_gaussian(ray)
         else:
             def action_at_object(xy):
                 log_amplitude = jnp.logaddexp(self.log_transmission(xy), -50.0)
@@ -523,7 +523,7 @@ class SeidelLens(Lens):
             z=ray.z, amplitude=amplitude, pathlength=pathlength, Q_inv=Q_new,
         )
 
-    def _joint_action_terms(self, ray: GaussianBeam):
+    def _joint_gaussian(self, ray: GaussianBeam):
         distance = self.object_plane_dist
         # This is the same reparameterization as W(aperture, slope). Object
         # coordinates are internal integration variables, not extra inputs.
@@ -542,18 +542,43 @@ class SeidelLens(Lens):
 
         aperture_xy = lax.fori_loop(0, 6, central_ray_step, ray.r_xy)
 
-        def action(endpoints):
-            log_amplitude = jnp.logaddexp(self.log_transmission(endpoints[2:]), -50.0)
-            return phase(endpoints) - 1j * log_amplitude / ray.k
-
         endpoints = jnp.concatenate((object_xy, aperture_xy))
-        value, gradient, hessian = taylor_expand(action, endpoints)
-        # Express this polynomial at the original endpoints before reducing
-        # it to a spatial action. The aberrated expansion centre is retained.
-        shift = jnp.concatenate((jnp.zeros(2), ray.r_xy - aperture_xy))
-        value = value + gradient @ shift + 0.5 * shift @ hessian @ shift
-        gradient = gradient + hessian @ shift
-        return _pupil_action_to_spatial(ray, distance, value, gradient, hessian)
+        value, gradient, hessian = map(jnp.real, taylor_expand(phase, endpoints))
+        go, ga = gradient[:2], gradient[2:]
+        hoo, hoa = hessian[:2, :2], hessian[:2, 2:]
+        eye = jnp.eye(2, dtype=ray.Q_inv.dtype)
+        t = eye - distance * ray.Q_inv
+        jacobian = eye - distance * hoa
+
+        # For a real joint action, the output imaginary curvature is a
+        # congruence of the incoming positive imaginary curvature. Computing
+        # it as Im(Q + delta_Q) loses that positivity near a distortion fold.
+        # U = inv(I + d*t*Hoo); Im(Q_out) = J.T U Im(Q) U.H J.
+        mapped = jnp.linalg.solve((eye + distance*t @ hoo).conj().T, jacobian)
+        imaginary_q = jnp.real(mapped.conj().T @ jnp.imag(ray.Q_inv) @ mapped)
+        prefactor, _, delta_q = _pupil_action_to_spatial(
+            ray, distance, 0., jnp.zeros(4), hessian)
+        real_q = jnp.real(ray.Q_inv + delta_q)
+        q = real_q + 1j*imaginary_q
+        q = .5*(q+q.T)
+
+        # Evaluate at the stationary centre rather than re-expanding about
+        # the old pupil position and cancelling large imaginary path terms.
+        # This also works at d=0: the slope includes both endpoint gradients.
+        output = ray.derive(
+            x=aperture_xy[0], y=aperture_xy[1],
+            dx=ray.dx+go[0]+ga[0], dy=ray.dy+go[1]+ga[1],
+            amplitude=ray.amplitude*jnp.exp(-ray.k*jnp.imag(prefactor)),
+            pathlength=ray.pathlength+value+distance*(ray.d_xy @ go+.5*(go @ go))
+            +jnp.real(prefactor), Q_inv=q,
+        )
+        # Pupil transmission is a spatial action after the real joint kernel.
+        # Retain it for subclasses; the native Seidel/DistortedLens is lossless.
+        terms = taylor_expand(lambda xy: -1j*jnp.logaddexp(
+            self.log_transmission(xy), -50.)/ray.k, output.r_xy)
+        xy, slope, amplitude, pathlength, curvature = apply_action_delta(output, *terms)
+        return output.derive(x=xy[0], y=xy[1], dx=slope[0], dy=slope[1],
+                             amplitude=amplitude, pathlength=pathlength, Q_inv=curvature)
 
 
 @jdc.pytree_dataclass
@@ -613,16 +638,26 @@ class ABCDTransfer(Component):
         Q = ray.Q_inv
         denom = A + _matmat(B, Q)
         numer = C + _matmat(D, Q)
-        # Solve the transposed system to evaluate numer @ inv(denom) without
-        # explicitly forming an inverse; swapaxes keeps bundle axes intact.
-        Q_new = jnp.swapaxes(
-            jnp.linalg.solve(
+        def complex_denominator(_):
+            # Solve the transposed system for numer @ inv(denom), retaining
+            # any leading bundle axes.
+            return jnp.swapaxes(jnp.linalg.solve(
                 jnp.swapaxes(denom, -1, -2),
-                jnp.swapaxes(numer, -1, -2),
-            ),
-            -1,
-            -2,
-        )
+                jnp.swapaxes(numer, -1, -2)), -1, -2)
+
+        def real_denominator(_):
+            # With B=0, a complex solve can contaminate tiny decay curvature
+            # with roundoff from the real curvature after a Seidel fold.
+            real = jnp.swapaxes(jnp.linalg.solve(
+                jnp.swapaxes(A, -1, -2),
+                jnp.swapaxes(jnp.real(numer), -1, -2)), -1, -2)
+            imag = jnp.swapaxes(jnp.linalg.solve(
+                jnp.swapaxes(A, -1, -2),
+                jnp.swapaxes(_matmat(D, jnp.imag(Q)), -1, -2)), -1, -2)
+            return real + 1j*imag
+
+        Q_new = jax.lax.cond(jnp.all(B == 0), real_denominator,
+                             complex_denominator, operand=None)
 
         return ray.derive(
             x=r_xy_new[..., 0],
@@ -702,6 +737,16 @@ class HardEdgeSolenoid(Component):
         m = self.matrix
         out = ABCDTransfer(A=m[:2, :2], B=m[:2, 2:],
                            C=m[2:, :2], D=m[2:, 2:])(ray)
+        # The solenoid is symplectic: preserve its positive decay curvature
+        # by congruence. Extracting Im(Q) from the complex quotient can turn
+        # nearly collapsed Seidel beamlets into growing Gaussians.
+        transport = m[:2, :2] + m[:2, 2:] @ ray.Q_inv
+        inverse = jnp.linalg.solve(transport, jnp.broadcast_to(
+            jnp.eye(2, dtype=transport.dtype), transport.shape))
+        decay = jnp.real(jnp.swapaxes(inverse.conj(), -1, -2)
+                         @ jnp.imag(ray.Q_inv) @ inverse)
+        curvature = jnp.real(out.Q_inv) + 1j*decay
+        out = out.derive(Q_inv=.5*(curvature+jnp.swapaxes(curvature, -1, -2)))
         # Remove the real rotation from A+BQ before following its phase.
         # For |q|<pi, b>0 and both modal factors lie in the upper half-plane.
         b = self.length * jnp.sinc(self.q / jnp.pi)

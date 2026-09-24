@@ -580,16 +580,19 @@ class FreeSpacePropagator(BaseGaussianPropagator):
             determinant_root,
         )
         amplitude_factor = 1.0 / determinant_root
-        # Solve the transposed system to evaluate Q @ inv(denominator) without
-        # forming an inverse. swapaxes keeps this valid for batched Q matrices.
-        Q_new = jnp.swapaxes(
-            jnp.linalg.solve(
-                jnp.swapaxes(denominator, -1, -2),
-                jnp.swapaxes(q, -1, -2),
-            ),
-            -1,
-            -2,
-        )
+        # Solve once for both Q @ inv(D) and inv(D). Transport Im(Q) by
+        # congruence rather than extracting it from a complex quotient: near
+        # an astigmatic focus that quotient can lose the tiny positive decay
+        # eigenvalue and turn a decaying Gaussian into an overflowing one.
+        rhs = jnp.concatenate((jnp.swapaxes(q, -1, -2),
+                               jnp.broadcast_to(identity, q.shape)), axis=-1)
+        solved = jnp.linalg.solve(jnp.swapaxes(denominator, -1, -2), rhs)
+        Q_new = jnp.swapaxes(solved[..., :2], -1, -2)
+        inverse = jnp.swapaxes(solved[..., 2:], -1, -2)
+        imaginary = jnp.real(jnp.swapaxes(inverse.conj(), -1, -2)
+                             @ jnp.imag(q) @ inverse)
+        Q_new = jnp.real(Q_new) + 1j*imaginary
+        Q_new = .5*(Q_new+jnp.swapaxes(Q_new, -1, -2))
 
         dx = jnp.asarray(ray.dx, dtype=jnp.float64)
         dy = jnp.asarray(ray.dy, dtype=jnp.float64)

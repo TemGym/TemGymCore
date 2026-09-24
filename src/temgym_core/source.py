@@ -811,7 +811,11 @@ def decompose_gaussian(
     propagator = FreeSpacePropagator(include_axial_path=False)
     target = run_to_end(beam, through, propagator=propagator) if through else beam
     q = np.asarray(target.Q_inv)
-    if not np.allclose(q, q[0, 0] * np.eye(2), rtol=1e-9, atol=1e-12):
+    # Native round lens/rotation chains can leave small off-diagonal residue.
+    # Scale those nominally zero entries by the curvature matrix as a whole;
+    # elementwise relative tolerance otherwise reduces to absolute tolerance.
+    round_tolerance = 1e-12 + 1e-9 * np.max(np.abs(q))
+    if not np.allclose(q, q[0, 0] * np.eye(2), rtol=0., atol=round_tolerance):
         raise ValueError("The Gaussian must be round at the sampling plane.")
     k, curvature = float(target.k), float(q[0, 0].real)
     if not np.isfinite(q).all() or q[0, 0].imag <= 0:

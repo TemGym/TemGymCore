@@ -77,6 +77,26 @@ def test_decomposition_rejects_invalid_sampling():
             decompose_gaussian(source, **kwargs)
 
 
+
+def test_decomposition_roundness_tolerates_relative_rotation_residue():
+    from types import SimpleNamespace
+    from temgym_core.evaluate import evaluate_gaussians
+
+    source = gaussian_waist(z=0., voltage=200e3, rms_size=50e-9)
+    q = source.Q_inv
+    residue = 1e-12 * jnp.abs(q[0, 0])
+    source = source.derive(Q_inv=q.at[0, 1].set(residue).at[1, 0].set(residue))
+    bundle = decompose_gaussian(source, num_across=32)
+    x = jnp.linspace(-100e-9, 100e-9, 51)
+    grid = SimpleNamespace(shape=(51,), coords=jnp.stack((x, x/2), axis=-1))
+    expected = np.asarray(evaluate_gaussians(source, grid, method="scan"))
+    actual = np.asarray(evaluate_gaussians(bundle, grid, method="scan"))
+    np.testing.assert_allclose(actual, expected, rtol=5e-5, atol=1e-9)
+    # An actual elliptical envelope or cross-axis coupling is still rejected.
+    for changed in (q.at[1, 1].multiply(1.01), q.at[0, 1].set(.01*q[0, 0])):
+        with pytest.raises(ValueError, match="round"):
+            decompose_gaussian(source.derive(Q_inv=changed), num_across=32)
+
 def test_gaussian_cardinal_coefficients_reconstruct_square_samples():
     axis = 9
     width_over_step = 1.1

@@ -38,24 +38,49 @@ the separate CL1/CL3 design exercise. See also [implementation notes](../../src/
 
 ## Interactive Gaussian smiley
 
-[smiley_gaussian_defocus.ipynb](smiley_gaussian_defocus.ipynb) sends exactly
-500,000 coherent Gaussian beamlets by default through a smoothed smiley and the full
-40,000× microscope imaging column onto a 128×128 detector. The full condenser
-supplies its coherent illumination. A sample-height slider (±10 µm) produces
-defocus with fixed lens currents; a second slider adjusts display contrast.
-An optional objective-aberration panel adds twofold astigmatism, axial coma,
-and spherical aberration through a native `KrivanekLens` objective, retaining
-the original objective focal length and magnetic rotation. Its large,
-explicitly labelled coefficient ranges make the effects visible at overview scale.
-Run all cells with the notebook extras and a JAX GPU for interactive updates.
-The notebook includes the calibration ray diagram beside the live image, a saved
-full-column ray overview, image previews, measured timings, and a focus check.
-The companion [smiley_defocus.py](smiley_defocus.py) contains the forward model.
+[smiley_gaussian_defocus.ipynb](smiley_gaussian_defocus.ipynb) uses the saved fitted
+synthetic microscope from the calibration pipeline, including its finite
+solenoids and virtual-source waist, position and mean tilt. The portable
+[parameter snapshot](smiley_calibration.json) records its provenance.
+This is a coherent member of the fitted source; additional incoherent tilt
+spread is not averaged into this coherent-wave demonstration.
 
-The **Gaussians** selector switches between six counts (10,000–1,000,000).
-Each count has its own compiled renderer and image cache; the focused reference
-and live image update together. Lower counts trade numerical accuracy for speed.
+After updating the lens code, restart the notebook kernel and Run All. Reloading
+`smiley_defocus` alone retains previously imported core classes; the helper now
+checks for stale transport methods before creating a renderer. A failed render
+reports its projector, illumination, sampling and aberration settings.
 
-The live ray diagram follows a subset of the actual Gaussian beam centres through
-the specimen and aberrated Krivanek objective. Aberration sliders update the
-downstream trajectories; a dashed guide shows the zero-aberration comparison.
+The default is 200 kV, 40,000×, spot 3, aperture out, 500,000 specimen Gaussians.
+Controls cover specimen height, count (10k–1M), solved condenser spots (1–8),
+focused magnification (40k–600k), sigmoid aperture radii (10, 25, 80, 150 µm),
+objective aberrations and signed PL1 distortion. The condenser follows the
+calibration's source-image design curve. Magnification solves native IL1–PL1
+controls, keeping the objective fixed and the reference rotation unchanged.
+The first source crossover lies between CL1 and CL3.
+
+**View plane → IL1 crossover · diffraction** evaluates the coherent field at the
+nominal specimen Fourier plane between IL1 and IL2. Its position is recalculated
+for each magnification, and marked on the ray diagram. Physical screen coordinates
+are in µm; its field spans nominal frequencies ±0.12 nm⁻¹. PL1 is downstream and
+cannot affect that screen. Switch back to **Detector image** for imaging.
+
+Apertures use the fitted plane and 0.15 µm sigmoid edge. The 10/25 µm radii use
+their fitted centres; the larger two radii are illustrative extensions. Inserting
+an aperture activates a resolved source-to-aperture calculation and 2D complex
+field recomposition at the specimen (512×512 illumination and 256×256 interpolation grids).
+The full selected specimen bundle then traverses the aberrated downstream column.
+Without an aperture, it propagates continuously from the fitted source.
+
+The ray diagram shows sampled Gaussian centres, not beam widths or interference.
+After recomposition its upstream trace is an illumination guide. The detector
+is point-sampled; quantitative results require specimen/aperture convergence.
+Run all cells with the notebook extras, preferably on a JAX GPU.
+
+[Historical basis checks](smiley_source_basis_checks.json) and their radial
+comparison script concern the previous illustrative source/TOML microscope;
+they are not validation of this fitted model. Current tests check the native
+source and crossover, imaging and Fourier conditions, coherent vacuum propagation,
+and control/aberration behaviour.
+
+[Current fitted-model checks](smiley_calibrated_checks.json) record the source,
+spot radii, Fourier-plane locations, focus/aperture convergence and slider sweep.

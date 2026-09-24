@@ -1,0 +1,291 @@
+{
+  "conditions": {
+    "voltage_V": 200000,
+    "magnification": 40000,
+    "aperture_radius_um": 10,
+    "sigmoid_edge_width_um": 0.5,
+    "aberrations": "zero",
+    "source": "illustrative coherent mode, 100 nm amplitude radius at nominal spot 3 specimen",
+    "detector_shape": [
+      128,
+      128
+    ],
+    "detector_pitch_um": 55
+  },
+  "references": {
+    "focus": "Native round condenser matrix; independent radial Fresnel quadrature of the sigmoid-transmitted coherent field; exact specimen transmission; nominal imaging matrix.",
+    "height": "Compare continuous propagation with the recomposed field at the same specimen height and beamlet count.",
+    "aperture_field": "Exact incident Gaussian times sigmoid transmission on 256-point radial spokes at 0 and 45 degrees, out to four incident amplitude radii; radius-weighted complex-field error."
+  },
+  "continuous_full_source_basis_cases": [
+    {
+      "basis": "source",
+      "count": 16384,
+      "overlap": 1.1,
+      "aperture_packet_radius_um": 0.18087593354989095,
+      "specimen_packet_radius_nm": 471.90145389930774,
+      "incident_field_error": 0.0006925790325144106,
+      "transmitted_field_error": 0.0006925569221488517,
+      "focused_intensity_error": 0.8427988060159036,
+      "seconds": 8.863077316433191
+    },
+    {
+      "basis": "aperture",
+      "count": 16384,
+      "overlap": 1.1,
+      "aperture_packet_radius_um": 0.07465987863133175,
+      "specimen_packet_radius_nm": 481.1819228598381,
+      "incident_field_error": 0.0012476914731901617,
+      "transmitted_field_error": 0.0012476675322061087,
+      "focused_intensity_error": 0.8420741059073611,
+      "seconds": 2.1071086581796408
+    },
+    {
+      "basis": "specimen",
+      "count": 16384,
+      "overlap": 1.1,
+      "aperture_packet_radius_um": 8.360723495803231,
+      "specimen_packet_radius_nm": 4.297119012718377,
+      "incident_field_error": 0.0007315562703779693,
+      "transmitted_field_error": 0.0007315171785892292,
+      "focused_intensity_error": 0.20849759772498125,
+      "seconds": 2.494164977222681
+    },
+    {
+      "basis": "source",
+      "count": 1000000,
+      "overlap": 1.1,
+      "aperture_packet_radius_um": 1.2871338470938098,
+      "specimen_packet_radius_nm": 3686.5779052034286,
+      "incident_field_error": 0.0007578724958886712,
+      "transmitted_field_error": 0.0007578501397726892,
+      "focused_intensity_error": 0.8387382093533268,
+      "seconds": 16.766932908445597
+    },
+    {
+      "basis": "aperture",
+      "count": 1000000,
+      "overlap": 1.1,
+      "aperture_packet_radius_um": 0.009556464464810257,
+      "specimen_packet_radius_nm": 3759.090311208698,
+      "incident_field_error": 0.0013507727260320354,
+      "transmitted_field_error": 0.0013507479656613398,
+      "focused_intensity_error": 0.8388412549586673,
+      "seconds": 10.114593772217631
+    },
+    {
+      "basis": "specimen",
+      "count": 1000000,
+      "overlap": 1.1,
+      "aperture_packet_radius_um": 65.3156599568093,
+      "specimen_packet_radius_nm": 0.5519064307608758,
+      "incident_field_error": 0.0007725989068729751,
+      "transmitted_field_error": 0.0007725261905087059,
+      "focused_intensity_error": 0.0007683993412341534,
+      "seconds": 10.125071769580245
+    }
+  ],
+  "fixed_aperture_packet_cases": [
+    {
+      "basis": "fixed_aperture",
+      "count": 16384,
+      "overlap": 3.6833705738786673,
+      "aperture_packet_radius_um": 0.2499999999999996,
+      "specimen_packet_radius_nm": 144.38236622617902,
+      "incident_field_error": 0.0009252462521004362,
+      "transmitted_field_error": 0.0009252260756286375,
+      "focused_intensity_error": 0.8699273680987116,
+      "seconds": 10.73520409502089
+    },
+    {
+      "basis": "fixed_aperture",
+      "count": 1000000,
+      "overlap": 28.77633260842709,
+      "aperture_packet_radius_um": 0.2499999999999996,
+      "specimen_packet_radius_nm": 144.38236621303676,
+      "incident_field_error": 0.0009255049959403199,
+      "transmitted_field_error": 0.0009254848102352333,
+      "focused_intensity_error": 0.8712075649503979,
+      "seconds": 19.300332384184003
+    }
+  ],
+  "continuous_window_cases": [
+    {
+      "spot": 1.0,
+      "height_nm": -10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 0.003857238834144051
+    },
+    {
+      "spot": 1.0,
+      "height_nm": 0.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 0.0036937854002456597,
+      "continuous_focus_error": 0.003726159290190622,
+      "recomposed_focus_error": 0.0005377091185483547,
+      "reference_quadrature_error": 1.1087265319111287e-13
+    },
+    {
+      "spot": 1.0,
+      "height_nm": 10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 0.0038785463041200187
+    },
+    {
+      "spot": 2.0,
+      "height_nm": -10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 9.336841311397937e-06
+    },
+    {
+      "spot": 2.0,
+      "height_nm": 0.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 1.4137121416088877e-06,
+      "continuous_focus_error": 0.0005445871726298319,
+      "recomposed_focus_error": 0.0005445362639598344,
+      "reference_quadrature_error": 8.508156485785819e-14
+    },
+    {
+      "spot": 2.0,
+      "height_nm": 10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 8.999971096271365e-06
+    },
+    {
+      "spot": 3.0,
+      "height_nm": -10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 1.3999892922525974e-05
+    },
+    {
+      "spot": 3.0,
+      "height_nm": 0.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 1.3415158118665198e-05,
+      "continuous_focus_error": 0.0007683993455969019,
+      "recomposed_focus_error": 0.0007685949839656743,
+      "reference_quadrature_error": 6.475072773873574e-14
+    },
+    {
+      "spot": 3.0,
+      "height_nm": 10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 1.4412142021710448e-05
+    },
+    {
+      "spot": 4.0,
+      "height_nm": -10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 1.811247355357623e-05
+    },
+    {
+      "spot": 4.0,
+      "height_nm": 0.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 1.7114966025272934e-05,
+      "continuous_focus_error": 0.0007036840341493942,
+      "recomposed_focus_error": 0.0007041951778295138,
+      "reference_quadrature_error": 3.6058093577238134e-14
+    },
+    {
+      "spot": 4.0,
+      "height_nm": 10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 1.800530133764022e-05
+    },
+    {
+      "spot": 5.0,
+      "height_nm": -10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 3.1843721037506564e-05
+    },
+    {
+      "spot": 5.0,
+      "height_nm": 0.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 3.826369831250952e-06,
+      "continuous_focus_error": 0.0005441363378487544,
+      "recomposed_focus_error": 0.0005438283040767297,
+      "reference_quadrature_error": 7.6974569340794e-14
+    },
+    {
+      "spot": 5.0,
+      "height_nm": 10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 3.0854096683183005e-05
+    },
+    {
+      "spot": 6.0,
+      "height_nm": -10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 6.689158749857542e-05
+    },
+    {
+      "spot": 6.0,
+      "height_nm": 0.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 8.022542086262975e-06,
+      "continuous_focus_error": 0.0005389785860848708,
+      "recomposed_focus_error": 0.0005383796524334591,
+      "reference_quadrature_error": 1.7030704240022975e-13
+    },
+    {
+      "spot": 6.0,
+      "height_nm": 10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 6.4918837121916e-05
+    },
+    {
+      "spot": 7.0,
+      "height_nm": -10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 3.926445356896885e-05
+    },
+    {
+      "spot": 7.0,
+      "height_nm": 0.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 1.4590592790098618e-05,
+      "continuous_focus_error": 0.0005380925029424902,
+      "recomposed_focus_error": 0.0005381941693743846,
+      "reference_quadrature_error": 4.4159334629926286e-12
+    },
+    {
+      "spot": 7.0,
+      "height_nm": 10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 3.810592246931931e-05
+    },
+    {
+      "spot": 8.0,
+      "height_nm": -10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 4.0054459892439147e-05
+    },
+    {
+      "spot": 8.0,
+      "height_nm": 0.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 2.5099812055013878e-05,
+      "continuous_focus_error": 0.000537925082012994,
+      "recomposed_focus_error": 0.0005395297026139164,
+      "reference_quadrature_error": 2.104696323051706e-11
+    },
+    {
+      "spot": 8.0,
+      "height_nm": 10000.0,
+      "count": 1000000,
+      "continuous_vs_recomposed_error": 3.929295546783269e-05
+    }
+  ],
+  "max_continuous_focus_error": 0.003726159290190622,
+  "max_continuous_vs_recomposed_error": 0.0038785463041200187,
+  "decision": "Default to continuous source propagation using a specimen-resolving numerical source basis over the 500 nm object window. Retain optional recomposition. These checks concern this centred microscope and its smallest stored aperture; they do not establish arbitrary-aperture convergence.",
+  "commands": [
+    "python examples/microscope_models/check_smiley_source_basis.py --counts 128 1000",
+    "python examples/microscope_models/check_smiley_source_basis.py --counts 128 1000 --bases fixed_aperture",
+    "python examples/microscope_models/check_smiley_source_basis.py --window-check --counts 1000 --spots 1 2 3 4 5 6 7 8"
+  ],
+  "model_scope": "Historical illustrative source and microscope.toml geometry, before the fitted-microscope migration. Not validation of smiley_calibration.json."
+}
