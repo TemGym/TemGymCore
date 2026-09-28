@@ -31,7 +31,7 @@ specimen by selected Fourier orders of its complex transmission. Each incident
 Gaussian creates one child per order, preserving the phase at its centre. It
 uses the ordinary `run_to_end` and detector renderer; pass a whole bundle
 directly rather than wrapping it in another `vmap`. See the executable
-[Bragg example](../../examples/gaussians/diffraction_bragg.ipynb) for a sinusoidal
+[Bragg example](../../archived/examples/gaussians/diffraction_bragg.ipynb) for a sinusoidal
 phase grating with analytic intensity and flux checks. Unit-cell samples use
 image (y, x) order without repeated endpoints, and all lengths use the beam's
 coordinate unit. Refine the input grid and retained orders separately; omitted
@@ -51,7 +51,7 @@ propagation lives there too. These sampled-field routines also provide independe
 checks of Gaussian propagation.
 
 The magnetic cube recipe and its projection helper live beside their notebooks in
-[holography_distortion/magnetic_cube.py](../../examples/holography_distortion/magnetic_cube.py).
+[holography_distortion/magnetic_cube.py](../../archived/examples/holography_distortion/magnetic_cube.py).
 The unused 1D Fresnel and action-centre helpers were removed; the circular
 comparison mask and thin-lens FFT reference live in `tests/test_gaussians.py`.
 This cleanup passed 108 targeted tests with two existing skips. Before/after
@@ -70,7 +70,7 @@ Atomic-scattering work is now imported explicitly from
 `temgym_core.experimental.potential`. Its Gaussian component still uses the
 regular TemGym interface, but importing ordinary components does not load it.
 The notebook that calls it moved to
-[examples/experimental/glauber_ray_example.ipynb](../../examples/experimental/glauber_ray_example.ipynb).
+[archived/examples/experimental/glauber_ray_example.ipynb](../../archived/examples/experimental/glauber_ray_example.ipynb).
 
 ## Reading components
 
@@ -120,7 +120,7 @@ including both position and slope changes. Six unrolled Newton steps and an
 explicit two-by-two solve support `jax.experimental.jet` near the ideal branch.
 This is geometric transport; it does not include Gaussian width or amplitude.
 
-The [aberration demonstration](../../examples/aberration_demonstration/aberration_demonstration.ipynb)
+The [aberration demonstration](../../archived/examples/aberration_demonstration/aberration_demonstration.ipynb)
 differentiates actual component calls at one on-axis reference ray. It recovers
 Krivanek coefficients through fifth-order slope derivatives and all nine Seidel
 coefficients from third-order position/slope derivatives, then checks independent

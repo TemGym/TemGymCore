@@ -24,7 +24,7 @@ This RMS definition describes a distribution rather than the edge of a hard cone
 Reproduce from the repository root using the notebook's saved fit:
 
 ```bash
-.venv/bin/python "examples/microscope_models/convergence angle/make_condenser_convergence_figure.py"
+.venv/bin/python examples/microscope_models/convergence_angle/make_condenser_convergence_figure.py
 ```
 
 Use `--experiment PATH` for another saved experiment with `fit.json` and

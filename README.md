@@ -28,7 +28,7 @@ directly as batches, and evaluated on a detector with `evaluate_gaussians`.
 Focused point/probe and Airy-input constructors live in `temgym_core.source`.
 `BraggSample.from_unit_cell` creates explicit Gaussian diffraction orders from
 a periodic thin specimen's complex transmission; the existing
-[Bragg notebook](examples/gaussians/diffraction_bragg.ipynb) checks its intensities
+[Bragg notebook](archived/examples/gaussians/diffraction_bragg.ipynb) checks its intensities
 and flux against a sinusoidal phase grating. Other thin specimen components
 use a local quadratic approximation, which requires sufficiently narrow beamlets.
 

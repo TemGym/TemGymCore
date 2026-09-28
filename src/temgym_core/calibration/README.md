@@ -161,7 +161,7 @@ Saved results are reused only when their inputs and numerical source fingerprint
 match. Viewer and plotting edits do not invalidate the numerical stages.
 Generated arrays, fit records and logs live in the notebook's output directory.
 The earlier specimen-image/current-reference experiment is documented separately
-in [the historical results](../../../examples/microscope_models/COHERENT_INTEGRATION.md).
+in [the historical results](../../../archived/examples/microscope_models/COHERENT_INTEGRATION.md).
 
 ## Recorded data
 
