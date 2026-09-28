@@ -288,7 +288,7 @@ def test_scalar_grad_hessian_function():
     np.testing.assert_allclose(np.asarray(hess), 0.0, rtol=1e-12, atol=1e-12)
 
 
-def test_gaussian_free_space():
+def test_gaussian_free_space(tmp_path):
     voltage = 0.6e-5
     w0x, w0y = 0.35e-3, 0.25e-3
     theta_x, theta_y = 1.4e-3, -0.7e-3
@@ -327,11 +327,11 @@ def test_gaussian_free_space():
 
     fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
                              label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=True)
-    fig.savefig("test_gaussian_free_space_vs_fresnel.png")
+    fig.savefig(tmp_path / "test_gaussian_free_space_vs_fresnel.png")
     plt.close(fig)
 
 
-def test_gaussian_constant_phase_shift_vs_fresnel():
+def test_gaussian_constant_phase_shift_vs_fresnel(tmp_path):
     voltage = 6.0165e-6
     w0x, w0y = 0.35e-3, 0.25e-3
     theta_x, theta_y = 1.4e-3, -0.7e-3
@@ -373,11 +373,11 @@ def test_gaussian_constant_phase_shift_vs_fresnel():
 
     fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
                              label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=False)
-    fig.savefig("test_gaussian_vs_constant_phase_shift.png")
+    fig.savefig(tmp_path / "test_gaussian_vs_constant_phase_shift.png")
     plt.close(fig)
 
 
-def test_gaussian_linear_phase_shift_vs_fresnel():
+def test_gaussian_linear_phase_shift_vs_fresnel(tmp_path):
     voltage = 6.0165e-6  # 500 e-9 m wavelength
     w0x, w0y = 0.35e-3, 0.25e-3
     theta_x, theta_y = 1.4e-3, -0.7e-3
@@ -419,11 +419,11 @@ def test_gaussian_linear_phase_shift_vs_fresnel():
 
     fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
                              label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=False)
-    fig.savefig("test_gaussian_vs_linear_phase_shift.png")
+    fig.savefig(tmp_path / "test_gaussian_vs_linear_phase_shift.png")
     plt.close(fig)
 
 
-def test_gaussian_quadratic_phase_shift_vs_fresnel():
+def test_gaussian_quadratic_phase_shift_vs_fresnel(tmp_path):
     voltage = 6.0165e-6  # 500 e-9 m wavelength
     w0x, w0y = 0.35e-3, 0.25e-3
     theta_x, theta_y = 1.4e-3, -0.7e-3
@@ -467,7 +467,7 @@ def test_gaussian_quadratic_phase_shift_vs_fresnel():
 
     fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
                              label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=False)
-    fig.savefig("test_gaussian_vs_quadratic_phase_shift.png")
+    fig.savefig(tmp_path / "test_gaussian_vs_quadratic_phase_shift.png")
     plt.close(fig)
 
 
@@ -614,7 +614,7 @@ def test_fourier_transform_ABCD_matrix_updates_against_stepwise():
 
 
 # @pytest.mark.skip(reason='ABCD for new propagator not yet implemented')
-def test_gaussian_free_space_vs_fresnel():
+def test_gaussian_free_space_vs_fresnel(tmp_path):
     propagation_distance = 20
     pixel_size = (0.000005, 0.000005)
     voltage = 1e-5
@@ -676,7 +676,7 @@ def test_gaussian_free_space_vs_fresnel():
 
     fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
                              label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=True)
-    fig.savefig("test_gaussian_free_space_vs_fresnel.png")
+    fig.savefig(tmp_path / "test_gaussian_free_space_vs_fresnel.png")
     plt.close(fig)
 
     np.testing.assert_allclose(
@@ -696,7 +696,7 @@ def test_gaussian_free_space_vs_fresnel():
     )
 
 
-def test_gaussian_lens_vs_fresnel():
+def test_gaussian_lens_vs_fresnel(tmp_path):
     M = -2
     f = 5e-3
     defocus = 0.0
@@ -778,7 +778,7 @@ def test_gaussian_lens_vs_fresnel():
     fig, axs = plot_overview(analytic_gauss_image, fresnel_gauss_image, det_size_x=detector.pixel_size[0] * detector.shape[1], det_size_y=detector.pixel_size[1] * detector.shape[0],
                              label1='Analytic Gaussian', label2='Fresnel Propagation', suffix='', unwrap=False)
 
-    fig.savefig("test_gaussian_lens_vs_fresnel.png")
+    fig.savefig(tmp_path / "test_gaussian_lens_vs_fresnel.png")
     plt.close(fig)
 
     central_index = analytic_gauss_image.shape[0] // 2
@@ -801,7 +801,7 @@ def test_gaussian_lens_vs_fresnel():
         labels=["Analytic", "Fresnel"],
     )
 
-    fig.savefig("test_gaussian_lens_vs_fresnel_cross_section.png")
+    fig.savefig(tmp_path / "test_gaussian_lens_vs_fresnel_cross_section.png")
     plt.close(fig)
 
     np.testing.assert_allclose(
@@ -821,7 +821,7 @@ def test_gaussian_lens_vs_fresnel():
     )
 
 
-def test_gaussian_two_beam_interference_vs_fresnel():
+def test_gaussian_two_beam_interference_vs_fresnel(tmp_path):
     pixel_size = (1e-5, 1e-5)
     shape = (2048, 2048)
 
@@ -928,7 +928,7 @@ def test_gaussian_two_beam_interference_vs_fresnel():
             fresnel_phase_cross_section,
         ],
     )
-    fig.savefig("test_two_beam_interference_cross_section.png")
+    fig.savefig(tmp_path / "test_two_beam_interference_cross_section.png")
     plt.close(fig)
 
     det_size_x = pixel_size[0] * shape[0]
@@ -943,7 +943,7 @@ def test_gaussian_two_beam_interference_vs_fresnel():
         label1="Analytic Gaussian",
         label2="Fresnel Gaussian",
     )
-    fig.savefig("test_two_beam_interference_overview.png")
+    fig.savefig(tmp_path / "test_two_beam_interference_overview.png")
     plt.close(fig)
 
     np.testing.assert_allclose(
