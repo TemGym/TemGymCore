@@ -50,6 +50,11 @@ Regenerate with:
 .venv/bin/python examples/sem_reflection/make_microscope_ptychography_figure.py
 ```
 
+Add `--poster` to write `microscope_model_to_ptychography_poster_b1.*` instead: the same
+layout on a 660 mm wide canvas (full width of a B1 portrait sheet with ~25 mm margins).
+Fonts, strokes, markers, optical symbols, tick marks and point offsets scale by 660/230,
+with an 18 pt minimum text size; PNG export is 300 dpi.
+
 All figures retain editable vector annotations in SVG/PDF. The microscope drawings and controls are vectors; the saved detector intensity
 and diffraction images remain embedded raster data.
 

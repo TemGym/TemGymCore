@@ -2,7 +2,7 @@
   "dpi": 600,
   "figure_size_inches": [
     9.05511811023622,
-    4.709645669291339
+    4.4498031496063
   ],
   "formats": [
     "png",
@@ -94,7 +94,7 @@
       136.36740823900456
     ],
     "fit_initial_source": "Illustrative bounded geometry with shifted source/lenses; focal lengths selected for moderate detector disagreement; not a separately rerun calibration",
-    "height_mm": 119.625,
+    "height_mm": 113.025,
     "layout": "Two vertically stacked panels: explore configurations and fit an unknown microscope",
     "parameter_table": {
       "fitted": [
@@ -132,6 +132,7 @@
       ],
       "uncertainty": "Local 1-standard-error estimates from saved fit"
     },
+    "poster": null,
     "source": "/Users/landers/TemGymCore/examples/sem_reflection/output/calibration_gaussian",
     "title": "Interactive diffraction simulation of reflection SEM microscope and microscope fitting",
     "width_mm": 230

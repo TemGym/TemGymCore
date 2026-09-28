@@ -3,13 +3,16 @@ from make_calibration_workflow_figure import (
     DATA, OUT, INK, MUTED, TEAL, OCHRE, BLUE, image_stack, arrow,
 )
 import ast
+from pathlib import Path
 import contextlib
 import io
 import json
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
-from matplotlib.patches import FancyBboxPatch, Ellipse
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Ellipse
+from matplotlib.text import Annotation
+from matplotlib.transforms import Affine2D
 from temgym_core import reflection_calibration as calibration
 from temgym_core.plotting import export_ray_figure, plot_reflection_column, trace_gaussian_basis
 from temgym_core.components import Deflector
@@ -17,6 +20,72 @@ from temgym_core.coordinate_transforms import PlaneFrame
 import jax.numpy as jnp
 
 PURPLE = "#776294"
+# B1 portrait is 707 mm wide; leave ~25 mm poster margins either side.
+POSTER_WIDTH_MM = 660
+POSTER_MIN_FONT_PT = 18
+
+
+def use_arial():
+    """Register installed Arial files; matplotlib's cache may predate them."""
+    from matplotlib import font_manager
+    for path in font_manager.findSystemFonts():
+        if Path(path).stem.lower().startswith('arial'):
+            font_manager.fontManager.addfont(path)
+    font_manager.findfont('Arial', fallback_to_default=False)
+
+
+def scale_for_poster(fig, factor, min_font):
+    """Enlarge every point-sized quantity with the canvas, then floor text size.
+
+    Layout is in figure fractions, so geometry follows the canvas; fonts,
+    strokes, markers, tick marks and point offsets are scaled here to keep
+    the manuscript proportions.
+    """
+    # Ticks are regenerated from axis parameters, so rescale those parameters.
+    tick_settings = []
+    for ax in fig.axes:
+        for name, axis in (('x', ax.xaxis), ('y', ax.yaxis)):
+            ticks = axis.get_major_ticks()
+            if ticks:
+                tick = ticks[0]
+                tick_settings.append((ax, name, dict(
+                    length=tick.tick1line.get_markersize() * factor,
+                    width=tick.tick1line.get_markeredgewidth() * factor,
+                    pad=tick.get_pad() * factor,
+                    labelsize=max(tick.label1.get_fontsize() * factor, min_font))))
+            axis.labelpad *= factor
+        ax._set_title_offset_trans(ax.titleOffsetTrans._t[1] * 72. * factor)
+    for artist in set(fig.findobj()):
+        if artist.get_gid() in ('reflection_lens_yoke', 'reflection_lens_coil', 'reflection_deflector'):
+            # Optical symbols are drawn in typographic points about their anchor.
+            artist.set_transform(Affine2D().scale(factor) + artist.get_transform()
+                                 if isinstance(artist, plt.Line2D)
+                                 else Affine2D().scale(factor) + artist.get_data_transform())
+        if isinstance(artist, Annotation):
+            if artist.anncoords == 'offset points':
+                artist.xyann = tuple(v * factor for v in artist.xyann)
+            if artist.arrow_patch is not None:
+                artist.arrow_patch.set_linewidth(artist.arrow_patch.get_linewidth() * factor)
+                artist.arrow_patch.shrinkA *= factor
+                artist.arrow_patch.shrinkB *= factor
+        if isinstance(artist, plt.Text):
+            artist.set_fontsize(max(artist.get_fontsize() * factor, min_font))
+        elif isinstance(artist, plt.Line2D):
+            artist.set_linewidth(artist.get_linewidth() * factor)
+            artist.set_markersize(artist.get_markersize() * factor)
+            artist.set_markeredgewidth(artist.get_markeredgewidth() * factor)
+        elif isinstance(artist, FancyArrowPatch):
+            artist.set_linewidth(artist.get_linewidth() * factor)
+            artist.set_mutation_scale(artist.get_mutation_scale() * factor)
+        elif isinstance(artist, plt.matplotlib.patches.Patch):
+            artist.set_linewidth(artist.get_linewidth() * factor)
+        elif isinstance(artist, plt.matplotlib.collections.Collection):
+            artist.set_linewidths(np.asarray(artist.get_linewidths()) * factor)
+            sizes = artist.get_sizes()
+            if len(sizes):
+                artist.set_sizes(np.asarray(sizes) * factor**2)
+    for ax, name, settings in tick_settings:
+        ax.tick_params(axis=name, **settings)
 
 
 def draw_microscope(ax, components, trace, *, symbol_scale=.62, **kwargs):
@@ -229,8 +298,8 @@ def notebook_gui(fig, left=.040, bottom=.631, width=.620, *, compact=True):
                     textcoords='offset points', ha='center', fontsize=6, color=INK,
                     arrowprops=dict(arrowstyle='-', color='#ACB6BD', lw=.4, shrinkB=10))
     point = np.asarray(env['column_frame'].to_world(jnp.array([0., 0., 0.])))
-    ax.annotate('Electron\nsource', (point[2] * 1000, point[0] * 1000), xytext=(0, -12),
-                textcoords='offset points', ha='center', fontsize=6, color=INK)
+    ax.annotate('Electron\nsource', (point[2] * 1000, point[0] * 1000), xytext=(0, -5),
+                textcoords='offset points', ha='center', va='top', fontsize=6, color=INK)
     ax.text(0, 3.2, 'Cu(001) specimen', ha='center', fontsize=6, color=INK)
     ax.text(values[1], 1.3, 'Detector', ha='center', fontsize=6, color=INK)
     ax.set(xlim=(-375, 150), ylim=(-17, 7), xlabel='Horizontal position (mm)', ylabel='Height (mm)')
@@ -257,7 +326,7 @@ def notebook_gui(fig, left=.040, bottom=.631, width=.620, *, compact=True):
                 note='Native vector redraw of saved notebook column at wider aspect; compact controls')
 
 
-def build():
+def build(*, poster=False):
     spec = json.loads((DATA / 'experiment.json').read_text())
     fit = json.loads((DATA / 'fit.json').read_text())
     checks = json.loads((DATA / 'checks.json').read_text())
@@ -269,14 +338,15 @@ def build():
                         2.3106881033622066, 136.36740823900456])
     with np.load(DATA / 'images.npz') as data:
         images = data['images']
-    plt.rcParams.update({'font.family': 'DejaVu Sans', 'font.size': 7,
+    use_arial()
+    plt.rcParams.update({'font.family': 'Arial', 'font.size': 7,
         'svg.fonttype': 'none', 'pdf.fonttype': 42, 'ps.fonttype': 42,
         'axes.linewidth': .5, 'savefig.facecolor': 'white'})
     fig = plt.figure(figsize=(180 / 25.4, 165 / 25.4), facecolor='white')
 
     # Two full-width panels, vertically stacked.
     for letter, title, y, color in [('a', 'Interactive diffraction simulation of reflection SEM microscope', .975, OCHRE),
-                                   ('b', 'Inverting an unknown Reflection SEM microscope in simulation', .594, BLUE)]:
+                                   ('b', 'Inverting an unknown reflection SEM microscope in simulation', .594, BLUE)]:
         fig.text(.035, y, letter, fontsize=10, weight='bold', color=color)
         fig.text(.065, y, title, fontsize=10, color=INK)
     gui_metadata = notebook_gui(fig)
@@ -303,8 +373,10 @@ def build():
     for label in gui_metadata['detector_order_labels']:
         x, y = label['lateral_mm'], label['height_mm']
         if extent[0] < x < extent[1] and extent[2] < y < extent[3]:
+            # Edge orders are aligned inward so their labels are not clipped.
+            align = 'left' if x < .8*extent[0] else 'right' if x > .8*extent[1] else 'center'
             detector.annotate(str(label['order']), (x, y), xytext=(0, 9),
-                              textcoords='offset points', ha='center', fontsize=7,
+                              textcoords='offset points', ha=align, fontsize=7,
                               color='#B8CCD9', clip_on=True)
     arrow(fig, (.660, .787), (.699, .787), color=OCHRE, scale=7)
 
@@ -393,7 +465,7 @@ def build():
     # Remove the former third row while preserving the physical size and
     # relative layout of the two retained panels and their point-sized symbols.
     from matplotlib.transforms import Affine2D
-    bottom, retained_height = .275, .725
+    bottom, retained_height = .315, .685
     for ax in fig.axes:
         bounds = ax.get_position(original=True)
         ax.set_position([bounds.x0, (bounds.y0-bottom)/retained_height,
@@ -403,9 +475,21 @@ def build():
         artist.set_transform(artist.get_transform() - fig.transFigure + layout)
     fig.set_size_inches(230/25.4, 165*retained_height/25.4)
 
+    width_mm, height_mm = 230, 165*retained_height
+    if poster:
+        factor = POSTER_WIDTH_MM / width_mm
+        scale_for_poster(fig, factor, POSTER_MIN_FONT_PT)
+        width_mm, height_mm = width_mm*factor, height_mm*factor
+        fig.set_size_inches(width_mm/25.4, height_mm/25.4)
+
+    # The native column renderer sets its own tick-label family.
+    for ax in fig.axes:
+        for label in (*ax.get_xticklabels(), *ax.get_yticklabels()):
+            label.set_fontfamily('Arial')
+
     OUT.mkdir(parents=True, exist_ok=True)
-    stem = OUT / 'microscope_model_to_ptychography'
-    files = export_ray_figure(fig, stem, dpi=600, metadata=dict(
+    stem = OUT / ('microscope_model_to_ptychography' + ('_poster_b1' if poster else ''))
+    files = export_ray_figure(fig, stem, dpi=300 if poster else 600, metadata=dict(
         title='Interactive diffraction simulation of reflection SEM microscope and microscope fitting', source=str(DATA),
         exploration=gui_metadata, exploration_detector_source=str(detector_source),
         exploration_detector_rendering='Native saved intensity; log scale 1e-5 to 1 relative to its maximum; vector labels',
@@ -420,12 +504,16 @@ def build():
         demonstrated='Saved synthetic fit and saved interactive microscope/detector state',
         parameter_table=dict(truth=truth.tolist(), fitted=p.tolist(), standard_errors=uncertainty.tolist(),
                              uncertainty='Local 1-standard-error estimates from saved fit'),
-        width_mm=230, height_mm=165*retained_height, layout="Two vertically stacked panels: explore configurations and fit an unknown microscope"))
-    fig.savefig(stem.with_name(stem.name + '_preview.png'), dpi=180, facecolor='white')
+        width_mm=width_mm, height_mm=height_mm,
+        poster=dict(sheet='B1 portrait, full width', min_font_pt=POSTER_MIN_FONT_PT) if poster else None,
+        layout="Two vertically stacked panels: explore configurations and fit an unknown microscope"))
+    fig.savefig(stem.with_name(stem.name + '_preview.png'), dpi=180 / (factor if poster else 1),
+                facecolor='white')
     plt.close(fig)
     return files
 
 
 if __name__ == '__main__':
-    for kind, path in build().items():
+    import sys
+    for kind, path in build(poster='--poster' in sys.argv).items():
         print(f'{kind}: {path}')
