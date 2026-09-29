@@ -13,7 +13,8 @@ def _ray_diagram(spec, settings, model, row, aperture):
     from temgym_core.plotting import trace_ray_envelope
     from temgym_core.ray import Ray
 
-    column, mean, covariance, source_z, voltage = _column_source(
+    source = _projector_source if spec.get("column") == "projector" else _column_source
+    column, mean, covariance, source_z, voltage = source(
         spec, settings, model, row, aperture
     )
     radius, angle = np.meshgrid(
@@ -31,10 +32,40 @@ def _ray_diagram(spec, settings, model, row, aperture):
     return column, trace_ray_envelope(column, rays)
 
 
+def _projector_source(spec, settings, model, row, aperture):
+    """Projector-only experiments start with the kicked beam at the specimen."""
+    from .projector_model import at_voltage, projector_components
+
+    vi = int(settings["voltage_index"][row])
+    voltage, reference = spec["voltages_v"][vi], spec["voltages_v"][0]
+    pp = at_voltage(model["projector_parameters"], voltage, reference)
+    column = projector_components(pp, settings["projector_controls"][row])
+    covariance = np.diag(np.square(spec["specimen_beam_rms"]))
+    return column, np.asarray(settings["specimen_kick"][row]), covariance, 0.0, voltage
+
+
+def _projector_sections(column):
+    """Specimen-centred views and labels for a projector-only column."""
+    objective_exit = float(column[0].z + column[0].length)
+    pl1_exit = float(column[-2].z + column[-2].length)
+    detector = float(column[-1].z)
+    return {
+        "section_bounds": [
+            (0.0, objective_exit + 0.004),
+            (0.0, detector),
+            (objective_exit + 0.004, pl1_exit + 0.005),
+            (pl1_exit, detector),
+        ],
+        "component_labels": ["Objective", "IL1", "IL2", "IL3", "PL1", "Detector"],
+        "source_label": "Specimen",
+        "mark_source_image": False,
+    }
+
+
 def _draw_ray_section(
     ax, column, segments, section, *, section_bounds=None,
     component_labels=None, source_label="Source waist", mark_source_image=True,
-    scale_segments=None,
+    scale_segments=None, label_fontsize=9,
 ):
     """Draw a calibration-style linear zoom of a traced geometric bundle.
 
@@ -42,7 +73,8 @@ def _draw_ray_section(
     the calibration browser's specimen-centred geometry and section choices.
     Set ``mark_source_image=False`` for a source plane that is not a waist.
     Supply fixed ``scale_segments`` to keep the transverse scale and symbols
-    stable while the displayed trajectories change.
+    stable while the displayed trajectories change. ``label_fontsize`` sets
+    the component annotations, for example larger in figures for print.
     """
     from matplotlib.patches import Arc
 
@@ -77,7 +109,6 @@ def _draw_ray_section(
             (projector_exit, detector_z),
         ]
     z0, z1 = section_bounds[section]
-    factor, unit = (1e3, "mm") if section == 3 else (1e6, "µm")
 
     def clipped_segments(source_segments):
         visible = []
@@ -93,6 +124,7 @@ def _draw_ray_section(
     visible = clipped_segments(segments)
     scale = visible if scale_segments is None else clipped_segments(scale_segments)
     width = 1.15 * max((np.abs(x).max() for _, x in scale), default=1e-9)
+    factor, unit = (1e3, "mm") if section == 3 or width >= 1e-3 else (1e6, "µm")
     style = legacy_beam_plot_params(fill_color="#98E0C1", fill_alpha=1.0, edge_lw=0.65)
     for z, bounds in visible:
         plot_ray_bundle(ax, bounds * factor, z * 1000, style)
@@ -213,18 +245,21 @@ def _draw_ray_section(
             (width * factor, z * 1000),
             xytext=(1.25 * width * factor, label_z * 1000),
             va="center",
-            fontsize=9,
+            fontsize=label_fontsize,
             arrowprops={"arrowstyle": "-", "lw": 0.5, "color": "0.7"},
         )
 
 
-def browse_images(*, experiment_directory):
+def browse_images(*, experiment_directory, text_scale=1.0):
     """Return notebook controls for saved images and matching native ray diagrams.
 
     Select recorded settings, not new lens currents. Saved images are loaded
     once. Without images, render geometric previews from the generating model
     on demand; these previews are not the measurements used by the fitter.
     The initial guess can be compared with truth while the image stays fixed.
+    An experiment whose ``experiment.json`` sets ``"column": "projector"``
+    holds specimen-to-detector images only; its rays start at the specimen.
+    ``text_scale`` enlarges the controls, figure and labels, e.g. for print.
     Requires the optional ``inversion`` dependencies and a live notebook kernel.
     """
     import ipywidgets as widgets
@@ -237,9 +272,13 @@ def browse_images(*, experiment_directory):
     from .inference import PRESETS
     from .projector_model import model_to_parameters
 
-    with plt.ioff():
+    scale = float(text_scale)
+    rc = {"font.size": 10 * scale, "axes.titlesize": 11 * scale,
+          "axes.labelsize": 10 * scale, "xtick.labelsize": 9 * scale,
+          "ytick.labelsize": 9 * scale}
+    with plt.ioff(), plt.rc_context(rc):
         fig, (image_ax, ray_ax) = plt.subplots(
-            1, 2, figsize=(10, 5.4), layout="constrained"
+            1, 2, figsize=(10 * scale, 5.4 * scale), layout="constrained"
         )
     if not isinstance(fig.canvas, widgets.Widget):
         plt.close(fig)
@@ -256,22 +295,22 @@ def browse_images(*, experiment_directory):
     if (root / "images.npz").exists():
         with np.load(root / "images.npz") as data:
             images = data["images"]
-    guesses, _, _ = condenser_starting_guesses(
-        starting_guess_path=PRESETS / "microscope_condenser_starting_guess.json",
-        number_of_broad_starts=0,
-        number_of_apertures=len(spec["aperture_diameters_um"]),
-    )
+    projector_only = spec.get("column") == "projector"
     models = {}
     if (root / "scoring_truth.json").exists():
         models["Ground truth"] = json.loads((root / "scoring_truth.json").read_text())
-    models.update({
-        "Initial guess": {
-            "condenser_parameters": guesses[0],
-            "projector_parameters": model_to_parameters(
-                json.loads((PRESETS / "projector_starting_guess.json").read_text())
-            ),
-        },
-    })
+    models["Initial guess"] = {
+        "projector_parameters": model_to_parameters(
+            json.loads((PRESETS / "projector_starting_guess.json").read_text())
+        ),
+    }
+    if not projector_only:
+        guesses, _, _ = condenser_starting_guesses(
+            starting_guess_path=PRESETS / "microscope_condenser_starting_guess.json",
+            number_of_broad_starts=0,
+            number_of_apertures=len(spec["aperture_diameters_um"]),
+        )
+        models["Initial guess"]["condenser_parameters"] = guesses[0]
     fitted = root / "fit.json"
     if fitted.exists():
         result = json.loads(fitted.read_text())
@@ -310,7 +349,7 @@ def browse_images(*, experiment_directory):
         return widgets.Dropdown(
             description=description,
             options=options,
-            style={"description_width": "90px"},
+            style={"description_width": f"{90 * scale:g}px"},
             layout=widgets.Layout(width="100%"),
         )
 
@@ -323,6 +362,10 @@ def browse_images(*, experiment_directory):
             ("Prediction checks", "check"),
         ],
     )
+    purpose.options = [
+        option for option in purpose.options
+        if option[1] == "all" or option[1] in set(settings["purpose"])
+    ]
     voltage = dropdown(
         "Voltage", [(f"{v / 1000:g} kV", i) for i, v in enumerate(spec["voltages_v"])]
     )
@@ -337,8 +380,11 @@ def browse_images(*, experiment_directory):
     )
     aperture = dropdown(
         "Aperture",
-        [(f"{d:g} µm", i) for i, d in enumerate(spec["aperture_diameters_um"])],
+        [(f"{d:g} µm", i) for i, d in enumerate(spec["aperture_diameters_um"])]
+        or [("None", 0)],
     )
+    if projector_only:
+        aperture.layout.display = "none"
     row = widgets.SelectionSlider(
         description="Image",
         options=[("001", 0)],
@@ -349,23 +395,32 @@ def browse_images(*, experiment_directory):
     previous = widgets.Button(
         icon="chevron-left",
         tooltip="Previous matching image",
-        layout=widgets.Layout(width="40px"),
+        layout=widgets.Layout(width=f"{40 * scale:g}px"),
     )
     following = widgets.Button(
         icon="chevron-right",
         tooltip="Next matching image",
-        layout=widgets.Layout(width="40px"),
+        layout=widgets.Layout(width=f"{40 * scale:g}px"),
     )
-    progress = widgets.HTML(layout=widgets.Layout(width="150px"))
+    progress = widgets.HTML(layout=widgets.Layout(width=f"{150 * scale:g}px"))
     section = dropdown(
         "Ray view",
         [
+            ("Specimen → objective", 0),
+            ("Specimen → detector", 1),
+            ("Projector lenses", 2),
+            ("Detector", 3),
+        ]
+        if projector_only
+        else [
             ("Source → mini", 0),
             ("Aperture → specimen", 1),
             ("Projector lenses", 2),
             ("Detector", 3),
         ],
     )
+    if projector_only:
+        section.value = 1
     model = dropdown("Ray model", list(models))
     contrast = widgets.Checkbox(description="Log contrast", value=True, indent=False)
     summary, details = widgets.HTML(), widgets.HTML()
@@ -385,20 +440,23 @@ def browse_images(*, experiment_directory):
         cmap="gray",
         norm=LogNorm(1, maximum),
     )
-    fig.colorbar(
+    colourbar = fig.colorbar(
         artist,
         ax=image_ax,
         shrink=0.65,
         label="Expected counts / pixel" if images is None else "Counts / pixel",
     )
-    image_ax.set(
-        title="Recorded beam"
-        if images is not None
-        else "Ray image · geometric preview",
-        xlabel="Detector x (mm)",
-        ylabel="Detector y (mm)",
+    image_ax.set_title(
+        "Recorded beam" if images is not None else "Ray image · geometric preview",
+        fontsize=11 * scale,
     )
-    fig.canvas.layout = widgets.Layout(width="100%", height="570px", min_height="570px")
+    image_ax.set_xlabel("Detector x (mm)", fontsize=10 * scale)
+    image_ax.set_ylabel("Detector y (mm)", fontsize=10 * scale)
+    image_ax.tick_params(labelsize=9 * scale)
+    colourbar.ax.tick_params(labelsize=9 * scale)
+    colourbar.ax.yaxis.label.set_size(10 * scale)
+    height = f"{570 * scale:g}px"
+    fig.canvas.layout = widgets.Layout(width="100%", height=height, min_height=height)
     fig.canvas.toolbar_position = "bottom"
     fig.canvas.header_visible = False
     fig.canvas.footer_visible = False
@@ -406,6 +464,10 @@ def browse_images(*, experiment_directory):
 
     @errors.capture(clear_output=True, wait=True)
     def update(event=None):
+        with plt.rc_context(rc):
+            draw()
+
+    def draw():
         nonlocal last_ray_view
         if filtering:
             return
@@ -438,10 +500,11 @@ def browse_images(*, experiment_directory):
         )
         summary.value = (
             '<div style="padding:14px 18px;background:#f0f5f7;border-radius:10px;color:#243746;">'
-            f'<div style="font-size:17px;font-weight:600;">{purpose_text}</div>'
+            f'<div style="font-size:{17 * scale:g}px;font-weight:600;">{purpose_text}</div>'
             '<div style="margin-top:6px;line-height:1.8;">'
-            f"Frame {ri + 1:03d} · {mag_label} · {spec['voltages_v'][settings['voltage_index'][ri]] / 1000:g} kV · "
-            f"{spec['aperture_diameters_um'][ai]:g} µm aperture<br>"
+            f"Frame {ri + 1:03d} · {mag_label} · {spec['voltages_v'][settings['voltage_index'][ri]] / 1000:g} kV"
+            + ("" if projector_only else f" · {spec['aperture_diameters_um'][ai]:g} µm aperture")
+            + "<br>"
             f"Specimen shift <b>({shift[0]:g}, {shift[1]:g}) nm</b> &nbsp; "
             f"Tilt <b>({tilt[0]:g}, {tilt[1]:g}) mrad</b></div></div>"
         )
@@ -454,13 +517,20 @@ def browse_images(*, experiment_directory):
         ray_view = (ri, ai, section.value, model.value)
         if ray_view != last_ray_view:
             ray_ax.clear()
-            _draw_ray_section(ray_ax, column, segments, section.value)
+            _draw_ray_section(
+                ray_ax, column, segments, section.value, label_fontsize=9 * scale,
+                **(_projector_sections(column) if projector_only else {}),
+            )
             ray_ax.set_title(f"{model.value} · rays", loc="left")
+            ray_ax.tick_params(labelsize=9 * scale)
             last_ray_view = ray_view
         names = ["CL1", "CL3", "Mini", "Objective", "IL1", "IL2", "IL3", "PL1"]
-        currents = np.r_[
-            settings["condenser_controls"][ri], settings["projector_controls"][ri]
-        ]
+        if projector_only:
+            names, currents = names[3:], settings["projector_controls"][ri]
+        else:
+            currents = np.r_[
+                settings["condenser_controls"][ri], settings["projector_controls"][ri]
+            ]
         table = (
             '<table style="width:100%;text-align:left;"><tr>'
             + "".join(f"<th>{n}</th>" for n in names)
@@ -525,16 +595,24 @@ def browse_images(*, experiment_directory):
     grid = widgets.GridBox(
         [purpose, voltage, magnification, beam, aperture],
         layout=widgets.Layout(
-            grid_template_columns="repeat(auto-fit, minmax(260px, 1fr))",
+            grid_template_columns=f"repeat(auto-fit, minmax({260 * scale:g}px, 1fr))",
             grid_gap="10px 18px",
         ),
     )
     advanced = widgets.Accordion(children=[details], selected_index=None)
     advanced.set_title(0, "Lens currents and model details")
-    return widgets.VBox(
+    browser = widgets.VBox(
         [
             widgets.HTML(
-                '<h3 style="margin:0 0 6px;">Explore the experiment</h3><p style="margin:0;color:#60717d;">Filter a kind of change, then step through its records. The beam and ray diagram stay together.</p>'
+                (
+                    f"<style>.temgym-browser-scaled, .temgym-browser-scaled * "
+                    f"{{font-size:{14 * scale:g}px;}} .temgym-browser-scaled h3 "
+                    f"{{font-size:{19 * scale:g}px;}} .temgym-browser-scaled "
+                    f".widget-dropdown select {{height:{28 * scale:g}px;}}</style>"
+                    if scale != 1
+                    else ""
+                )
+                + '<h3 style="margin:0 0 6px;">Explore the experiment</h3><p style="margin:0;color:#60717d;">Filter a kind of change, then step through its records. The beam and ray diagram stay together.</p>'
                 + (
                     "<p><b>Geometric ray preview only — the current fit uses directly calculated moments, not these pixels. Diffraction rings are not simulated.</b></p>"
                     if images is None
@@ -557,12 +635,15 @@ def browse_images(*, experiment_directory):
         ],
         layout=widgets.Layout(
             width="100%",
-            max_width="1200px",
+            max_width=f"{1200 * scale:g}px",
             padding="20px",
             grid_gap="16px",
             border="1px solid #dce3e8",
         ),
     )
+    if scale != 1:
+        browser.add_class("temgym-browser-scaled")
+    return browser
 
 
 def show_result(*, checks):

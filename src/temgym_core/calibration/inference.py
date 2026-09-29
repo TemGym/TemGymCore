@@ -345,6 +345,50 @@ def run_starts(
     }
 
 
+def fit_projector_responses(
+    *, response, voltages_v, pixel_pitch_m, number_of_starts, output_path,
+    prior_model=None,
+):
+    """Fit the 16 specimen-to-detector coordinates to paired steering responses.
+
+    Each response is half the detector-centre difference, in pixels, between
+    equal and opposite calibrated specimen kicks at one projector setting.
+    Only the A and B blocks of the projector matrix enter; the condenser,
+    source and apertures play no part. ``prior_model`` replaces the preset
+    starting guess (same named form as ``projector_starting_guess.json``).
+    Returns the ``run_starts`` record in encoded coordinates; decode with
+    ``projector_coordinates``.
+    """
+    encode, decode, plo, phi = projector_coordinates(
+        PRESETS / "projector_position_priors.json"
+    )
+    rw = jnp.asarray(np.linalg.inv(np.linalg.cholesky(response["covariance"])))
+    rv = jnp.asarray(response["values"])
+    commands = jnp.asarray(response["controls"])
+    voltages = jnp.asarray(voltages_v)[np.asarray(response["voltage_index"])]
+    kicks = jnp.asarray(response["specimen_kicks"])
+
+    def projector_residual(u):
+        maps = jax.vmap(
+            lambda c, v: matrix5(at_voltage(decode(u), v, voltages_v[0]), c)
+        )(commands, voltages)
+        predicted = jnp.einsum("nij,nj->ni", maps[:, :2, :4], kicks) / pixel_pitch_m
+        return jnp.einsum("nij,nj->ni", rw, predicted - rv).ravel()
+
+    if prior_model is None:
+        prior_model = json.loads((PRESETS / "projector_starting_guess.json").read_text())
+    guesses = make_starting_models(
+        prior_model=prior_model,
+        position_priors=json.loads(
+            (PRESETS / "projector_position_priors.json").read_text()
+        ),
+        number_of_starts=number_of_starts,
+    )
+    starts = [encode(model_to_parameters(g))[:16] for g in guesses]
+    print("Fit the projector response to calibrated shifts and tilts", flush=True)
+    return run_starts(projector_residual, starts, (plo, phi), output_path=output_path)
+
+
 def fit_beam_microscope(*, directory_path, number_of_starts, projector_aperture_um=None):
     root = Path(directory_path)
     spec = json.loads((root / "experiment.json").read_text())
@@ -406,34 +450,11 @@ def fit_beam_microscope(*, directory_path, number_of_starts, projector_aperture_
         # acquisitions explicitly record each response's aperture index.
         indices = response.get("aperture_index", np.arange(len(response["values"])) % 2)
         response = {key: value[indices == aperture_index] for key, value in response.items()}
-    rw = jnp.asarray(np.linalg.inv(np.linalg.cholesky(response["covariance"])))
-    rv = jnp.asarray(response["values"])
-    commands = jnp.asarray(response["controls"])
-    voltages = jnp.asarray(spec["voltages_v"])[response["voltage_index"]]
-    kicks = jnp.asarray(response["specimen_kicks"])
-
-    def projector_residual(u):
-        maps = jax.vmap(
-            lambda c, v: matrix5(at_voltage(decode(u), v, spec["voltages_v"][0]), c)
-        )(commands, voltages)
-        predicted = (
-            jnp.einsum("nij,nj->ni", maps[:, :2, :4], kicks) / spec["pixel_pitch_m"]
-        )
-        return jnp.einsum("nij,nj->ni", rw, predicted - rv).ravel()
-
-    guesses = make_starting_models(
-        prior_model=json.loads((PRESETS / "projector_starting_guess.json").read_text()),
-        position_priors=json.loads(
-            (PRESETS / "projector_position_priors.json").read_text()
-        ),
+    projector = fit_projector_responses(
+        response=response,
+        voltages_v=spec["voltages_v"],
+        pixel_pitch_m=spec["pixel_pitch_m"],
         number_of_starts=number_of_starts,
-    )
-    starts = [encode(model_to_parameters(g))[:16] for g in guesses]
-    print("Fit the projector response to calibrated shifts and tilts", flush=True)
-    projector = run_starts(
-        projector_residual,
-        starts,
-        (plo, phi),
         output_path=root / "projector_starts.json",
     )
     if not projector["best"]["acceptable"]:

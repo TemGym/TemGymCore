@@ -249,7 +249,7 @@ def test_browser_keeps_saved_images_and_selected_settings_together(
         return (), []
 
     monkeypatch.setattr(viewer, "_ray_diagram", diagram)
-    monkeypatch.setattr(viewer, "_draw_ray_section", lambda *args: None)
+    monkeypatch.setattr(viewer, "_draw_ray_section", lambda *args, **kwargs: None)
     previews = []
 
     def preview(spec, settings, model, row, aperture):

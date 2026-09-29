@@ -355,6 +355,7 @@ def plot_model(
     yscale: str = "linear",   # "linear", "log", or "symlog"
     y_linthresh: float = 1e-6,  # linthresh for symlog
     include_input_rays: bool = True,
+    component_labels: Sequence[str] | None = None,
 ):
     """Plot a  schematic of a model (components vs z) with ray bundle.
 
@@ -408,6 +409,9 @@ def plot_model(
     include_input_rays : bool, default True
         If True, prepend the input ray state so plotting starts at the
         initial ray z-position instead of the first component step.
+    component_labels : sequence of str, optional
+        One label per component, replacing the class names. An empty string
+        leaves that component unlabelled.
 
     Returns
     -------
@@ -614,8 +618,10 @@ def plot_model(
             linewidth=p.component_lw + 2, zorder=998,
         )
 
-    for c in components:
-        name = _as_name(c)
+    if component_labels is not None and len(component_labels) != len(components):
+        raise ValueError("Supply one label per component.")
+    for i, c in enumerate(components):
+        name = _as_name(c) if component_labels is None else component_labels[i]
         if isinstance(c, DoubleDeflector):
             _label_component(ax, label_x, c.z, name, p)
             _draw_deflector(c.z)
@@ -623,19 +629,21 @@ def plot_model(
         elif isinstance(c, Deflector):
             _label_component(ax, label_x, c.z, name, p)
             _draw_deflector(c.z)
-        elif isinstance(c, Lens):
+        elif isinstance(c, (Lens, HardEdgeSolenoid)):
+            # A finite solenoid is drawn as a lens at its field centre.
+            lens_z = c.z + getattr(c, "length", 0.0) / 2
             lens_width = max(np.finfo(float).eps, 2.0 * component_x)
-            _label_component(ax, label_x, c.z, name, p)
+            _label_component(ax, label_x, lens_z, name, p)
             ax.add_patch(
                 mpl.patches.Arc(
-                    (0, c.z), lens_width, height=lens_height / aspect,
+                    (0, lens_z), lens_width, height=lens_height / aspect,
                     theta1=0, theta2=180, linewidth=1,
                     fill=False, zorder=999, edgecolor="k",
                 )
             )
             ax.add_patch(
                 mpl.patches.Arc(
-                    (0, c.z), lens_width, height=lens_height / aspect,
+                    (0, lens_z), lens_width, height=lens_height / aspect,
                     theta1=180, theta2=0, linewidth=1,
                     fill=False, zorder=-1, edgecolor="k",
                 )
