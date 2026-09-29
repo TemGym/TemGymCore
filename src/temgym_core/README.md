@@ -107,24 +107,17 @@ snapshot. All 77 before/after comparisons matched exactly, including the tested
 action, specimen and electromagnetic-lens derivatives. Full notebook fits were
 not repeated.
 
-## On-axis ray aberration jets
+## On-axis ray aberration jets (not yet implemented)
 
-`KrivanekLensCartesian` is a polynomial alternative to `KrivanekLens` for
-Taylor differentiation at the optical axis. It preserves the original ray
-branch's slope and pathlength conventions and supports Gaussian beams with a
-Cartesian pupil action. The polar implementation remains available unchanged.
+Two pieces described in earlier notes are **not in the code** and are tracked in the
+roadmap: a polynomial `KrivanekLensCartesian` (its tests in
+`tests/test_lens_ray_jets.py` are skipped) and ray support for `SeidelLens` at singular
+rays (`SeidelLens` raises `NotImplementedError` for ray input; those tests are
+expected failures). Until they land, use `KrivanekLens` for Gaussian beams and the
+native Gaussian action of `SeidelLens`.
 
-`SeidelLens` also accepts singular rays. Its geometric branch solves the same
-stationary object-to-pupil equations used to locate the Gaussian reference ray,
-including both position and slope changes. Six unrolled Newton steps and an
-explicit two-by-two solve support `jax.experimental.jet` near the ideal branch.
-This is geometric transport; it does not include Gaussian width or amplitude.
-
-The [aberration demonstration](../../archived/examples/aberration_demonstration/aberration_demonstration.ipynb)
-differentiates actual component calls at one on-axis reference ray. It recovers
-Krivanek coefficients through fifth-order slope derivatives and all nine Seidel
-coefficients from third-order position/slope derivatives, then checks independent
-rays through reconstructed components.
+The Cartesian helper functions `W_krivanek_cartesian` and `grad_W_krivanek_cartesian`
+in `aberrations.py` exist and agree with the polar forms.
 
 ## Images and measurements
 

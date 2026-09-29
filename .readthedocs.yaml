@@ -1,17 +1,22 @@
 version: 2
 
 build:
-  os: "ubuntu-22.04"
+  os: ubuntu-24.04
   tools:
-    python: "3.9"
+    python: "3.12"
+  jobs:
+    post_checkout:
+      # hatch-vcs needs tags to compute the version.
+      - git fetch --unshallow || true
+      - git fetch --tags || true
 
 sphinx:
   configuration: docs/conf.py
-  formats:
-  - epub
-  - pdf
+  fail_on_warning: true
 
 python:
   install:
-    - requirements: requirements-doc.txt
-
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs

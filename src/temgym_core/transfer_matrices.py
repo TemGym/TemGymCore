@@ -1,32 +1,43 @@
 """Small analytical matrices and ray transport through supplied matrices.
 
 5×5 matrices act on [x, y, theta_x, theta_y, 1]; 3×3 matrices act on
-[x, theta_x, 1]. Constructors default to SymPy for existing derivations;
-pass xp=numpy or xp=jax.numpy for numerical arrays and JAX derivatives.
+[x, theta_x, 1]. Constructors return NumPy arrays by default; pass
+xp=jax.numpy for JAX derivatives, or the sympy module for symbolic
+derivations (optional extra ``symbolic``).
 
 For a microscope built from components, use run.column_matrix instead.
 """
 
 import jax.numpy as jnp
 import numpy as np
-import sympy as sp
+
+
+def _sympy():
+    """Import SymPy on demand: it is an optional dependency (extra ``symbolic``)."""
+    try:
+        import sympy
+    except ImportError as error:
+        raise ImportError(
+            "Symbolic matrices need SymPy: pip install 'temgym-core[symbolic]'."
+        ) from error
+    return sympy
 
 
 def _matrix(rows, xp):
     """Construct each matrix once, then select its numerical or symbolic type."""
-    if xp is sp:
-        return sp.Matrix(rows)
     if xp is np or xp is jnp:
         return xp.array(rows, dtype=xp.float64)
-    raise ValueError("xp must be sympy, numpy, or jax.numpy.")
+    if getattr(xp, "__name__", None) == "sympy":
+        return xp.Matrix(rows)
+    raise ValueError("xp must be numpy, jax.numpy, or the sympy module.")
 
 
-def imaging_matrix(M, f, xp=sp):
+def imaging_matrix(M, f, xp=np):
     """Perfect imaging: A=M, B=0, C=-1/f, D=1/M."""
     return _matrix([[M, 0, 0], [-1 / f, 1 / M, 0], [0, 0, 1]], xp)
 
 
-def imaging_matrix_5x5(M, f, xp=sp):
+def imaging_matrix_5x5(M, f, xp=np):
     """The same perfect imaging map in both transverse axes."""
     return _matrix([
         [M, 0, 0, 0, 0],
@@ -37,12 +48,12 @@ def imaging_matrix_5x5(M, f, xp=sp):
     ], xp)
 
 
-def scale_matrix(M, xp=sp):
+def scale_matrix(M, xp=np):
     """Scale position by M and slope by 1/M."""
     return _matrix([[M, 0, 0], [0, 1 / M, 0], [0, 0, 1]], xp)
 
 
-def scale_matrix_5x5(M, xp=sp):
+def scale_matrix_5x5(M, xp=np):
     """Scale both positions by M and both slopes by 1/M."""
     return _matrix([
         [M, 0, 0, 0, 0],
@@ -53,12 +64,12 @@ def scale_matrix_5x5(M, xp=sp):
     ], xp)
 
 
-def propagation_matrix(z, xp=sp):
+def propagation_matrix(z, xp=np):
     """Free-space drift: x' = x + z theta_x."""
     return _matrix([[1, z, 0], [0, 1, 0], [0, 0, 1]], xp)
 
 
-def propagation_matrix_5x5(z, xp=sp):
+def propagation_matrix_5x5(z, xp=np):
     """Free-space drift through distance z in both axes."""
     return _matrix([
         [1, 0, z, 0, 0],
@@ -69,12 +80,12 @@ def propagation_matrix_5x5(z, xp=sp):
     ], xp)
 
 
-def lens_matrix(f, xp=sp):
+def lens_matrix(f, xp=np):
     """Thin lens: theta_x' = theta_x - x/f."""
     return _matrix([[1, 0, 0], [-1 / f, 1, 0], [0, 0, 1]], xp)
 
 
-def lens_matrix_5x5(f, xp=sp):
+def lens_matrix_5x5(f, xp=np):
     """Round thin lens with the same focal length in both axes."""
     return _matrix([
         [1, 0, 0, 0, 0],
@@ -85,12 +96,12 @@ def lens_matrix_5x5(f, xp=sp):
     ], xp)
 
 
-def biprism_matrix(biprism_deflection, xp=sp):
+def biprism_matrix(biprism_deflection, xp=np):
     """Constant angular kick; the caller supplies its sign for each wire side."""
     return _matrix([[1, 0, 0], [0, 1, biprism_deflection], [0, 0, 1]], xp)
 
 
-def biprism_matrix_5x5(biprism_deflection, xp=sp):
+def biprism_matrix_5x5(biprism_deflection, xp=np):
     """Constant kick in theta_x only; y and theta_y are unchanged."""
     return _matrix([
         [1, 0, 0, 0, 0],
@@ -102,7 +113,7 @@ def biprism_matrix_5x5(biprism_deflection, xp=sp):
 
 
 def double_deflector_matrix_5x5(
-    spacing, drive_x, drive_y, balance_x=1.0, balance_y=1.0, xp=sp,
+    spacing, drive_x, drive_y, balance_x=1.0, balance_y=1.0, xp=np,
 ):
     """Two angular kicks separated by spacing: D2 @ P(spacing) @ D1.
 
@@ -118,17 +129,17 @@ def double_deflector_matrix_5x5(
     ], xp)
 
 
-def propagation_refractive_index(z, n, xp=sp):
+def propagation_refractive_index(z, n, xp=np):
     """Drift with reduced distance z/n."""
     return propagation_matrix(z / n, xp=xp)
 
 
-def refraction_flat(n_1, n_2, xp=sp):
+def refraction_flat(n_1, n_2, xp=np):
     """Flat interface: scale slope by n_1/n_2."""
     return _matrix([[1, 0, 0], [0, n_1 / n_2, 0], [0, 0, 1]], xp)
 
 
-def rotation_matrix(theta, xp=sp):
+def rotation_matrix(theta, xp=np):
     """Legacy rotation of the two 3×3 state coordinates, not an x/y lens rotation."""
     c, s = xp.cos(theta), xp.sin(theta)
     return _matrix([[c, s, 0], [-s, c, 0], [0, 0, 1]], xp)
@@ -153,7 +164,7 @@ def calculate_M_and_f_from_z1_and_z2(z1, z2):
 def full_abcd_2lens(zs, f1, f2, symbolic=False):
     """Three drifts and two thin lenses, ordered from object to image."""
     z1, z2, z3 = zs
-    xp = sp if symbolic else np
+    xp = _sympy() if symbolic else np
     return (
         propagation_matrix(z3, xp=xp) @ lens_matrix(f2, xp=xp)
         @ propagation_matrix(z2, xp=xp) @ lens_matrix(f1, xp=xp)

@@ -41,3 +41,7 @@ examples/fourdstem_example/fourdstem_array.npy
 *.cfg
 *.venv/
 /temgym/
+*.zip
+docs/_build/
+docs/generated/
+.jupyter_cache/

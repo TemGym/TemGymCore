@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ..config import require_x64
+
 PRESETS = Path(__file__).parent / "presets"
 
 
@@ -68,13 +70,11 @@ def simulate_experiment(
     reuse_completed=True,
 ):
     """Supply voltages/apertures; receive recorded beam images with the aperture in."""
-    import jax
 
     from .acquisition import prepare_experiment
     from .gaussian import generate_images
 
-    if not jax.config.x64_enabled:
-        raise RuntimeError("Enable JAX 64-bit arithmetic before this calibration.")
+    require_x64("this calibration")
     if len(voltages_v) != 2 or min(voltages_v) <= 0 or voltages_v[0] == voltages_v[1]:
         raise ValueError("Supply two distinct positive voltages.")
     if (
@@ -144,15 +144,13 @@ def simulate_ray_experiment(
     Poisson counts and detector read noise. The matching fit omits aperture
     diffraction, which geometric rays cannot generate.
     """
-    import jax
 
     from .acquisition import render_ray_image
 
     reference, root = Path(reference_directory), Path(output_directory)
     if reference.resolve() == root.resolve():
         raise ValueError("Keep ray images separate from the reference experiment.")
-    if not jax.config.x64_enabled:
-        raise RuntimeError("Enable JAX 64-bit arithmetic before this calibration.")
+    require_x64("this calibration")
     power = int(np.log2(number_of_rays)) if number_of_rays > 0 else -1
     if power < 3 or 2**power != number_of_rays:
         raise ValueError("number_of_rays must be a power of two, at least eight.")
@@ -267,15 +265,13 @@ def simulate_measurements(
     these uncertainties only for this same geometry, exposure and acquisition.
     This tests inverse recovery within the model, not image analysis or realism.
     """
-    import jax
     import jax.numpy as jnp
 
     from .inference import make_predictions, save_projector_responses
     from .projector_model import projector_coordinates
 
     reference, root = Path(reference_directory), Path(output_directory)
-    if not jax.config.x64_enabled:
-        raise RuntimeError("Enable JAX 64-bit arithmetic before this calibration.")
+    require_x64("this calibration")
     if reference.resolve() == root.resolve():
         raise ValueError(
             "Keep the synthetic measurements separate from their reference."

@@ -18,7 +18,7 @@ import warnings
 import numpy as np
 from scipy.interpolate import CubicSpline
 from collections.abc import Mapping
-from typing import Any, Dict, NamedTuple
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp

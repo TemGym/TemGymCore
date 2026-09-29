@@ -6,9 +6,10 @@ import jax
 import jax.numpy as jnp
 import jax_dataclasses as jdc
 import numpy as np
-from ase import units
 
-_REST_ENERGY_EV = units._me * units._c**2 / units._e
+from .constants import ELECTRON_MASS, ELEMENTARY_CHARGE, SPEED_OF_LIGHT
+
+_REST_ENERGY_EV = ELECTRON_MASS * SPEED_OF_LIGHT**2 / ELEMENTARY_CHARGE
 
 
 @jdc.pytree_dataclass(kw_only=True)

@@ -90,6 +90,7 @@ def test_pixel_integration_matches_marginal_moments():
             np.testing.assert_allclose(actual, expected[i, order], atol=2e-6)
 
 
+@pytest.mark.slow
 def test_saved_pixel_recovery_without_truth(tmp_path, monkeypatch):
     root = rc.simulate_experiment(tmp_path / 'experiment')
     truth = json.loads((root / 'scoring_truth.json').read_text())['parameters']

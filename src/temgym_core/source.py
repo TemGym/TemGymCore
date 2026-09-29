@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import numpy as np
-from numba import njit
 import jax_dataclasses as jdc
 
 from .tree_utils import HasParamsMixin
@@ -940,22 +939,28 @@ def gaussian_waist(*, z, voltage, rms_size, x=0.0, y=0.0, theta_x=0.0, theta_y=0
     )
 
 
-@njit
-def _multi_cumsum_inplace(values, partitions, start):
-    """Reset and accumulate angles within each ring; modifies values in place."""
-    part_idx = 0
-    current_part_len = partitions[part_idx]
-    part_count = 0
-    values[0] = start
-    for v_idx in range(1, values.size):
-        if current_part_len == part_count:
-            part_count = 0
-            part_idx += 1
-            current_part_len = partitions[part_idx]
-            values[v_idx] = start
-        else:
-            values[v_idx] += values[v_idx - 1]
-            part_count += 1
+def _ring_angles(div_angle, points_per_ring):
+    """Accumulated angle of every ring sample, one increment per ring.
+
+    Ring ``k`` starts at angle 0 at flat index ``sum(points_per_ring[:k]) + k``: the
+    reset lags the ring boundary by one sample per preceding ring. This reproduces the
+    original loop exactly (checked in tests), so ray sets and the results fitted from
+    them are unchanged.
+    """
+    points_per_ring = np.asarray(points_per_ring)
+    total = int(points_per_ring.sum())
+    values = np.repeat(np.asarray(div_angle, dtype=float), points_per_ring)
+    starts = np.concatenate(
+        ([0], np.cumsum(points_per_ring)[:-1] + np.arange(1, points_per_ring.size))
+    )
+    starts = starts[starts < total]
+    values[starts] = 0.0
+    # Accumulate segment by segment: the same left-to-right additions as the original
+    # loop, so the result is bit-identical rather than merely close.
+    angles = np.empty(total)
+    for begin, end in zip(starts, np.append(starts[1:], total)):
+        angles[begin:end] = np.cumsum(values[begin:end])
+    return angles
 
 
 def concentric_rings(
@@ -987,10 +992,8 @@ def concentric_rings(
     repeats = points_per_ring.tolist()
 
     all_params = np.repeat(params, repeats, axis=-1)
-    _multi_cumsum_inplace(all_params[1, :], points_per_ring, 0.0)
-
     all_radii = all_params[0, :]
-    all_angles = all_params[1, :]
+    all_angles = _ring_angles(div_angle, points_per_ring)
 
     return np.stack(
         (

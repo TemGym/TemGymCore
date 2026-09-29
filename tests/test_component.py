@@ -676,7 +676,6 @@ def test_electromagnetic_lens():
     """Test ElectromagneticLens matches Lens + Rotator composition."""
     # Setup electromagnetic lens parameters
     voltage = 200e3
-    Rc = compute_Kv_from_voltage(voltage)  # 200 kV
     turns = 100.0
     current = 50.0  # turns * current = 5000 ampere-turns
     # Pure geometry Gc: old Gc_toml * V*(voltage)

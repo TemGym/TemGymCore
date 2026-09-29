@@ -55,6 +55,7 @@ def test_magnification_and_spot_use_native_tables(demo, magnification):
     assert demo.spot_size == 3.
 
 
+@pytest.mark.slow
 def test_aperture_uses_gaussians_and_recovers_open_field(demo):
     opened = demo.image(0.)[0]
     changed = demo.with_settings(aperture_radius_m=10*1e-6)

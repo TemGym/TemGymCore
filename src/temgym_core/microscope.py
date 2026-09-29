@@ -4,15 +4,13 @@ Components own the physics. Tables contain amperes and only supply settings;
 loading a microscope or selecting a table never runs an optimisation.
 """
 
+import tomllib
 from dataclasses import dataclass, field, replace
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
 
 import numpy as np
 
 from .components import Component, Detector, DoubleDeflector, ElectromagneticLens, Plane
+from .config import require_x64
 from .constants import effective_accelerating_potential
 from .run import column_matrix
 
@@ -182,12 +180,10 @@ def find_imaging_condition(microscope, *, magnification, vary, voltage=None,
     Enable float64. Returned errors satisfy |A/M - R| < 1e-9, |B| < 1e-8 m
     and, when requested, reference-image position error < 1e-9 m.
     """
-    import jax
     import jax.numpy as jnp
     from .optimization import least_squares
 
-    if not jax.config.x64_enabled:
-        raise ValueError("Enable jax_enable_x64 for the high-magnification imaging solve.")
+    require_x64("find_imaging_condition")
     voltage = microscope.voltage if voltage is None else voltage
     if not np.all(np.isfinite((magnification, rotation, voltage))) or magnification <= 0 or voltage <= 0:
         raise ValueError("Magnification and voltage must be positive and rotation finite.")

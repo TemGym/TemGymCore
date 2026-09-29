@@ -203,3 +203,35 @@ def test_imaging_matrix_matches_a_lens_between_its_object_and_image_planes(xp):
     )
     expected = imaging_matrix_5x5(magnification, focal_length, xp=xp)
     np.testing.assert_allclose(np.asarray(actual, float), np.asarray(expected, float), atol=1e-14)
+
+
+def test_default_matrices_are_numpy_and_need_no_sympy():
+    """A clean install without SymPy imports the module and builds numerical matrices."""
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent("""
+        import sys
+        sys.modules["sympy"] = None  # any import of sympy now raises ImportError
+        import numpy as np
+        from temgym_core import transfer_matrices as tm
+
+        matrix = tm.lens_matrix_5x5(2.0)
+        assert isinstance(matrix, np.ndarray) and matrix.shape == (5, 5)
+        try:
+            tm.full_abcd_2lens((1, 2, 3), 1, 1, symbolic=True)
+        except ImportError as error:
+            assert "symbolic" in str(error)
+        else:
+            raise SystemExit("expected an ImportError explaining the symbolic extra")
+    """)
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_sympy_module_still_gives_symbolic_matrices():
+    sympy = pytest.importorskip("sympy")
+    f = sympy.Symbol("f")
+    matrix = lens_matrix_5x5(f, xp=sympy)
+    assert isinstance(matrix, sympy.Matrix)
+    assert matrix[2, 0] == -1 / f

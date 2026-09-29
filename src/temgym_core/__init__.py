@@ -1,9 +1,16 @@
-from importlib import import_module
+"""Differentiable electron optics in JAX: rays, Gaussian beamlets and wavefront rendering."""
 
-from typing_extensions import TypeAlias
-from typing import NamedTuple
+from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version as _package_version
+from typing import NamedTuple, TypeAlias
+
 import numpy as np
 from numpy.typing import NDArray
+
+try:
+    __version__ = _package_version("temgym-core")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0.0.0+unknown"
 
 
 PositiveFloat: TypeAlias = float
@@ -105,6 +112,9 @@ _EXPORTS = {
     "InterpolatedSample2D": "components",
     "BraggSample": "components",
     "PotentialStepResponse": "scattering",
+    "enable_x64": "config",
+    "require_x64": "config",
+    "x64_enabled": "config",
 }
 
 

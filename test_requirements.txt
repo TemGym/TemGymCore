@@ -1,5 +1,0 @@
-pytest
-pytest-cov
-sympy
-scikit-image
-matplotlib

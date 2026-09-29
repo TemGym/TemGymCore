@@ -219,8 +219,8 @@ def test_block_solution_and_covariance_match_dense_joint_problem():
     def common(s):
         return jnp.array([2 * (s[0] - 0.4)])
 
-    def residual(l, s, data):
-        return jnp.array([l[0] + s[0] - data[0], 2 * l[0] - s[0] - data[1]])
+    def residual(local, s, data):
+        return jnp.array([local[0] + s[0] - data[0], 2 * local[0] - s[0] - data[1]])
 
     blocks = [
         LocalResidual(residual, (jnp.array([1.2, 1.1]),)),

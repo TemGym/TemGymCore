@@ -23,6 +23,7 @@ try:
 except ImportError:
     plgpu = None
 
+from .config import require_x64
 from .grid import Grid
 
 
@@ -47,6 +48,7 @@ def evaluate_gaussians(
     each forward call, using an envelope cutoff and an exact dense fallback for
     broad beams. It is forward-only; use ``scan`` for automatic differentiation.
     """
+    require_x64("evaluate_gaussians")
     if method == "auto":
         method = "gpu_kernel" if gpu_kernel_available() else "scan"
     if method == "spatial":

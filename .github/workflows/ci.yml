@@ -2,64 +2,81 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - 'v[0-9]*'
-    tags:
-      - 'v[0-9]*'
+    branches: [main]
+    tags: ["v*"]
   pull_request:
 
-concurrency: 
+concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Lint
+        run: uvx ruff check .
+
   tests:
+    name: tests (${{ matrix.os }}, py${{ matrix.python }})
     strategy:
+      fail-fast: false
       matrix:
-        python_version: ["3.10", "3.11", "3.12"]
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Choose Python version ${{ matrix.python_version }}
-        uses: actions/setup-python@v5
         with:
-          python-version: '${{ matrix.python_version }}'
-          cache: 'pip'
-      - name: install tox
-        run: python3 -m pip install tox tox-uv
-      - name: run tox
-        run: tox -e 'py${{ matrix.python_version }}'
-      # - name: submit code coverage
-      #   uses: codecov/codecov-action@v4
-      #   env:
-      #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-  mc-tests:
-    strategy:
-      matrix:
-        python_version: ["3.12"]
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Test (CPU; GPU and slow tests run in their own workflows)
+        run: pytest -m "not gpu and not slow" --cov=temgym_core --cov-report=xml -q
+
+  minimum-dependencies:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Choose Python version ${{ matrix.python_version }}
-        uses: actions/setup-python@v5
         with:
-          python-version: '${{ matrix.python_version }}'
-          cache: 'pip'
-      - name: install uv
-        run: python3 -m pip install uv
-      - name: install core
-        run: uv pip install --system .
-      - uses: webfactory/ssh-agent@v0.9.1
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
         with:
-            ssh-private-key: ${{ secrets.MC_DEPLOY_KEY }}
-      - name: checkout mc
-        run: git clone git@github.com:TemGym/MicroscopeCalibration.git
-      - name: install mc + test
-        working-directory: ./MicroscopeCalibration
+          python-version: "3.11"
+      - name: Install the oldest allowed runtime dependencies
+        run: uv pip install --system --resolution lowest-direct -e .
+      - name: Add the test tools (already-satisfied runtime packages are kept)
+        run: uv pip install --system -e ".[dev]"
+      - name: Test
+        run: pytest -m "not gpu and not slow" -q
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: uv build
+      - name: Check metadata
+        run: uvx twine check dist/*
+      - name: Wheel and sdist stay small (PyPI rejects files over 100 MB)
         run: |
-          uv pip install --system .
-          uv pip install --system -r test_requirements.txt
-          pytest tests/
+          find dist -type f -size +20M -print -exec false {} +
+      - name: Install the wheel into an empty environment and import every module
+        run: |
+          uv venv clean-env
+          uv pip install --python clean-env/bin/python dist/*.whl
+          clean-env/bin/python tools/smoke_imports.py
+      - name: With the plot extra every module must import
+        run: |
+          uv pip install --python clean-env/bin/python "matplotlib>=3.8"
+          clean-env/bin/python tools/smoke_imports.py --strict

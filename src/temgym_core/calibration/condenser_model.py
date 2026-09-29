@@ -6,6 +6,7 @@ import numpy as np
 from scipy.constants import c, electron_mass, elementary_charge
 
 from temgym_core.components import solenoid_column
+from temgym_core.config import require_x64
 from temgym_core.run import column_matrix
 
 from .projector_model import matrix5 as projector_matrix5
@@ -108,8 +109,7 @@ def design_condenser_curve(
     from temgym_core.components import Plane
     from temgym_core.optimization import least_squares
 
-    if not jax.config.x64_enabled:
-        raise ValueError("Enable jax_enable_x64 for condenser design.")
+    require_x64("design_condenser_curve")
     targets = np.asarray(image_magnifications, dtype=float)
     if (
         targets.ndim != 1

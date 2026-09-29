@@ -1,5 +1,4 @@
-from typing import List, Literal, Any, Sequence
-from typing_extensions import get_type_hints
+from typing import List, Literal, Any, Sequence, get_type_hints
 import dataclasses
 
 import jax

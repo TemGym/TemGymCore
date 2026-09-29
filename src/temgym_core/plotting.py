@@ -6,9 +6,15 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping, Sequence, Tuple
 
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import numpy as np
+
+try:
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+except ImportError as error:  # matplotlib is an optional extra
+    raise ImportError(
+        "Plotting needs matplotlib: pip install 'temgym-core[plot]'."
+    ) from error
 
 from .components import (
     Component,

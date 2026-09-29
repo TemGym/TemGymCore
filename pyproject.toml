@@ -1,6 +1,32 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# Used only when git metadata is unavailable (for example a bare sdist).
+fallback_version = "0.1.0.dev0"
+
+[tool.hatch.build.targets.sdist]
+# Explicit list: the repository also holds notebooks, figures and saved images
+# (hundreds of MB) that must never reach PyPI, whose file limit is 100 MB.
+include = [
+  "/src",
+  "/tests",
+  "/docs",
+  "/tools",
+  "/examples/microscope_models/microscope.toml",
+  "/README.md",
+  "/LICENSE.md",
+  "/CHANGELOG.md",
+  "/CONTRIBUTING.md",
+  "/ARCHITECTURE.md",
+  "/pyproject.toml",
+  "/pytest.ini",
+  "/conftest.py",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -13,57 +39,109 @@ only-packages = true
 
 [project]
 name = "temgym-core"
-version = "0.0.1"
+dynamic = ["version"]
 authors = [
   { name="David Landers", email="davidlandersresearch@gmail.com" },
   { name="Matthew Bryan", email="matthewbryan52@gmail.com" },
   { name="Dieter Weber", email="d.weber@fz-juelich.de" },
 ]
-description = "An differentiable TEM ray tracing package"
+description = "Differentiable electron optics in JAX: rays, Gaussian beamlets and GPU wavefront rendering"
 readme = "README.md"
-keywords=["electron microscopy", "virtual twin"]
+license = { file = "LICENSE.md" }
+keywords = ["electron microscopy", "electron optics", "ray tracing", "Gaussian beams", "jax", "virtual twin"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11", 
-    "Programming Language :: Python :: 3.12", 
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: OS Independent",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-  'ase',
-  # ``cubic2`` coefficient and derivative behaviour is part of the calibrated
-  # sample contract.  Change this pin only together with the spline tests.
-  'interpax==0.3.14',
-  # The Gaussian Pallas kernel and cubic-sample derivatives are tested against
-  # this JAX release. Keep the CPU/GPU extras on the same version.
-  'jax==0.10.2',
-  'jax_dataclasses',
-  # NumPy 2.5 currently breaks the jaxtyping version pulled by interpax 0.3.14.
-  'numpy<2.5',
-  'numba',
-  'scipy',
-  'tomli; python_version < "3.11"',
-  'typing-extensions',
+  # ``cubic2`` coefficients and derivatives are part of the calibrated sample
+  # contract (tests/test_interpolated_sample.py). 0.3.15 passes them with NumPy 2.0
+  # to 2.5; 0.3.14 does not work with NumPy 2.5.
+  "interpax>=0.3.15,<0.4",
+  # The Gaussian Pallas kernels are tested against this JAX series.
+  "jax>=0.10.2,<0.11",
+  "jax_dataclasses>=1.6",
+  "numpy>=2.0",
+  "scipy>=1.14",
 ]
 
 [project.optional-dependencies]
-inversion = [
-  'ipykernel>=6',
-  'ipywidgets>=8,<9',
-  'ipympl>=0.10,<0.11',
-  'matplotlib>=3.8',
-  'nbclient>=0.10',
-  'nbformat>=5.9',
+plot = ["matplotlib>=3.8"]
+widgets = [
+  "matplotlib>=3.8",
+  "ipywidgets>=8,<9",
+  "ipympl>=0.10,<0.11",
 ]
+notebooks = [
+  "matplotlib>=3.8",
+  "ipywidgets>=8,<9",
+  "ipympl>=0.10,<0.11",
+  "ipykernel>=6",
+  "nbclient>=0.10",
+  "nbformat>=5.9",
+]
+plotly = ["plotly>=5"]
+symbolic = ["sympy>=1.12"]
 gpu = [
-  # Linux CUDA 13 wheels support both x86_64 and aarch64. Install this extra
-  # for GPU Gaussian forward renders.
-  'jax[cuda13]==0.10.2; sys_platform == "linux"',
+  # Linux CUDA 13 wheels support both x86_64 and aarch64.
+  "jax[cuda13]>=0.10.2,<0.11; sys_platform == 'linux'",
+]
+gpu-cuda12 = [
+  "jax[cuda12]>=0.10.2,<0.11; sys_platform == 'linux'",
+]
+dev = [
+  "pytest>=8",
+  "pytest-cov",
+  "matplotlib>=3.8",
+  "scipy>=1.14",
+  "sympy>=1.12",
+  "scikit-image",
+  "ipywidgets>=8,<9",
+  "ipympl>=0.10,<0.11",
+  "nbclient>=0.10",
+  "nbformat>=5.9",
+  "ipykernel>=6",
+  "ruff",
+  "pre-commit",
+  "build",
+  "twine",
+]
+docs = [
+  "sphinx>=7",
+  "myst-nb>=1",
+  "furo",
+  "sphinx-copybutton",
+  "matplotlib>=3.8",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/TemGym/TemGymCore"
+Homepage = "https://github.com/TemGym/TemGymCore"
+Documentation = "https://temgym-core.readthedocs.io"
+Issues = "https://github.com/TemGym/TemGymCore/issues"
+Changelog = "https://github.com/TemGym/TemGymCore/blob/main/CHANGELOG.md"
 
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+# Notebooks and archived research code are not linted.
+extend-exclude = ["examples", "archived"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+  "E501",  # long lines are wrapped by the formatter on files as they are touched
+  "E702",  # compact one-line pairs in numerical code
+  "E731",  # short lambda assignments for jitted helpers
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]

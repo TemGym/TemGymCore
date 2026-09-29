@@ -21,6 +21,7 @@ from scipy.special import ndtr
 from scipy.signal import find_peaks
 
 from .components import Lens, Plane
+from .config import require_x64
 from .coordinate_transforms import PlaneFrame
 from .gaussian import FreeSpacePropagator
 from .optimization import least_squares
@@ -226,8 +227,7 @@ def simulate_experiment(directory, *, truth=None, specification=None, settings=N
     spec = default_specification() if specification is None else specification
     settings = acquisition() if settings is None else settings
     truth = demonstration_truth() if truth is None else np.asarray(truth)
-    if not jax.config.jax_enable_x64:
-        raise RuntimeError("Enable jax_enable_x64 before calibration.")
+    require_x64("the reflection calibration")
     _, predict = make_predictor(spec)
     mean, covariance = map(np.asarray, predict(truth, settings["controls"], settings["detector_dz_m"]))
     # There is no per-image normalization after clipping or rejecting orders.
@@ -308,8 +308,7 @@ def fit_microscope(directory, *, number_of_starts=10, max_iter=250, seed=19):
     """Bounded native JAX least squares; truth is never read here."""
     if number_of_starts < 1:
         raise ValueError("number_of_starts must be positive.")
-    if not jax.config.jax_enable_x64:
-        raise RuntimeError("Enable jax_enable_x64 before calibration.")
+    require_x64("the reflection calibration")
     root, spec, settings = _load(directory)
     record = json.loads((root / "measurement_record.json").read_text())
     if record["fingerprint"] != _fingerprint(root, ["images.npz", "settings.npz", "experiment.json"]):

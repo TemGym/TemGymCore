@@ -1,6 +1,5 @@
 from typing import Union
 import numpy as np
-from numba import njit
 import jax.numpy as jnp
 
 from . import Degrees, ShapeYX, CoordsXY, ScaleYX, PixelsYX
@@ -280,26 +279,18 @@ class Grid:
             yy, xx = ray
         if acc is None:
             acc = np.zeros(self.shape, dtype=int)
-        _inplace_sum(
-            np.asarray(yy),
-            np.asarray(xx),
-            np.ones(yy.shape, dtype=bool),
-            np.ones(xx.shape, dtype=np.float32),
-            acc,
-        )
+        _count_in_bounds(np.asarray(yy), np.asarray(xx), acc)
         return acc
 
 
-@njit
-def _inplace_sum(px_y, px_x, mask, frame, buffer):
-    """Add masked samples into existing detector pixels, ignoring out-of-bounds coordinates."""
+def _count_in_bounds(px_y, px_x, buffer):
+    """Add one count per sample to its detector pixel; out-of-bounds samples are ignored."""
     h, w = buffer.shape
-    n = px_y.size
-    for i in range(n):
-        py = px_y[i]
-        px = px_x[i]
-        if mask[i] and (0 <= px_y[i] < h) and (0 <= px_x[i] < w):
-            buffer[py, px] += frame[i]
+    inside = (px_y >= 0) & (px_y < h) & (px_x >= 0) & (px_x < w)
+    counts = np.bincount(
+        (px_y[inside] * w + px_x[inside]).astype(np.intp), minlength=h * w
+    )
+    buffer += counts.reshape(h, w).astype(buffer.dtype)
 
 
 def _try_ravel(val):

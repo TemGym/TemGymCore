@@ -1,9 +1,28 @@
-import warnings
+"""Physical constants and relativistic electron-optics helpers (SI units)."""
 
-from ase import units
+import math
+
 import jax.numpy as jnp
 
-_E_OVER_2M0C2 = units._e / (2.0 * units._me * units._c**2)
+# Fundamental constants in SI units. These are the CODATA 2014 values the package
+# previously took from ``ase.units``; they are kept exactly so results do not change.
+ELEMENTARY_CHARGE = 1.6021766208e-19    # C
+ELECTRON_MASS = 9.10938356e-31          # kg
+SPEED_OF_LIGHT = 299792458.0            # m / s
+PLANCK = 6.62607004e-34                 # J s
+HBAR = PLANCK / (2 * math.pi)           # J s
+VACUUM_PERMEABILITY = 1.25663706212e-6  # H / m (CODATA 2018)
+
+# Factors that convert SI numbers to the atomic unit system of ``ase.units``
+# (length A, energy eV, mass u, charge e). Only the interaction constant ``sigma``
+# uses them; it is meaningful for beams expressed in angstrom.
+_ATOMIC_MASS_UNIT = 1.660539040e-27     # kg
+_KG = 1.0 / _ATOMIC_MASS_UNIT
+_COULOMB = 1.0 / ELEMENTARY_CHARGE
+_JOULE = 1.0 / ELEMENTARY_CHARGE
+_SECOND = 1e10 * math.sqrt(ELEMENTARY_CHARGE / _ATOMIC_MASS_UNIT)
+
+_E_OVER_2M0C2 = ELEMENTARY_CHARGE / (2.0 * ELECTRON_MASS * SPEED_OF_LIGHT**2)
 
 
 def wavelength2energy(wavelength: float) -> float:
@@ -13,7 +32,7 @@ def wavelength2energy(wavelength: float) -> float:
     Parameters
     ----------
     wavelength: float
-        Relativistic de Broglie wavelength [Å].
+        Relativistic de Broglie wavelength [m].
 
     Returns
     -------
@@ -21,10 +40,10 @@ def wavelength2energy(wavelength: float) -> float:
         Energy [eV].
     """
     # Constants
-    h = units._hplanck
-    c = units._c
-    m_e = units._me
-    e = units._e
+    h = PLANCK
+    c = SPEED_OF_LIGHT
+    m_e = ELECTRON_MASS
+    e = ELEMENTARY_CHARGE
 
     term1 = (h * c / wavelength) ** 2
     term2 = (m_e * c**2) ** 2
@@ -43,10 +62,10 @@ def energy2wavelength(energy: float) -> float:
     energy : float
         Kinetic energy [eV].
     """
-    h = units._hplanck
-    c = units._c
-    m_e = units._me
-    e = units._e
+    h = PLANCK
+    c = SPEED_OF_LIGHT
+    m_e = ELECTRON_MASS
+    e = ELEMENTARY_CHARGE
 
     E_j = energy * e
     mc2 = m_e * c * c
@@ -68,10 +87,10 @@ def interaction_constant_CE(energy: float) -> float:
         Kinetic energy [eV].
     """
 
-    m_e = units._me
-    c = units._c
-    e = units._e
-    hbar = units._hbar
+    m_e = ELECTRON_MASS
+    c = SPEED_OF_LIGHT
+    e = ELEMENTARY_CHARGE
+    hbar = HBAR
 
     gamma = 1.0 + energy / (m_e * c**2 / e)
     lam = energy2wavelength(energy)
@@ -84,15 +103,11 @@ def e_over_hbar() -> float:
     Return e/ħ in SI units: rad / (T·m)
     Typically used as the magnetic prefactor in the A·dl integral.
     """
-    e = units._e
-    hbar = units._hbar
-    return e / hbar
+    return ELEMENTARY_CHARGE / HBAR
 
 
 def relativistic_mass_correction(energy: float) -> float:
-    e = units._e
-    m_e = units._me
-    c = units._c
+    e, m_e, c = ELEMENTARY_CHARGE, ELECTRON_MASS, SPEED_OF_LIGHT
     return 1 + e * energy / (m_e * c**2)
 
 
@@ -137,10 +152,10 @@ def relativistic_voltage_correction(voltage: float) -> float:
 
 def energy2sigma(energy: float) -> float:
     lam = energy2wavelength(energy)
-    mass = relativistic_mass_correction(energy) * units._me
+    mass = relativistic_mass_correction(energy) * ELECTRON_MASS
     return (
-        2 * jnp.pi * mass * units.kg * units._e * units.C * lam
-        / (units._hplanck * units.s * units.J) ** 2
+        2 * jnp.pi * mass * _KG * ELEMENTARY_CHARGE * _COULOMB * lam
+        / (PLANCK * _SECOND * _JOULE) ** 2
     )
 
 
@@ -171,10 +186,10 @@ def compute_Rc_from_voltage(U_accel: float) -> float:
     Glaser bell model for electromagnetic lenses.
     See archived/examples/lens_inversion/n_lens_inversion.ipynb.
     """
-    e = units._e       # elementary charge [C]
-    m_e = units._me    # electron rest mass [kg]
-    c = units._c       # speed of light [m/s]
-    mu_0 = 1.25663706212e-6  # vacuum permeability [H/m]
+    e = ELEMENTARY_CHARGE
+    m_e = ELECTRON_MASS
+    c = SPEED_OF_LIGHT
+    mu_0 = VACUUM_PERMEABILITY
 
     # Relativistic gamma factor
     gamma_rel = 1.0 + e * U_accel / (m_e * c**2)

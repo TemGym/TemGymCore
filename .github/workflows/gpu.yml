@@ -1,0 +1,45 @@
+name: GPU
+
+# Runs on the self-hosted GH200 runner (labels: self-hosted, linux, gpu).
+# Deliberately not triggered by pull_request, so forked code never reaches the
+# runner. To test a branch, start this workflow manually and give its ref.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to test"
+        required: false
+        default: ""
+
+concurrency:
+  group: gpu-runner
+  cancel-in-progress: false
+
+jobs:
+  gpu:
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 180
+    env:
+      JAX_PLATFORMS: cuda
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv pip install --system -e ".[dev,gpu]"
+      - name: Device
+        run: python -c "import jax; print(jax.devices())"
+      - name: GPU tests
+        run: pytest -m gpu -q
+      - name: Slow CPU tests (nightly and manual runs only)
+        if: github.event_name != 'push'
+        run: JAX_PLATFORMS=cpu pytest -m slow -q

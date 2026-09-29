@@ -4,8 +4,7 @@ import math
 from jax import jacobian
 import jax.numpy as jnp
 from jax import value_and_grad
-from temgym_core.run import custom_jacobian_matrix, run_to_end
-from temgym_core.components import Detector, Deflector, Lens
+from temgym_core.run import custom_jacobian_matrix
 from temgym_core.ray import Ray
 from temgym_core.propagator import FreeSpaceParaxial, FreeSpaceDirCosine
 

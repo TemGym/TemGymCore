@@ -4,8 +4,9 @@ from typing import TYPE_CHECKING, Sequence, Union, Any, Callable, Generator
 
 import jax
 import jax.numpy as jnp
-from .propagator import FreeSpaceParaxial, BasePropagator, Propagator
+from .propagator import FreeSpaceParaxial, Propagator
 from .components import Component
+from .config import require_x64
 from .source import Source
 from .ray import Ray
 
@@ -97,6 +98,7 @@ def run_iter(
     step : (Propagator|Source|Component, Ray)
         The operation applied and its output ray.
     """
+    require_x64("run_iter/run_to_end")
     if propagator is None:
         propagator = _default_propagator_for_ray(ray)
 

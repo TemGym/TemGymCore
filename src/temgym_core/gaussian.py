@@ -6,10 +6,19 @@ from typing import Any, Callable, NamedTuple, Sequence, Tuple
 import jax
 import jax.numpy as jnp
 import jax_dataclasses as jdc
-from ase import units
 from jax import lax
 
-from .constants import energy2wavelength, relativistic_mass_correction
+from .constants import (
+    _COULOMB,
+    _JOULE,
+    _KG,
+    _SECOND,
+    ELECTRON_MASS,
+    ELEMENTARY_CHARGE,
+    PLANCK,
+    energy2wavelength,
+    relativistic_mass_correction,
+)
 from .ray import Ray
 
 LENGTH = {
@@ -223,14 +232,14 @@ class GaussianBeam(Ray):
 
     @property
     def mass(self):
-        return relativistic_mass_correction(self.voltage) * units._me
+        return relativistic_mass_correction(self.voltage) * ELECTRON_MASS
 
     @property
     def sigma(self):
         lam = self.wavelength
         return (
-            2 * jnp.pi * self.mass * units.kg * units._e * units.C * lam
-            / (units._hplanck * units.s * units.J) ** 2
+            2 * jnp.pi * self.mass * _KG * ELEMENTARY_CHARGE * _COULOMB * lam
+            / (PLANCK * _SECOND * _JOULE) ** 2
         )
 
     @property
