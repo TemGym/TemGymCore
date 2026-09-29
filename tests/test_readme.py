@@ -29,4 +29,4 @@ def test_readme_examples_run_and_match_the_text():
         atol=1e-12,
     )
     np.testing.assert_allclose(ns["gradient"], 0.125, atol=1e-12)
-    assert abs(float(ns["image"][32, 32]) - 0.68) < 0.01
+    assert abs(ns["width"] - 39e-6) < 2e-6  # a 40 um square imaged 1:1

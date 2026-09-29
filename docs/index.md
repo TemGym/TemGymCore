@@ -47,6 +47,7 @@ column_matrix(model)
 
 install
 concepts
+tutorials/gaussian_imaging
 api
 changelog
 ```

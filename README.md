@@ -97,7 +97,9 @@ imaging = (
 )
 at_detector = run_to_end(beam, imaging)
 image = jnp.abs(evaluate_gaussians(at_detector, imaging[-1])) ** 2
-print(float(image[32, 32]))  # about 0.68: the flat top of the imaged square
+row = image[32]
+width = float(jnp.sum(row > row.max() / 2)) * 1e-6  # full width at half maximum, 1 um pixels
+print(width)  # about 3.9e-05 m: the 40 um square, imaged 1:1
 ```
 
 On a supported NVIDIA GPU `evaluate_gaussians` uses custom kernels; elsewhere it falls back to
