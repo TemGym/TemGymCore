@@ -64,6 +64,3 @@ These are tracked in the changelog and will change in a future release.
 - The GPU renderers are forward-only. Differentiate with `method="scan"` for small problems.
 - In free space a ray's `pathlength` grows by the axial distance, while Gaussian propagation also
   adds the quadratic term $\tfrac12 d\,\theta^2$. Compare phases within one representation.
-- The absolute intensity of `rectangular_input_wave` depends on the beamlet lattice (a few
-  percent at hologram scale, up to tens of percent for coarse lattices). Relative structure such as
-  fringes and edges is unaffected.

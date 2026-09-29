@@ -43,5 +43,12 @@ All notable changes to this project are documented here. The format follows
   `dev` extra).
 
 ### Fixed
+- `rectangular_input_wave` and `square_input_wave` normalised with the requested aperture area
+  instead of the area the beamlet lattice actually covers, so the coherent sum had an interior
+  intensity of ((L/d)^2/N)^2 rather than `amp`^2: 0.68 for a 40 um aperture with 22 x 22
+  beamlets, 0.81 for 39.9 um with 21 x 21, and about 0.99 at hologram scale. The interior
+  intensity is now `amp`^2 whatever the lattice size. Fringe period and contrast are unchanged;
+  absolute intensities (and anything scaled from them) change by a factor N/(L/d)^2 (10% for the
+  golden biprism column), and `tests/golden/` was regenerated.
 - The README and the code map no longer describe `KrivanekLensCartesian` and Seidel ray
   support, which do not exist yet; every README example now runs in the test suite.

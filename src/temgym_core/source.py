@@ -692,7 +692,41 @@ def rectangular_input_wave(
     centre_xy: tuple[float, float] = (0.0, 0.0),
     wavelength_unit: str = "m",
 ) -> GaussianBeam:
-    area = aperture_width * aperture_height
+    """Illuminate a rectangle uniformly with a lattice of Gaussian beamlets.
+
+    The beamlets have amplitude waist ``waist`` and sit on a square lattice of spacing
+    ``waist / overlap_factor``, ``ceil(width / spacing) + 1`` points across, so the lattice
+    reaches slightly beyond the requested rectangle. Their common amplitude is
+    ``amp * spacing**2 / (pi * waist**2)``: each beamlet owns one spacing-by-spacing cell,
+    and the coherent sum then has amplitude ``amp`` (intensity ``amp**2``) in the interior
+    whatever the lattice size. Sum the beamlets' complex fields, not their intensities.
+
+    Parameters
+    ----------
+    aperture_width, aperture_height : float
+        Size of the illuminated rectangle, in the beam's length unit.
+    waist : float
+        Amplitude 1/e radius of each beamlet.
+    voltage : float
+        Accelerating voltage [V].
+    amp : float
+        Amplitude of the coherent field in the interior.
+    phase : float
+        Constant phase [rad].
+    z0 : float
+        Axial position of the beamlets.
+    overlap_factor : float
+        ``waist`` divided by the lattice spacing; 2 or more gives a smooth sum.
+    centre_xy : tuple of float
+        Centre of the rectangle.
+    wavelength_unit : str
+        Length unit of every dimension above.
+
+    Returns
+    -------
+    GaussianBeam
+        A bundle of ``nx * ny`` beamlets.
+    """
     d = waist / overlap_factor
 
     nx = int(jnp.ceil(aperture_width / d)) + 1
@@ -705,7 +739,7 @@ def rectangular_input_wave(
     x0 = xg.ravel()
     y0 = yg.ravel()
 
-    amp_ray = amp * uniform_amp_from_area(num_rays, waist, area)
+    amp_ray = amp * uniform_amp_from_area(num_rays, waist, num_rays * d * d)
 
     x0 = x0 + centre_xy[0]
     y0 = y0 + centre_xy[1]

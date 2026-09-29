@@ -387,3 +387,20 @@ def test_uniform_sources_apply_requested_amplitude_and_voltage():
 
     basis = make_waist_divergence_rays(1e-8, voltage=80e3)
     np.testing.assert_array_equal(np.asarray(basis.voltage), np.full(2, 80e3))
+
+
+@pytest.mark.parametrize("overlap", [1.5, 2.0, 3.0])
+@pytest.mark.parametrize("width", [39.0e-6, 39.9e-6, 40.0e-6, 40.1e-6, 80.0e-6])
+def test_rectangular_wave_has_unit_interior_intensity_whatever_the_lattice(width, overlap):
+    """The coherent sum of the beamlets is ``amp`` in the interior, not a lattice-dependent number."""
+    from temgym_core.components import Detector
+    from temgym_core.evaluate import evaluate_gaussians
+
+    centre = Detector(z=0.0, pixel_size=(1e-6, 1e-6), shape=(1, 1))
+    for amp in (1.0, 2.5):
+        beam = rectangular_input_wave(
+            aperture_width=width, aperture_height=width, waist=4e-6, voltage=200e3,
+            amp=amp, overlap_factor=overlap, z0=0.0,
+        )
+        intensity = float(np.abs(np.asarray(evaluate_gaussians(beam, centre, method="scan"))[0, 0]) ** 2)
+        np.testing.assert_allclose(intensity, amp**2, rtol=1e-6)
