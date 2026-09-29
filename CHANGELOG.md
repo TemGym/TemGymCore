@@ -60,6 +60,11 @@ All notable changes to this project are documented here. The format follows
   `dev` extra).
 
 ### Fixed
+- `SigmoidAperture`'s Gaussian action was singular at the aperture's exact centre: the plain radius
+  has a conical tip whose Hessian is about `1 / eps` (-1e15 1/m² for `radius / edge_width = 16`), so
+  a beamlet centred exactly on the axis, such as the middle one of an odd lattice, left several times
+  narrower. The distance is now softened over a twentieth of the edge width. Beamlets more than a
+  tenth of an edge width from the centre, and the profile at the edge, are unchanged.
 - `rectangular_input_wave` and `square_input_wave` normalised with the requested aperture area
   instead of the area the beamlet lattice actually covers, so the coherent sum had an interior
   intensity of ((L/d)^2/N)^2 rather than `amp`^2: 0.68 for a 40 um aperture with 22 x 22

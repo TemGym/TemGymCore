@@ -25,7 +25,14 @@ from ._base import GaussianActionComponent
 
 @jdc.pytree_dataclass(kw_only=True)
 class SigmoidAperture(GaussianActionComponent):
-    """Smooth field-amplitude transmission for Gaussians; rays pass through."""
+    """Smooth field-amplitude transmission for Gaussians; rays pass through.
+
+    The transmission is a sigmoid of the distance from ``(x0, y0)``. That distance is softened
+    over a twentieth of ``edge_width``, so ``log T`` is smooth at the centre: a plain radius has a
+    conical tip there, whose Hessian is about ``1 / eps`` and would squeeze a beamlet centred
+    exactly on the axis to a fraction of its width. The softening moves the distance by less than
+    ``edge_width**2 / (800 * distance)``, so the profile at the edge is unchanged.
+    """
 
     radius: float = 1.0
     edge_width: float = 0.5
@@ -47,8 +54,9 @@ class SigmoidAperture(GaussianActionComponent):
 
     def log_transmission(self, xy):
         x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
-        rho = jnp.sqrt(x * x + y * y + self.eps * self.eps) - self.eps
         w = jnp.maximum(jnp.abs(self.edge_width), self.eps)
+        soft = jnp.maximum(0.05 * w, self.eps)
+        rho = jnp.sqrt(x * x + y * y + soft * soft)
         s = jnn.sigmoid(self.sharpness * (rho - self.radius) / w)
         t = self.t_high - (self.t_high - self.t_low) * s
         t_clamped = jnp.clip(t, self.eps, None)
