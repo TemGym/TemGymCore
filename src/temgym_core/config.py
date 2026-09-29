@@ -1,7 +1,8 @@
 """Numerical configuration: temgym-core needs 64-bit JAX arithmetic.
 
-Electron wavelengths are picometres and optical paths are metres, so the phase
-``k * path`` reaches 1e12 rad. Single precision silently produces wrong images,
+Electron wavelengths are picometres, so the phase ``k * path`` of a column's
+excess optical path still reaches 1e9 rad and the phases inside the renderer 1e10 rad.
+Single precision silently produces wrong images,
 so entry points call :func:`require_x64` instead of downgrading quietly. Nothing
 here runs at import time; enabling 64-bit arithmetic is the caller's choice::
 

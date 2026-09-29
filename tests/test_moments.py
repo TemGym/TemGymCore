@@ -41,18 +41,13 @@ def test_transparent_sample_preserves_mixed_gaussian_and_phase_lens():
 
 
 def test_native_gaussian_mixture_matches_matrix_transport():
-    from dataclasses import replace
-
     voltage = 200000.0
     size, spread = 8e-9, 8e-5
     source = gaussian_waist(z=0.0, voltage=voltage, x=2e-9, theta_x=1e-5, rms_size=size)
-    column = tuple(
-        replace(c, include_axial_path=False) if hasattr(c, "q") else c
-        for c in solenoid_column(
-            jnp.array([0.2, 0.035, 0.05]),
-            jnp.array([0.005, 0.005]),
-            jnp.array([0.2, 0.37]),
-        )
+    column = solenoid_column(
+        jnp.array([0.2, 0.035, 0.05]),
+        jnp.array([0.005, 0.005]),
+        jnp.array([0.2, 0.37]),
     )
     floor = (energy2wavelength(voltage) / (4 * jnp.pi * size)) ** 2
     extra = jnp.diag(jnp.array([0.0, 0.0, spread**2 - floor, spread**2 - floor]))
@@ -225,7 +220,7 @@ def test_mixture_uses_source_voltage_for_current_controlled_lenses():
     extra = jnp.diag(jnp.array((0.0, 0.0, 1e-6, 2e-6)))
     _, mixed_covariance = propagate_gaussian_mixture(source, column, extra)
     coherent = run_to_end(
-        source, column, propagator=FreeSpacePropagator(include_axial_path=False)
+        source, column, propagator=FreeSpacePropagator()
     )
     angle = float(lens.rotation_angle(voltage))
     rotation = np.array(

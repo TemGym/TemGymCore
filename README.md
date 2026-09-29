@@ -41,7 +41,7 @@ detector = Detector(z=1.0, pixel_size=(0.01, 0.01), shape=(128, 128))
 model = (lens, detector)
 
 ray_out = run_to_end(ray, model)
-print(ray_out)  # Ray(x=0.275, y=0.4, dx=0.05, dy=0.0, z=1.0, pathlength=0.88875, ...)
+print(ray_out)  # Ray(x=0.275, y=0.4, dx=0.05, dy=0.0, z=1.0, pathlength=-0.048125, ...)
 ```
 
 Coordinates are metres and radians. A *model* is a sequence of components ordered along $z$;

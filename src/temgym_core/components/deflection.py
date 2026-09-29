@@ -50,8 +50,6 @@ class DoubleDeflector(Component):
 
     User-facing commands (shift/tilt) are combined with hardware calibration
     ratios to produce the two physical kicks in each axis.
-    ``include_axial_path=False`` omits the common straight-path phase, as in
-    the Gaussian free-space propagator.
     """
 
     z: float
@@ -66,7 +64,6 @@ class DoubleDeflector(Component):
     shift_balance_y: float = 1.0
     tilt_balance_x: float = 1.0
     tilt_balance_y: float = 1.0
-    include_axial_path: jdc.Static[bool] = True
 
     @property
     def z_second(self) -> float:
@@ -106,17 +103,11 @@ class DoubleDeflector(Component):
         from ..propagator import FreeSpaceParaxial
 
         first, second = self.deflectors
-        ray = FreeSpaceParaxial()(first(ray), self.spacing)
-        if not self.include_axial_path:
-            ray = ray.derive(pathlength=ray.pathlength - self.spacing)
-        return second(ray)
+        return second(FreeSpaceParaxial()(first(ray), self.spacing))
 
     def _call_gaussian(self, ray: GaussianBeam):
         first, second = self.deflectors
-        ray = FreeSpacePropagator(include_axial_path=self.include_axial_path)(
-            first(ray), self.spacing
-        )
-        return second(ray)
+        return second(FreeSpacePropagator()(first(ray), self.spacing))
 
 
 @jdc.pytree_dataclass
@@ -163,11 +154,10 @@ class DeflectionBiprism(Component):
     side: int = 1
 
     def _call_ray(self, ray: Ray):
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        # The slope kick def_x * sign(x) is the gradient of the added path def_x * |x|.
         return ray.derive(
-            dx=dx + self.def_x * ray._one * jnp.sign(ray.x),
-            dy=dy,
-            pathlength=ray.pathlength + dx * x + dy * y,
+            dx=ray.dx + self.def_x * ray._one * jnp.sign(ray.x),
+            pathlength=ray.pathlength + self.def_x * jnp.abs(ray.x),
         )
 
     def _call_gaussian(self, ray: GaussianBeam):

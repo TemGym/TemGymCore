@@ -1,6 +1,5 @@
 """Native coherent Gaussian images for the aperture-in calibration."""
 
-from dataclasses import replace
 
 import jax.numpy as jnp
 import numpy as np
@@ -147,10 +146,7 @@ def condenser_gaussian_state(
         rms_size=jnp.exp(p[17]),
     )
     extra = jnp.eye(4).at[:2, :2].set(0) * jnp.exp(2 * p[18])
-    column = tuple(
-        replace(lens, include_axial_path=False) if hasattr(lens, "q") else lens
-        for lens in condenser_components(p, controls)
-    )
+    column = tuple(condenser_components(p, controls))
     if aperture_fraction is not None:
         from temgym_core.components import Plane
 
@@ -181,7 +177,7 @@ def make_gaussian_renderer(
     @jax.jit
     def render(source, components, angular_variance, offset_pixels):
         output = run_to_end(
-            source, components, propagator=FreeSpacePropagator(include_axial_path=False)
+            source, components, propagator=FreeSpacePropagator()
         )
         output = output.derive(
             x=output.x + offset_pixels[0] * pixel_pitch_m,
@@ -342,10 +338,7 @@ def render_beam_images(
                 voltage_v=voltage,
                 gap_fractions=specification.get("deflector_gap_fractions", (0.3, 0.7)),
             )
-            column = tuple(
-                replace(c, include_axial_path=False) if hasattr(c, "q") else c
-                for c in (*steered, *projector)
-            )
+            column = (*steered, *projector)
             frames.append(
                 np.asarray(render(beam, column, angular_variance, jnp.zeros(2)))
             )

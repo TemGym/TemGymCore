@@ -21,7 +21,10 @@ class Ray(HasParamsMixin):
     z : float or jnp.ndarray
         Axial position(s), metres.
     pathlength : float or jnp.ndarray
-        Accumulated distance, metres.
+        Excess optical path, metres: the optical path accumulated beyond the straight-line
+        axial travel from the launch plane. Free space adds ``d * (dx**2 + dy**2) / 2``, a
+        thin element adds its optical path, and the wave phase is ``k * pathlength``. A ray
+        parallel to the axis in free space accumulates none.
     voltage : float or jnp.ndarray
         Accelerating voltage in volts.
     _one : float, default 1.0

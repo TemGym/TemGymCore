@@ -384,7 +384,7 @@ def test_bragg_grating_lens_intensities_and_total_flux_match_analytic_orders():
     detector = Detector(z=2*focal_length, pixel_size=(12e-9, 12e-9), shape=(64, 2048))
     output = run_to_end(
         beam, (sample, Lens(z=focal_length, focal_length=focal_length), detector),
-        propagator=FreeSpacePropagator(include_axial_path=False),
+        propagator=FreeSpacePropagator(),
     )
     pixels = np.asarray(gaussian_image(output, detector, samples_per_pixel=2))
     incident_power = np.pi * waist**2 / 2

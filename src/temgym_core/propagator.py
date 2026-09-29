@@ -48,8 +48,10 @@ class FreeSpaceParaxial(BasePropagator):
 
     Notes
     -----
-    Updates: x += dx*d, y += dy*d, z += d, pathlength += d. Pure and
-    differentiable.
+    Updates: x += dx*d, y += dy*d, z += d, pathlength += d*(dx**2 + dy**2)/2.
+    ``pathlength`` is the excess optical path (see :class:`temgym_core.ray.Ray`), so a
+    ray parallel to the axis accumulates none. This is the same Hamilton
+    characteristic the Gaussian propagator uses. Pure and differentiable.
     """
     @staticmethod
     def propagate(ray: "Ray", distance: float):
@@ -71,7 +73,7 @@ class FreeSpaceParaxial(BasePropagator):
             x=ray.x + ray.dx * distance,
             y=ray.y + ray.dy * distance,
             z=ray.z + distance,
-            pathlength=ray.pathlength + distance,
+            pathlength=ray.pathlength + 0.5 * distance * (ray.dx**2 + ray.dy**2),
         )
 
     @classmethod
@@ -85,8 +87,9 @@ class FreeSpaceDirCosine(BasePropagator):
     Notes
     -----
     Handles larger angles than paraxial model. Updates: x += (L/N)*d,
-    y += (M/N)*d, z += d, pathlength += N*d. Not currently integrated with
-    ABCD-based matrices in this repo.
+    y += (M/N)*d, z += d, pathlength += (N - 1)*d, the excess of the exact path
+    over the axial distance. Not currently integrated with ABCD-based matrices
+    in this repo.
     """
     @staticmethod
     def propagate(ray: "Ray", distance: float):
@@ -111,7 +114,7 @@ class FreeSpaceDirCosine(BasePropagator):
             x=ray.x + L / N * distance,
             y=ray.y + M / N * distance,
             z=ray.z * ray._one + distance,
-            pathlength=ray.pathlength + distance * N,
+            pathlength=ray.pathlength + distance * (N - 1),
         )
 
     @classmethod

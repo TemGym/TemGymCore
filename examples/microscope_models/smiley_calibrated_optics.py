@@ -1,5 +1,4 @@
 """Operating controls for the saved fitted microscope, using native solenoids."""
-from dataclasses import replace
 from functools import lru_cache
 import json
 from pathlib import Path
@@ -46,8 +45,6 @@ def microscope(spot=3., magnification=40000.):
     names = ('CL1', 'CL3', 'C_mini', 'Obj_prefield', 'sample',
              'Obj_post', 'IL1', 'IL2', 'IL3', 'PL1', 'detector')
     components = dict(zip(names, (*condenser, *projector)))
-    components = {name: replace(c, include_axial_path=False) if hasattr(c, 'q') else c
-                  for name, c in components.items()}
     components['sample'] = Plane(z=0.)
     components['detector'] = Detector(z=float(projector[-1].z), shape=(128, 128),
                                       pixel_size=(55e-6, 55e-6))

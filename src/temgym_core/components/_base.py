@@ -159,6 +159,30 @@ class GaussianActionComponent(Component):
         L = jnp.logaddexp(logA, -50)
         return self.phase_shift(xy) - 1j * (L / k)
 
+    def _call_ray(self, ray: Ray) -> Ray:
+        """Chief-ray action: add the optical path and kick the slope by its gradient.
+
+        This is the same action the Gaussian branch applies at a beamlet's centre, so a ray
+        and a beamlet centred on it stay together. Rays carry no amplitude, so a purely
+        absorbing element passes them through.
+        """
+        if type(self).phase_shift is GaussianActionComponent.phase_shift:
+            return ray
+
+        def path(point):
+            return jnp.real(self.phase_shift(point))
+
+        x, y = jnp.broadcast_arrays(jnp.asarray(ray.x, jnp.float64),
+                                    jnp.asarray(ray.y, jnp.float64))
+        points = jnp.stack((x, y), axis=-1)
+        value, gradient = jax.vmap(jax.value_and_grad(path))(points.reshape(-1, 2))
+        value = value.reshape(x.shape)
+        gradient = gradient.reshape(points.shape)
+        return ray.derive(
+            dx=ray.dx + gradient[..., 0], dy=ray.dy + gradient[..., 1],
+            pathlength=ray.pathlength + value,
+        )
+
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
         return _call_single_or_batched_gaussian(ray, self._call_gaussian_single)
 

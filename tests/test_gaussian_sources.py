@@ -28,13 +28,13 @@ def test_decomposition_preserves_source_and_native_lens_propagation():
 
     source = gaussian_waist(z=0., voltage=200e3, rms_size=3e-9,
                             x=1e-9, y=-2e-9, theta_x=1e-6, theta_y=-2e-6)
-    column = (HardEdgeSolenoid(z=.2, length=.006, q=.22, include_axial_path=False),
-              HardEdgeSolenoid(z=.246, length=.004, q=.4, include_axial_path=False),
+    column = (HardEdgeSolenoid(z=.2, length=.006, q=.22),
+              HardEdgeSolenoid(z=.246, length=.004, q=.4),
               Plane(z=.253))
     bundle = decompose_gaussian(source, num_across=96, through=column)
     assert bundle.x.shape == (96**2,)
     np.testing.assert_allclose(bundle.z, source.z)
-    fs = FreeSpacePropagator(include_axial_path=False)
+    fs = FreeSpacePropagator()
     changed = (column[0], replace(column[1], q=.404), column[2])
     for components in ((), column, changed):
         exact = run_to_end(source, components, propagator=fs) if components else source

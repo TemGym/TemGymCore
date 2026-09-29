@@ -40,7 +40,7 @@ Rules that tie them together:
 ## Conventions
 
 See *Concepts and conventions* in the documentation: SI units, $[x, y, \theta_x, \theta_y, 1]$
-ray vectors, `pathlength` and `phase_shift` as optical paths, (y, x) image order.
+ray vectors, `pathlength` (the excess optical path) and `phase_shift` as optical paths, (y, x) image order.
 
 ## Numerical policy
 

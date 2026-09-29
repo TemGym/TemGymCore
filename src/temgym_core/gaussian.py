@@ -564,10 +564,12 @@ class BaseGaussianPropagator:
 
 
 class FreeSpacePropagator(BaseGaussianPropagator):
-    def __init__(self, *, include_axial_path=True):
-        # Dropping the common axial carrier is useful for intensity calculations
-        # over metre-long columns: retain the small relative optical actions.
-        self.include_axial_path = include_axial_path
+    """Free-space Gaussian transport: Q, amplitude (Gouy phase) and excess optical path.
+
+    ``pathlength`` gains ``d * (dx**2 + dy**2) / 2``, the same excess path a ray gains in
+    :class:`temgym_core.propagator.FreeSpaceParaxial`; the common axial carrier ``k * d`` is
+    never accumulated, so phases stay small over metre-long columns.
+    """
 
     def __call__(self, ray: GaussianBeam, distance: float) -> GaussianBeam:
         distance = jnp.asarray(distance, dtype=jnp.float64)
@@ -616,8 +618,7 @@ class FreeSpacePropagator(BaseGaussianPropagator):
             dy=dy,
             z=ray.z + distance,
             amplitude=ray.amplitude * amplitude_factor,
-            pathlength=ray.pathlength + (distance if self.include_axial_path else 0.)
-            + 0.5 * distance * theta_sq,
+            pathlength=ray.pathlength + 0.5 * distance * theta_sq,
             Q_inv=Q_new,
         )
 

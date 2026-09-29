@@ -33,7 +33,7 @@ def test_propagate_paraxial(runs):
     np.testing.assert_allclose(new.dx, dx0, atol=1e-6)
     np.testing.assert_allclose(new.dy, dy0, atol=1e-6)
     np.testing.assert_allclose(new.z, z0 + d, atol=1e-6)
-    np.testing.assert_allclose(new.pathlength, pl0 + d, atol=1e-6)
+    np.testing.assert_allclose(new.pathlength, pl0 + 0.5 * d * (dx0**2 + dy0**2), atol=1e-6)
 
 
 def test_propagate_gradient_no_ray_one():
@@ -65,7 +65,7 @@ def test_propagate_dir_cosine():
     expected_x = x0 + (L / N) * d
     expected_y = y0 + (M / N) * d
     expected_z = z0 + d
-    expected_pl = pl0 + d * N
+    expected_pl = pl0 + d * (N - 1)
 
     new = FreeSpaceDirCosine()(ray, d)
     np.testing.assert_allclose(new.x, expected_x, atol=1e-6)

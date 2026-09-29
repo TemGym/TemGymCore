@@ -811,7 +811,15 @@ def test_electromagnetic_lens_thick_advances_ray_when_tc_positive():
     out_tc = lens_with_tc(ray)
 
     assert float(out_tc.z) > float(out_thin.z)
-    assert float(out_tc.pathlength) > float(out_thin.pathlength)
+
+    # The thick lens is a half-strength kick, a drift through the body, and a second kick;
+    # the rotation that follows does not change the optical path.
+    from temgym_core.components import Lens
+    from temgym_core.propagator import FreeSpaceParaxial
+
+    half = Lens(z=0.0, focal_length=2 * lens_with_tc.focal_length(voltage))
+    expected = half(FreeSpaceParaxial()(half(ray), lens_with_tc.thickness))
+    np.testing.assert_allclose(float(out_tc.pathlength), float(expected.pathlength), rtol=1e-12)
 
 
 def test_electromagnetic_lens_with_xy_stigmator_matches_stigmator_plus_rotator():

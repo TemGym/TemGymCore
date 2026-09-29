@@ -841,7 +841,7 @@ def decompose_gaussian(
     if np.shape(beam.x) != () or np.shape(beam.Q_inv) != (2, 2):
         raise ValueError("Supply one Gaussian, not a beamlet bundle.")
     through = tuple(through)
-    propagator = FreeSpacePropagator(include_axial_path=False)
+    propagator = FreeSpacePropagator()
     target = run_to_end(beam, through, propagator=propagator) if through else beam
     q = np.asarray(target.Q_inv)
     # Native round lens/rotation chains can leave small off-diagonal residue.
@@ -921,7 +921,7 @@ def decompose_gaussian_angular(
     if np.shape(beam.x) != () or np.shape(beam.Q_inv) != (2, 2):
         raise ValueError("Supply one Gaussian, not a beamlet bundle.")
     through = tuple(through)
-    propagator = FreeSpacePropagator(include_axial_path=False)
+    propagator = FreeSpacePropagator()
     target = run_to_end(beam, through, propagator=propagator) if through else beam
     q = np.asarray(target.Q_inv)
     k = float(target.k)

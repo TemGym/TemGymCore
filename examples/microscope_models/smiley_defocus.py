@@ -135,7 +135,7 @@ class SmileyDefocus:
             c for c in self.model.column
             if self.z_sample < float(c.z) < float(self.detector.z)
         ) + (self.detector,)
-        self.propagator = FreeSpacePropagator(include_axial_path=False)
+        self.propagator = FreeSpacePropagator()
 
         # Coherent member of the fitted virtual source, at its fitted waist.
         # Its size, position and mean tilt come from the saved calibration.

@@ -21,7 +21,7 @@ def test_readme_examples_run_and_match_the_text():
     ray_out = ns["ray_out"]
     np.testing.assert_allclose([ray_out.x, ray_out.y, ray_out.dx, ray_out.dy, ray_out.z],
                                [0.275, 0.4, 0.05, 0.0, 1.0], atol=1e-12)
-    np.testing.assert_allclose(ray_out.pathlength, 0.88875, atol=1e-12)
+    np.testing.assert_allclose(ray_out.pathlength, -0.048125, atol=1e-12)
     np.testing.assert_allclose(
         ns["matrix"],
         [[0.5, 0, 0.75, 0, 0], [0, 0.5, 0, 0.75, 0], [-1, 0, 0.5, 0, 0],

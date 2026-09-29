@@ -99,7 +99,6 @@ The audit also identified existing behaviour needing separate physics work:
 | Component | Current limitation |
 |---|---|
 | `ElectromagneticLens` | The round-ray branch ignores x0/y0; Gaussian and stigmator branches use them. |
-| `KrivanekLens` | The legacy ray branch works about the origin and replaces pathlength with the aberration value. |
 | `InterpolatedFields3D` | Fields can be interpolated, but calling the component leaves the beam unchanged. |
 
 The readability changes preserve those behaviours. They also preserve the

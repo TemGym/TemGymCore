@@ -58,7 +58,7 @@ def test_wave_image_gradient_and_jax_fit_unknown_propagation_distance():
     detector = Detector(z=0.0, shape=(16, 16), pixel_size=(2e-9, 2e-9))
 
     def image(p):
-        beam = FreeSpacePropagator(include_axial_path=False)(source, p[0] * 1e-6)
+        beam = FreeSpacePropagator()(source, p[0] * 1e-6)
         return gaussian_image(beam, detector) / 1e-18
 
     truth = jnp.array([18.0])

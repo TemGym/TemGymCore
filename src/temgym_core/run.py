@@ -27,7 +27,7 @@ def propagate_gaussian_mixture(source, components, extra_covariance):
     output = run_to_end(
         source,
         components,
-        propagator=FreeSpacePropagator(include_axial_path=False),
+        propagator=FreeSpacePropagator(),
     )
     mean, covariance = output.moments()
     matrix = column_matrix(components, source_z=source.z, voltage=source.voltage)[:4, :4]

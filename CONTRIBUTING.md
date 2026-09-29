@@ -29,9 +29,10 @@ propagation through the biprism column and the coherent renderer with values sto
 `tests/golden/`. If a change moves one of them, say why in the pull request and regenerate
 with `tests/golden/make_baseline.py`. A refactor should move none of them.
 
-Complex fields are compared after removing the global phase, to 1e-3 of the peak. That is
-not sloppiness: `Ray.pathlength` holds the absolute optical path, so $k\cdot\text{path}$ is about
-$10^{12}$ rad and float64 resolves it to about $2\times10^{-4}$ rad per beamlet on any platform.
+Complex fields are compared after removing the global phase, to 1e-6 of the peak. That is
+not sloppiness: `Ray.pathlength` is the excess optical path, so $k\cdot\text{path}$ is about
+$2\times10^{9}$ rad on the reference column and float64 resolves it to about $2\times10^{-7}$ rad
+per beamlet; the GPU renderers agree with the CPU baseline to about $10^{-8}$ of the peak.
 
 ## Pull requests
 

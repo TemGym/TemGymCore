@@ -39,7 +39,7 @@ LOWER = np.array([-500., -300., -180., -75., 20., 12., 10., .7, 80.])
 UPPER = np.array([-310., -200., -85., -15., 80., 55., 50., 5., 180.])
 INITIAL = np.array([-390., -250., -145., -52., 46., 30., 25., 2.5, 145.])
 SCALE = np.array([100., 80., 60., 30., 30., 20., 20., 2., 100.])
-FS = FreeSpacePropagator(include_axial_path=False)
+FS = FreeSpacePropagator()
 
 
 def default_specification():

@@ -25,7 +25,6 @@ from ..aberrations import (
     SeidelCoeffs,
     Seidel_object_pos_aperture_pos,
     W_krivanek,
-    grad_W_krivanek,
 )
 from ..constants import (
     compute_Rc_from_voltage,
@@ -152,9 +151,8 @@ class Stigmator(GaussianActionComponent):
 class KrivanekLens(Lens):
     """Thin lens with Krivanek aberrations.
 
-    The Gaussian path expands a local optical action. The legacy ray path
-    instead corrects slopes about the origin and replaces pathlength with
-    the aberration value; it does not accumulate the ideal-lens optical path.
+    Rays and Gaussian beamlets take the same local optical action, ``phase_shift``: the ideal
+    lens path plus the aberration function of the aperture position.
     """
 
     coeffs: KrivanekCoeffs = dataclasses.field(default_factory=KrivanekCoeffs)
@@ -166,23 +164,7 @@ class KrivanekLens(Lens):
         return GaussianActionComponent._call_gaussian(self, ray)
 
     def _call_ray(self, ray: Ray):
-        f = self.focal_length
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
-
-        ideal_dx = -x / f + dx
-        ideal_dy = -y / f + dy
-
-        alpha = jnp.hypot(ideal_dx, ideal_dy)
-        phi = jnp.arctan2(ideal_dy, ideal_dx)
-
-        dWx, dWy = grad_W_krivanek(ideal_dx, ideal_dy, self.coeffs)
-        dux, duy = -dWx / f, -dWy / f
-
-        aber_dx = ideal_dx + dux
-        aber_dy = ideal_dy + duy
-        pathlength = W_krivanek(alpha, phi, self.coeffs)
-
-        return ray.derive(dx=aber_dx, dy=aber_dy, pathlength=pathlength)
+        return GaussianActionComponent._call_ray(self, ray)
 
     def phase_shift(self, xy: jnp.ndarray):
         x = xy[..., 0] - self.x0
@@ -473,15 +455,15 @@ class HardEdgeSolenoid(Component):
     Includes both edges and propagation through the body. Rotation is -q;
     q is proportional to current / relativistic momentum. This ideal uniform
     field is distinct from the principal-plane ``ThickLens`` approximation.
-    Coherent transport includes the quadratic action and Gouy factor. The
-    coherent branch covers the first radial half-period, abs(q) < pi;
-    longer fields must be split into shorter bodies to continue the phase.
+    Rays and Gaussian beamlets accumulate the same quadratic action; coherent
+    transport adds the Gouy factor. The coherent branch covers the first radial
+    half-period, abs(q) < pi; longer fields must be split into shorter bodies to
+    continue the phase.
     """
 
     z: float
     length: float
     q: float
-    include_axial_path: jdc.Static[bool] = True
 
     @property
     def matrix(self):
@@ -495,12 +477,18 @@ class HardEdgeSolenoid(Component):
             [power * rotation, cosine * rotation],
         ])
 
+    @staticmethod
+    def _action(ray_in, ray_out):
+        """Homogeneous quadratic canonical action, including magnetic rotation."""
+        return .5 * (jnp.sum(ray_out.r_xy * ray_out.d_xy, axis=-1)
+                     - jnp.sum(ray_in.r_xy * ray_in.d_xy, axis=-1))
+
     def _call_ray(self, ray):
         m = self.matrix
         out = ABCDTransfer(A=m[:2, :2], B=m[:2, 2:],
                            C=m[2:, :2], D=m[2:, 2:])(ray)
         return out.derive(z=ray.z + self.length,
-                          pathlength=ray.pathlength + self.length)
+                          pathlength=ray.pathlength + self._action(ray, out))
 
     def _call_gaussian(self, ray):
         m = self.matrix
@@ -523,13 +511,10 @@ class HardEdgeSolenoid(Component):
         determinant = jnp.linalg.det(denominator)
         root = jnp.sqrt(determinant)
         root = jnp.where(jnp.imag(determinant) < 0., -root, root)
-        # Homogeneous quadratic canonical action, including magnetic rotation.
-        action = .5 * (jnp.sum(out.r_xy * out.d_xy, axis=-1)
-                       - jnp.sum(ray.r_xy * ray.d_xy, axis=-1))
         valid = (jnp.abs(self.q) < jnp.pi) & (self.length > 0)
         return out.derive(
             z=ray.z + self.length,
-            pathlength=ray.pathlength + (self.length if self.include_axial_path else 0.) + action,
+            pathlength=ray.pathlength + self._action(ray, out),
             amplitude=jnp.where(valid, ray.amplitude / root, jnp.nan + 0j),
         )
 

@@ -25,6 +25,23 @@ All notable changes to this project are documented here. The format follows
   `gpu-cuda12`, `dev`, `docs`.
 
 ### Changed
+- **Breaking:** `pathlength` is now the *excess* optical path, for rays and Gaussian beamlets alike:
+  what is accumulated beyond straight-line axial travel from the launch plane. Free space adds
+  `d * (dx**2 + dy**2) / 2` (`FreeSpaceParaxial` used to add `d`), a thin element adds its
+  optical path and kicks the slope by that path's gradient, and a ray parallel to the axis
+  accumulates none. The common carrier `k * (z - z0)` is the same for every beamlet of one
+  voltage and drops out of intensities. `FreeSpacePropagator`, `HardEdgeSolenoid` and
+  `DoubleDeflector` lose their `include_axial_path` argument (the behaviour of
+  `include_axial_path=False` is now the only one), and `FreeSpaceDirCosine` adds `(N - 1) * d`.
+  The README ray example prints `pathlength=-0.048125` instead of `0.88875`.
+- Rays and Gaussian beamlets now follow the same chief ray through every component, and a test
+  (`tests/test_ray_gaussian_consistency.py`) holds them together: `GaussianActionComponent` gains
+  a ray branch (the element's optical path plus a slope kick by its gradient), so `PhaseBiprism`,
+  `ZernikeAberration`, the constant/linear/quadratic phase shifts and the specimen phase objects
+  accept rays; `HardEdgeSolenoid` rays accumulate the quadratic action its Gaussian branch
+  already had (they used to add the body length only); `KrivanekLens` rays follow the lens's
+  `phase_shift` (they used to replace the path with the aberration function of the ideal slope);
+  `DeflectionBiprism` adds `def_x * |x|` (it added `dx * x + dy * y`).
 - **Breaking:** `transfer_matrices` constructors return NumPy arrays by default. Pass
   `xp=jax.numpy` for JAX or `xp=sympy` for symbolic matrices (the `symbolic` extra).
   Previously the default was SymPy, which was not a declared dependency, so the module

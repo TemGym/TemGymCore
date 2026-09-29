@@ -36,7 +36,7 @@ def test_angular_decomposition_preserves_complex_field_through_lenses():
     source = gaussian_waist(z=0., voltage=30e3, rms_size=1.5e-9/np.sqrt(2*np.log(2))/2)
     column = (Lens(z=.08, focal_length=.04), Lens(z=.22, focal_length=.03),
               Lens(z=.31, focal_length=.012), Plane(z=.33))
-    fs = FreeSpacePropagator(include_axial_path=False)
+    fs = FreeSpacePropagator()
     bundle = decompose_gaussian_angular(source, num_across=64, through=column)
     for components in ((), column):
         exact = run_to_end(source, components, propagator=fs) if components else source

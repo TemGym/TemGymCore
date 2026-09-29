@@ -26,14 +26,13 @@ def close(actual, expected, *, rtol=1e-9, atol=0.0):
     np.testing.assert_allclose(np.asarray(actual), np.asarray(expected), rtol=rtol, atol=atol)
 
 
-# ``Ray.pathlength`` accumulates the absolute optical path (about 0.7 m here), so
-# the phase k * pathlength is about 2e12 rad and float64 resolves it only to
-# ~2.4e-4 rad per beamlet. Measured on this column: the CPU baseline, the GPU
-# ``scan`` renderer and the Pallas kernels differ by 1e-5 .. 4e-4 of the peak
-# field purely from that rounding. Fields are therefore compared after removing
-# the (physically meaningless) global phase, to 1e-3 of the peak: far below any
-# real physics change, above the platform-dependent phase floor.
-FIELD_RTOL = 1e-3
+# Fields are compared after removing their (physically meaningless) global phase.
+# ``Ray.pathlength`` is the excess optical path (0.7 mm here), so the phase
+# k * pathlength is about 2e9 rad and float64 resolves it to ~2e-7 rad per beamlet.
+# Measured on this column, the GPU ``scan`` renderer and the Pallas kernels differ
+# from the frozen CPU baseline by 2e-8 and 7e-9 of the peak field. 1e-6 leaves a
+# margin for other platforms and stays far below any real physics change.
+FIELD_RTOL = 1e-6
 
 
 def close_field(actual, expected, rtol=FIELD_RTOL):

@@ -54,7 +54,7 @@ def test_joint_quadratic_action_matches_diffraction_integral(distance):
     width = 80e-9
     source = make_gaussian(x=.8e-6, y=.25e-6, dx=2e-5, dy=-1e-5,
                            waist_x=width, waist_y=width, z=0., voltage=200e3)
-    beam = FreeSpacePropagator(include_axial_path=False)(source, distance)
+    beam = FreeSpacePropagator()(source, distance)
     value = 2e-12
     gradient = np.array([2e-6, -1e-6, 3e-6, 2e-6])
     hessian = np.array([[3., .4, 2., -.8], [.4, -2., .7, 1.],
@@ -82,7 +82,7 @@ def test_distortion_converges_to_direct_complex_field_quadrature(radial, tangent
     for width in (80e-9, 40e-9, 20e-9):
         source = make_gaussian(x=.8e-6, y=.25e-6, dx=2e-5, dy=-1e-5,
                                waist_x=width, waist_y=width, z=0., voltage=200e3)
-        beam = FreeSpacePropagator(include_axial_path=False)(source, distance)
+        beam = FreeSpacePropagator()(source, distance)
         lens = DistortedLens(z=distance, focal_length=focal, object_plane_dist=distance,
                              IsoDist=radial, AnisoDist=tangential)
         out = jax.jit(lambda b: lens(b))(beam)
@@ -143,7 +143,7 @@ def test_distortion_centres_follow_cubic_law_for_a_batched_field():
                            y=jnp.array([.25e-6, -.3e-6, .6e-6]),
                            dx=jnp.array([1e-5, -2e-5, 0.]), dy=2e-5,
                            waist_x=40e-9, waist_y=40e-9, z=0., voltage=200e3)
-    drift = FreeSpacePropagator(include_axial_path=False)
+    drift = FreeSpacePropagator()
     lens = DistortedLens(z=distance, focal_length=focal, object_plane_dist=distance,
                          IsoDist=-3e12, AnisoDist=2e12)
     out = jax.jit(lambda b: drift(lens(drift(b, distance)), distance))(source)
@@ -179,14 +179,13 @@ def test_negative_projector_distortion_preserves_decaying_gaussians(distortion):
     rotation = jnp.asarray([[jnp.cos(.37), -jnp.sin(.37)],
                             [jnp.sin(.37), jnp.cos(.37)]])
     rotate = ABCDTransfer(A=rotation, B=jnp.zeros((2, 2)), D=rotation)
-    drift = FreeSpacePropagator(include_axial_path=False)
+    drift = FreeSpacePropagator()
 
     @jax.jit
     def transport(beam):
         pupil = lens(beam)
         rotated = rotate(pupil)
-        finite = HardEdgeSolenoid(z=lens.z, length=.001, q=-.63,
-                                  include_axial_path=False)(pupil)
+        finite = HardEdgeSolenoid(z=lens.z, length=.001, q=-.63)(pupil)
         return pupil, rotated, drift(rotated, 1.04375-lens.z), finite
 
     for out in transport(beam):

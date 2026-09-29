@@ -243,7 +243,6 @@ def condenser_with_steering(
             shift_balance_y=balances[1],
             tilt_balance_x=balances[2],
             tilt_balance_y=balances[3],
-            include_axial_path=False,
         )
 
     def response(balances):

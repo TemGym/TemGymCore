@@ -70,12 +70,12 @@ def test_coherent_solenoid_matches_drift_lens_drift_factorization():
     q, length = .83, .004
     distance = length * np.tan(q / 2) / q
     focal_length = length / (q * np.sin(q))
-    propagate = FreeSpacePropagator(include_axial_path=False)
+    propagate = FreeSpacePropagator()
     reference = propagate(source, distance)
     reference = Lens(z=distance, focal_length=focal_length)(reference)
     reference = propagate(reference, distance)
     rotation = jnp.array([[np.cos(q), np.sin(q)], [-np.sin(q), np.cos(q)]])
     reference = ABCDTransfer(A=rotation, B=jnp.zeros((2, 2)), D=rotation)(reference)
-    actual = HardEdgeSolenoid(z=0., length=length, q=q, include_axial_path=False)(source)
+    actual = HardEdgeSolenoid(z=0., length=length, q=q)(source)
     for field in ('x', 'y', 'dx', 'dy', 'Q_inv', 'amplitude', 'pathlength'):
         np.testing.assert_allclose(getattr(actual, field), getattr(reference, field), rtol=2e-11)

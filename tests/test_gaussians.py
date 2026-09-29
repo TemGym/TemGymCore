@@ -210,7 +210,8 @@ def test_free_space_paraxial_updates_q_inv():
         atol=1e-12,
     )
 
-    expected_pathlength = ray_in.pathlength + dist
+    # Excess optical path: only the slope term 1/2 d (dx**2 + dy**2), zero for this axial beam.
+    expected_pathlength = ray_in.pathlength + 0.5 * dist * (ray_in.dx**2 + ray_in.dy**2)
 
     np.testing.assert_allclose(
         np.asarray(ray_out.pathlength),
@@ -512,7 +513,10 @@ def test_gaussian_free_space_vs_fresnel(tmp_path):
         propagation_distance,
     )
     analytic_gauss_image = np.array(analytic_gauss_image)
-    fresnel_gauss_image = np.array(fresnel_gauss_image)
+    # FresnelPropagator carries the uniform axial phase exp(ikz); the beamlet's excess
+    # optical path never accumulates it, so compare the two without that common carrier.
+    fresnel_gauss_image = np.array(fresnel_gauss_image) * np.exp(
+        -1j * 2 * np.pi / wavelength * propagation_distance)
 
     det_circular_mask = make_aperture(X, Y, aperture_ratio=0.4)
 
@@ -544,11 +548,14 @@ def test_gaussian_free_space_vs_fresnel(tmp_path):
         err_msg="Amplitude mismatch between analytic and fresnel",
     )
 
+    # The FFT propagator's sampling error is about 2e-4 rad here. The tolerance used to be
+    # rtol * |phase| + 1e-4 on phases that still carried exp(ikz), which are spread over
+    # (-pi, pi], so it never bit; with the carrier removed the phases are small.
     np.testing.assert_allclose(
         np.angle(analytic_gauss_image),
         np.angle(fresnel_gauss_image),
-        rtol=1e-4,
-        atol=1e-4,
+        rtol=0,
+        atol=3e-4,
         err_msg="Phase mismatch between analytic and fresnel",
     )
 
