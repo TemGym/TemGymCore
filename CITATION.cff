@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "temgym-core"
+type: software
+license: GPL-3.0-only
+repository-code: "https://github.com/TemGym/TemGymCore"
+authors:
+  - family-names: Landers
+    given-names: David
+  - family-names: Bryan
+    given-names: Matthew
+  - family-names: Weber
+    given-names: Dieter
+preferred-citation:
+  type: article
+  title: "TEMGYM Basic: transmission electron microscopy simulation software for teaching and training of microscope operation"
+  authors:
+    - family-names: Landers
+      given-names: David
+    - family-names: Clancy
+      given-names: Ian
+    - family-names: Weber
+      given-names: Dieter
+    - family-names: Dunin-Borkowski
+      given-names: Rafal E.
+    - family-names: Stewart
+      given-names: Andrew
+  journal: "Journal of Applied Crystallography"
+  volume: 56
+  issue: 4
+  start: 1267
+  end: 1276
+  year: 2023
+  date-released: 2023-07-14
+  doi: "10.1107/S1600576723005174"

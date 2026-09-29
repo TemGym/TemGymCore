@@ -115,8 +115,9 @@ a portable implementation with the same result.
 
 ## Citing
 
-Landers, D., Clancy, I., Weber, D., Dunin-Borkowski, R. & Stewart, A. (2023).
-*J. Appl. Cryst.* **56**, [doi:10.1107/S1600576723005174](https://doi.org/10.1107/S1600576723005174).
+Landers, D., Clancy, I., Weber, D., Dunin-Borkowski, R. E. & Stewart, A. (2023).
+*TEMGYM Basic: transmission electron microscopy simulation software for teaching and training of microscope operation.*
+*J. Appl. Cryst.* **56**, 1267-1276, [doi:10.1107/S1600576723005174](https://doi.org/10.1107/S1600576723005174).
 
 ## License
 

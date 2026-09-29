@@ -29,7 +29,7 @@ Rules that tie them together:
 | Responsibility | Modules |
 |---|---|
 | Rays, propagation | `ray`, `run`, `propagator`, `transfer_matrices`, `coordinate_transforms` |
-| Components | `components` (planes, lenses, steering, actions, specimens) |
+| Components | `components/` (`planes`, `lenses`, `deflection`, `actions`, `specimens`, `interpolated`) |
 | Gaussian beamlets | `gaussian`, `source`, `evaluate`, `grid` |
 | Microscope | `microscope` (named components, current tables, imaging condition) |
 | Measurements and fitting | `moments`, `optimization`, `calibration/`, `reflection_calibration` |

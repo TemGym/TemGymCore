@@ -6,12 +6,12 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 
 | Responsibility | Code |
 |---|---|
-| Optical elements, including lenses, solenoids and detector | `components.py` |
+| Optical elements, including lenses, solenoids and detector | `components/` |
 | Rays and Gaussian beams through those elements; affine 5×5 matrix | `ray.py`, `gaussian.py`, `source.py`, `propagator.py`, `run.py` |
 | Gaussian fields and integrated detector images | `evaluate.py`, `grid.py` |
 | Image measurements and their matrix predictions | `moments.py` |
 | Bounded JAX least squares and fits with shared parameters | `optimization.py` |
-| Interpolated and Fourier Bragg specimens; nominal MAGICAL recipe | `components.py`; `calibration/gaussian.py` |
+| Interpolated and Fourier Bragg specimens; nominal MAGICAL recipe | `components/specimens.py`, `components/interpolated.py`; `calibration/gaussian.py` |
 | Analytical matrices and transport through supplied matrices | `transfer_matrices.py` |
 | Experimental atomic potentials and `AtomicPotential` component | `experimental/potential.py` |
 | Microscope configuration, operating modes and plots | `microscope.py`, `plotting.py` |
@@ -74,8 +74,10 @@ The notebook that calls it moved to
 
 ## Reading components
 
-`components.py` stays in one file, grouped into planes, lenses, steering,
-phase/amplitude elements and specimens. Read `Component` for dispatch and
+`components/` is one module per kind of element: `_base.py` (dispatch and the shared
+local action), `planes.py`, `lenses.py`, `deflection.py`, `actions.py` (apertures and
+prescribed phase/amplitude), `specimens.py` and `interpolated.py`. Everything is
+re-exported from `temgym_core.components`. Read `Component` for dispatch and
 `Lens` for the simplest physical example. `run_to_end` handles travel to each
 component; finite elements such as `HardEdgeSolenoid` handle their own body.
 
@@ -122,7 +124,7 @@ in `aberrations.py` exist and agree with the polar forms.
 ## Images and measurements
 
 `evaluate.gaussian_image(beam, detector, ...)` uses the regular `Detector` from
-`components.py`. Supply beams already propagated to its plane with `run_to_end`.
+`components/planes.py`. Supply beams already propagated to its plane with `run_to_end`.
 It sums complex Gaussian fields before forming intensity and integrating pixels.
 There is no separate coherent detector or pixel-fitting workflow.
 

@@ -16,7 +16,8 @@ def input_signature(*, paths, settings):
     digest = hashlib.sha256(json.dumps(settings, sort_keys=True).encode())
     here = Path(__file__).parent
     # Presentation and orchestration edits do not change numerical results.
-    sources = sorted(here.glob("*.py")) + sorted(here.parent.glob("*.py"))
+    sources = (sorted(here.glob("*.py")) + sorted(here.parent.glob("*.py"))
+               + sorted((here.parent / "components").glob("*.py")))
     numerical = [
         p
         for p in sources

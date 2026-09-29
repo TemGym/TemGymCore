@@ -23,6 +23,7 @@ include = [
   "/CHANGELOG.md",
   "/CONTRIBUTING.md",
   "/ARCHITECTURE.md",
+  "/MAINTAINING.md",
   "/pyproject.toml",
   "/pytest.ini",
   "/conftest.py",

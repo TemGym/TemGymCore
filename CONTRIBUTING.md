@@ -42,3 +42,6 @@ $10^{12}$ rad and float64 resolves it to about $2\times10^{-4}$ rad per beamlet 
   and datasets as release assets.
 - GPU changes: start the *GPU* workflow on your branch (Actions → GPU → Run workflow);
   it runs on a maintainer-controlled runner and is deliberately not triggered by pull requests.
+
+Maintainers: releases, PyPI publishing and the GPU runner are described in
+[MAINTAINING.md](MAINTAINING.md).

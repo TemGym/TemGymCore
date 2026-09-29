@@ -4,6 +4,7 @@ from dataclasses import replace
 from operator import index
 from pathlib import Path
 from types import CodeType, SimpleNamespace
+import inspect
 import os
 from time import perf_counter
 
@@ -44,18 +45,16 @@ def assert_current_transport():
     Compare their actual in-memory bytecode with the workspace sources without
     executing/reloading those modules or mixing incompatible class instances.
     """
-    source_root = HERE.parents[1]/"src"/"temgym_core"
     compiled = {}
     stale = []
     for cls, method in ((HardEdgeSolenoid, "_call_gaussian"),
                         (SeidelLens, "_joint_gaussian"),
                         (ABCDTransfer, "_call_gaussian"),
                         (FreeSpacePropagator, "__call__")):
-        filename = cls.__module__.rsplit(".", 1)[-1]+".py"
-        if filename not in compiled:
-            path = source_root/filename
-            compiled[filename] = compile(path.read_text(), str(path), "exec", dont_inherit=True)
-        class_code = next(v for v in compiled[filename].co_consts
+        path = Path(inspect.getsourcefile(cls))
+        if path not in compiled:
+            compiled[path] = compile(path.read_text(), str(path), "exec", dont_inherit=True)
+        class_code = next(v for v in compiled[path].co_consts
                           if isinstance(v, CodeType) and v.co_name == cls.__name__)
         expected = next(v for v in class_code.co_consts
                         if isinstance(v, CodeType) and v.co_name == method)

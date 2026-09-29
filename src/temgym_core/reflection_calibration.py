@@ -204,9 +204,12 @@ def _numerical_fingerprint():
         digest.update(inspect.getsource(function).encode())
     for values in (INITIAL, LOWER, UPPER, SCALE):
         digest.update(values.tobytes())
-    for name in ("components.py", "source.py", "gaussian.py", "run.py", "constants.py",
-                 "scattering.py", "optimization.py", "coordinate_transforms.py"):
-        digest.update(Path(__file__).with_name(name).read_bytes())
+    here = Path(__file__).parent
+    sources = sorted((here / "components").glob("*.py"))
+    sources += [here / name for name in ("source.py", "gaussian.py", "run.py", "constants.py",
+                                         "scattering.py", "optimization.py", "coordinate_transforms.py")]
+    for path in sources:
+        digest.update(path.read_bytes())
     return digest.hexdigest()
 
 
