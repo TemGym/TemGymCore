@@ -7,6 +7,27 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `temgym_core.render`: the differentiable GPU renderer behind `evaluate_gaussians`. Three JAX
+  primitives (forward field, tangent map, adjoint map) with hand-written Pallas/Triton float64
+  kernels make `method="sparse"` and `method="dense"` first-order differentiable with `jit`,
+  `grad`, `jvp`, `jacfwd`, `jacrev`, `vmap` and `checkpoint`, with respect to every beamlet field
+  and, in the default pixel-index mode, the detector pose (rotation, flip, pixel size, centre).
+  Second derivatives raise `NotImplementedError` (use `scan`). Gradients are those of the
+  cutoff-truncated sum: one pair predicate gates the forward, tangent and adjoint kernels.
+- `RenderConfig` (cutoff, coordinate mode, radius classes, launch shapes; every field
+  documented), `Tiles`, `evaluate_packed` and `describe_plan` (class occupancy of a bundle).
+  `evaluate_gaussians(..., config=RenderConfig(...))`.
+- Radius classes: beamlets are classified on the device by the footprint of their cutoff
+  ellipse, each class with its own bin size, and beamlets that miss the detector are never
+  visited, so a few very broad beamlets no longer slow a bundle of narrow ones and no host-side
+  culling is needed. The adjoint cuts broad windows into work items of equal size and reduces
+  them in a fixed order, so results are bitwise reproducible (no atomics).
+- `coordinates="metre"` (`RenderConfig`): renders with the metre-space parameters and pixel
+  coordinates exactly as the historical dense kernel; differentiating with respect to the
+  detector pose then raises a clear error.
+- Benchmarks `benchmarks/render.py` (synthetic cases and mixed radii),
+  `benchmarks/hologram_gpu.py` (the 160,801-beamlet hologram bundle of
+  `benchmarks/hologram_bundle.py`) and `benchmarks/compare.py` (fails on a 3x regression).
 - `temgym_core.enable_x64()`, `require_x64()` and `x64_enabled()`. Propagation
   (`run_to_end`), rendering (`evaluate_gaussians`), `find_imaging_condition` and the
   calibration workflows now raise a clear error when 64-bit arithmetic is off, instead of
@@ -42,6 +63,22 @@ All notable changes to this project are documented here. The format follows
   already had (they used to add the body length only); `KrivanekLens` rays follow the lens's
   `phase_shift` (they used to replace the path with the aberration function of the ideal slope);
   `DeflectionBiprism` adds `def_x * |x|` (it added `dx * x + dy * y`).
+- **Behaviour:** `method="spatial"` is now `"sparse"` (alias kept) and `"gpu_kernel"` is
+  `"dense"` (alias kept); both are differentiable. `"sparse"` no longer sends the whole bundle to
+  the dense kernel when one beamlet is broad: on the hologram notebook's 160,801-beamlet bundle
+  on a 1024 x 1024 camera the forward render takes about 20 ms instead of 4.4 s.
+- **Behaviour:** the GPU renderers evaluate in the detector's pixel-index frame by default
+  (`RenderConfig(coordinates="index")`), which re-rounds the packed parameters. Fields differ
+  from the historical dense kernel by rounding, and by about 1e-7 of the peak for phases of
+  1e10 rad; use `coordinates="metre"` for the historical arithmetic (it agrees to 1e-12 of the
+  peak). `scan` is unchanged.
+- **Behaviour:** a beamlet with a non-finite field contributes zero and receives a zero gradient
+  on the GPU renderers; before, NaN spread to every pixel. A beamlet whose `Im Q_inv` is not
+  positive definite is summed by every pixel, without forcing the rest of the bundle onto the
+  dense kernel.
+- `evaluate_gaussians` keywords `tile_pixels`, `tile_beams`, `spatial_cutoff` and `spatial_bins`
+  default to `None` (tuned values); explicit values still work and `tile_beams` may be any power
+  of two. `gaussian_image(tile_beams=...)` defaults to `None` for the same reason.
 - **Breaking:** `transfer_matrices` constructors return NumPy arrays by default. Pass
   `xp=jax.numpy` for JAX or `xp=sympy` for symbolic matrices (the `symbolic` extra).
   Previously the default was SymPy, which was not a declared dependency, so the module
@@ -54,6 +91,9 @@ All notable changes to this project are documented here. The format follows
 - The source distribution is 340 kB instead of 240 MB.
 
 ### Removed
+- Private helpers `evaluate._build_spatial_bins`, `_SpatialBins`, `_spatial_kernel`,
+  `_evaluate_spatial` and `_evaluate_gaussians_spatial`, replaced by the plan of
+  `temgym_core.render.plan` (`describe_plan` is the supported diagnostic).
 - Commented-out test modules (`test_gaussians_old.py`, `test_gaussian_taylor_old.py`),
   two skipped tests for an unimplemented Gaussian ABCD propagator, and the legacy
   `.flake8`, `MANIFEST.in` and `test_requirements.txt` (superseded by `ruff` and the
@@ -65,6 +105,11 @@ All notable changes to this project are documented here. The format follows
   a beamlet centred exactly on the axis, such as the middle one of an odd lattice, left several times
   narrower. The distance is now softened over a twentieth of the edge width. Beamlets more than a
   tenth of an edge width from the centre, and the profile at the edge, are unchanged.
+- `gpu_kernel_available()` cached "no GPU" for the whole process when its first call happened
+  while JAX was tracing (inside `jit`, `grad` or `vmap`), because the probe could not convert a
+  tracer; `evaluate_gaussians(method="auto")` or `"sparse"` then silently used the far slower
+  portable renderer (88 s instead of 50 ms on the hologram bundle). The probe now runs eagerly
+  in a worker thread.
 - `rectangular_input_wave` and `square_input_wave` normalised with the requested aperture area
   instead of the area the beamlet lattice actually covers, so the coherent sum had an interior
   intensity of ((L/d)^2/N)^2 rather than `amp`^2: 0.68 for a 40 um aperture with 22 x 22

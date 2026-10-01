@@ -100,7 +100,7 @@ print(f"jax.grad: {float(automatic):.4f}   finite difference: {float(finite):.4f
 ```
 
 ```{note}
-Gradients use the portable `method="scan"` renderer, which is fast enough for small problems. The
-GPU kernels used for 10^5 to 10^6 beamlets are forward-only for now; differentiable GPU
-kernels are on the roadmap.
+Gradients here use the portable `method="scan"` renderer, which is fast enough for small
+problems. On a GPU, `method="sparse"` (10^5 to 10^6 beamlets) is differentiable too, to first
+order: see *Gradients through the renderer* in the concepts page.
 ```
