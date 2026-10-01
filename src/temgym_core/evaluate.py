@@ -1,14 +1,16 @@
 """Coherent Gaussian fields and detector images.
 
-Use ``evaluate_gaussians`` for complex fields and ``gaussian_image`` for pixel
-intensities. ``scan`` supports JAX derivatives; ``gpu_kernel`` evaluates the
-full sum on GPU; ``spatial`` sums neighbouring beams with a bounded tail cutoff.
-The dense GPU kernel also handles broad beams for the spatial renderer.
+Use ``evaluate_gaussians`` for complex fields and ``gaussian_image`` for pixel intensities.
+``scan`` is the portable renderer and supports every JAX transformation; ``sparse`` (alias
+``spatial``) and ``dense`` (alias ``gpu_kernel``) are the GPU renderers of
+:mod:`temgym_core.render`, which are first-order differentiable with ``jit``, ``grad``, ``jvp``,
+``jacfwd``, ``jacrev``, ``vmap`` and ``checkpoint``.  ``sparse`` sums the pairs whose envelope
+exceeds a cutoff, ``dense`` every pair.
 """
 
-from functools import lru_cache, partial
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-import math
+from functools import lru_cache
 import operator
 from typing import NamedTuple
 
@@ -16,15 +18,20 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import lax
-from jax.experimental import pallas as pl
-
-try:
-    from jax.experimental.pallas import triton as plgpu
-except ImportError:
-    plgpu = None
 
 from .config import require_x64
 from .grid import Grid
+from .render import RenderConfig, Tiles, evaluate_packed
+from .render.packing import (
+    affine_from_grid,
+    pack_gaussian_params,
+    sanitise_beam_fields,
+    to_index_space,
+)
+
+METHODS = (
+    "auto", "scan", "sparse", "spatial", "dense", "gpu_kernel", "gpu_kernel_required", "loop",
+)
 
 
 def evaluate_gaussians(
@@ -33,28 +40,66 @@ def evaluate_gaussians(
     *,
     method: str = "auto",
     batch_size: int | None = 128,
-    tile_pixels: int = 16,
-    tile_beams: int = 16,
-    spatial_cutoff: float = 1e-12,
-    spatial_bins: int = 64,
+    tile_pixels: int | None = None,
+    tile_beams: int | None = None,
+    spatial_cutoff: float | None = None,
+    spatial_bins: int | None = None,
+    config: RenderConfig | None = None,
 ):
-    """Evaluate a Gaussian bundle with a stable public backend dispatcher.
+    """Evaluate a Gaussian bundle on a detector grid with a stable backend dispatcher.
 
-    ``auto`` selects the Pallas implementation on GPU and the portable JAX
-    scan elsewhere. ``gpu_kernel`` retains the historical CPU fallback.
-    ``gpu_kernel_required`` is fail-closed: it raises unless the probed Pallas
-    kernel is available on a real GPU. ``loop`` is primarily useful as a
-    reference evaluator. ``spatial`` rebuilds Gaussian support bins on GPU for
-    each forward call, using an envelope cutoff and an exact dense fallback for
-    broad beams. It is forward-only; use ``scan`` for automatic differentiation.
+    Parameters
+    ----------
+    gaussian_ray : GaussianBeam
+        The bundle at the plane of ``grid``.
+    grid : Grid
+        Detector or any object with ``shape`` and ``coords`` (pixel centres in metres); grids
+        with ``pixels_to_metres_mat`` use the fast raster renderers.
+    method : str
+        ``"auto"`` is ``"sparse"`` on a GPU and ``"scan"`` elsewhere.  ``"sparse"`` (alias
+        ``"spatial"``) sums, for every beamlet, the pixels where its envelope exceeds
+        ``config.cutoff``; beamlets are binned by footprint radius on the device and the
+        result is the truncated sum, with the omitted field bounded by
+        ``cutoff * sum(abs(amplitude))``.  ``"dense"`` (alias ``"gpu_kernel"``) sums every pair
+        exactly.  ``"gpu_kernel_required"`` is ``"dense"`` but raises unless a probed Pallas GPU
+        backend is available.  ``"scan"`` is the portable JAX scan, ``"loop"`` a plain Python
+        loop kept as a reference.  Without a usable GPU ``"sparse"`` and ``"dense"`` fall back
+        to ``"scan"``.
+    batch_size : int, optional
+        Beamlets per step of the ``scan`` renderer (also the fallback of the GPU renderers).
+    tile_pixels, tile_beams : int, optional
+        Override the pixel and beam extent of the pixel-major GPU kernels (powers of two).
+        Defaults are tuned; see :class:`~temgym_core.render.RenderConfig`.
+    spatial_cutoff : float, optional
+        Truncation level, overriding ``config.cutoff`` (default ``1e-12``).
+    spatial_bins : int, optional
+        Bins per axis of the sparse plan, overriding ``config.bins_per_axis`` (default 256).
+    config : RenderConfig, optional
+        Full options of the GPU renderers: cutoff, coordinate mode, radius classes and launch
+        shapes.
+
+    Returns
+    -------
+    array, shape ``grid.shape``
+        Complex128 field.
+
+    Notes
+    -----
+    The GPU renderers are first-order differentiable with respect to every beamlet field and,
+    with the default ``coordinates="index"``, the detector pose; second derivatives raise
+    ``NotImplementedError``.  A beamlet with any non-finite field contributes zero and
+    receives a zero gradient.  Beamlets with a non-positive-definite envelope are summed in
+    full by every pixel (slow but exact).
     """
     require_x64("evaluate_gaussians")
+    if method not in METHODS:
+        raise ValueError(f"Unknown Gaussian evaluation method {method!r}.")
     if method == "auto":
-        method = "gpu_kernel" if gpu_kernel_available() else "scan"
-    if method == "spatial":
-        return _evaluate_gaussians_spatial(
-            gaussian_ray, grid, cutoff=spatial_cutoff,
-            bins_per_axis=spatial_bins, tile_beams=tile_beams,
+        method = "sparse" if gpu_kernel_available() else "scan"
+    if method in ("sparse", "spatial"):
+        return _evaluate_gaussians_sparse(
+            gaussian_ray, grid, config=_render_config(
+                config, tile_pixels, tile_beams, spatial_cutoff, spatial_bins),
             batch_size=batch_size,
         )
     if method == "scan":
@@ -63,13 +108,14 @@ def evaluate_gaussians(
             grid,
             batch_size=batch_size,
         )
-    if method == "gpu_kernel":
+    if method in ("dense", "gpu_kernel"):
         return evaluate_gaussians_gpu(
             gaussian_ray,
             grid,
             tile_pixels=tile_pixels,
             tile_beams=tile_beams,
             fallback_batch_size=batch_size,
+            config=config,
         )
     if method == "gpu_kernel_required":
         if not gpu_kernel_available():
@@ -82,15 +128,30 @@ def evaluate_gaussians(
             grid,
             tile_pixels=tile_pixels,
             tile_beams=tile_beams,
+            config=config,
         )
-    if method == "loop":
-        return evaluate_gaussians_for(gaussian_ray, grid)
-    raise ValueError(f"Unknown Gaussian evaluation method {method!r}.")
+    return evaluate_gaussians_for(gaussian_ray, grid)
+
+
+def _render_config(config, tile_pixels, tile_beams, cutoff, bins):
+    """Merge the legacy keyword options of ``evaluate_gaussians`` into a ``RenderConfig``."""
+    config = RenderConfig() if config is None else config
+    changes = {}
+    if cutoff is not None:
+        changes["cutoff"] = float(cutoff)
+    if bins is not None:
+        changes["bins_per_axis"] = operator.index(bins)
+    if tile_pixels is not None or tile_beams is not None:
+        for name in ("forward", "tangent", "adjoint", "rows"):
+            tiles = getattr(config, name)
+            changes[name] = Tiles.sized(
+                tile_pixels or tiles.pixels, tile_beams or tiles.beams)
+    return replace(config, **changes) if changes else config
 
 
 def gaussian_image(
     beam, detector, *, samples_per_pixel=2, blur_sigma_m=None,
-    padding_pixels=4, method="scan", tile_beams=32,
+    padding_pixels=4, method="scan", tile_beams=None,
 ):
     """Integrate coherent Gaussian intensity over a native Detector's pixels.
 
@@ -182,41 +243,111 @@ def zero_phase(u, idx_x, idx_y):
     return u_new
 
 
-def _pack_gaussian_params(r_centre, dr, amplitude, pathlength, Q_inv, k):
-    """Pack phase coefficients identically for dense and spatial GPU kernels."""
-    f = jnp.float64
+_pack_gaussian_params = pack_gaussian_params
 
-    # Symmetrize Q_inv: after this Qxy == Qyx
-    Q = jnp.asarray(Q_inv, jnp.complex128)
-    Q = 0.5 * (Q + jnp.swapaxes(Q, -1, -2))
 
-    kf = jnp.asarray(k, f)
-    k_half = 0.5 * kf
+def _kernel_frame(gaussian_ray, grid, config):
+    """Packed bundle and pixel description in the frame the renderer works in.
 
-    # Fold pathlength into amplitude: amp * exp(i*k*path)
-    amp = jnp.asarray(amplitude, jnp.complex128) * jnp.exp(
-        1j * kf * jnp.asarray(pathlength, f)
+    Returns ``(packed, coords, shape, affine)``: ``coords`` is ``None`` in the pixel-index
+    frame, ``shape`` the raster shape or ``None`` for grids without a pixel-to-metre map,
+    ``affine`` the flattened ``[J, o]`` or ``None``.
+    """
+    params = sanitise_beam_fields(*_prepare_gaussian_params(gaussian_ray))
+    packed = pack_gaussian_params(*params)
+    affine = affine_from_grid(grid)
+    if affine is None:
+        # Only pixel positions are known: dense kernels on the metre coordinates.
+        return packed, grid.coords, None, None
+    shape = tuple(int(n) for n in grid.shape)
+    if config.coordinates == "index":
+        return to_index_space(packed, *affine), None, shape, None
+    return packed, grid.coords, shape, jnp.concatenate([affine[0].ravel(), affine[1]])
+
+
+def _render_field(gaussian_ray, grid, config, *, exact):
+    """Render a bundle on ``grid`` with the differentiable GPU renderer (or its reference)."""
+    packed, coords, shape, affine = _kernel_frame(gaussian_ray, grid, config)
+    field = evaluate_packed(packed, coords, shape=shape, affine=affine, config=config,
+                            exact=exact)
+    return field.reshape(grid.shape)
+
+
+class PlanSummary(NamedTuple):
+    """How the sparse renderer sorts a bundle (see :func:`describe_plan`).
+
+    Attributes
+    ----------
+    edges : tuple of float
+        Upper footprint radius (pixels) of each sparse radius class.
+    class_counts : tuple of int
+        Beamlets in each sparse class.
+    dense : int
+        Beamlets in the dense class (footprint beyond the last edge, or a non-positive-definite
+        envelope): every pixel sums over all of them.
+    inactive : int
+        Beamlets whose footprint box contains no pixel centre of the detector (or that are
+        non-finite): never visited.
+    cell_sizes : tuple of float
+        Bin cell size (pixels) of each sparse class.
+    largest_bin : int
+        Most beamlets in any bin of any sparse class.
+    """
+
+    edges: tuple
+    class_counts: tuple
+    dense: int
+    inactive: int
+    cell_sizes: tuple
+    largest_bin: int
+
+
+def describe_plan(gaussian_ray, grid, config: RenderConfig | None = None) -> PlanSummary:
+    """Report how the sparse renderer would classify a bundle on a detector.
+
+    Runs the device-side planning step and copies the class occupancy back to the host, so it
+    is a diagnostic (not jittable): use it to check that a bundle is dominated by narrow
+    classes and how many beamlets fall in the slow dense class.
+
+    Parameters
+    ----------
+    gaussian_ray : GaussianBeam
+        The bundle at the plane of ``grid``.
+    grid : Grid
+        A detector with a pixel-to-metre map.
+    config : RenderConfig, optional
+        Rendering options.
+
+    Returns
+    -------
+    PlanSummary
+        Class occupancy of the plan.
+
+    Raises
+    ------
+    ValueError
+        If ``grid`` has no pixel-to-metre map (the sparse renderer needs a raster).
+    """
+    from .render.config import KernelSpec
+    from .render.plan import build_plan, n_classes
+
+    config = RenderConfig() if config is None else config
+    packed, coords, shape, affine = _kernel_frame(gaussian_ray, grid, config)
+    if shape is None:
+        raise ValueError("describe_plan needs a grid with a pixel-to-metre map")
+    spec = KernelSpec(config, shape[0] * shape[1], shape,
+                      "index" if coords is None else "array", sparse=True)
+    plan = build_plan(packed, jnp.zeros(6) if affine is None else affine, spec)
+    m, bins = n_classes(spec), config.bins_per_axis
+    counts = np.asarray(plan.counts).reshape(m + 2, bins * bins)
+    return PlanSummary(
+        edges=config.edges_for(shape),
+        class_counts=tuple(int(c) for c in counts[:m].sum(axis=1)),
+        dense=int(counts[m].sum()),
+        inactive=int(counts[m + 1].sum()),
+        cell_sizes=tuple(float(c) for c in np.asarray(plan.cell)),
+        largest_bin=int(counts[:m].max(initial=0)),
     )
-
-    # Pack all per-beam scalars into (N, 12), pre-multiplying k into every
-    # phase coefficient. After symmetrization the cross-term is 2*Qxy;
-    # combined with the 0.5 prefactor: 0.5*k*2*Qxy = k*Qxy.
-    rc = jnp.asarray(r_centre, f)
-    drf = jnp.asarray(dr, f)
-    return jnp.column_stack([
-        rc[:, 0],                           # 0  mx
-        rc[:, 1],                           # 1  my
-        kf * drf[:, 0],                     # 2  k·drx
-        kf * drf[:, 1],                     # 3  k·dry
-        k_half * jnp.real(Q[:, 0, 0]),      # 4  ½k·Re(Qxx)
-        k_half * jnp.imag(Q[:, 0, 0]),      # 5  ½k·Im(Qxx)
-        kf * jnp.real(Q[:, 0, 1]),          # 6  k·Re(Qxy)  (= ½k·2Re(Qxy))
-        kf * jnp.imag(Q[:, 0, 1]),          # 7  k·Im(Qxy)
-        k_half * jnp.real(Q[:, 1, 1]),      # 8  ½k·Re(Qyy)
-        k_half * jnp.imag(Q[:, 1, 1]),      # 9  ½k·Im(Qyy)
-        jnp.real(amp),                      # 10 Re(amp)
-        jnp.imag(amp),                      # 11 Im(amp)
-    ])
 
 
 def _evaluate_gaussians_gpu_kernel_impl(
@@ -233,113 +364,46 @@ def _evaluate_gaussians_gpu_kernel_impl(
 ):
     """
     Evaluate sum_b amp_b * exp(i*k_b*(path_b + d·dr_b + 0.5*d^T Q_inv_b d))
-    where d = r2 - r_centre_b, using a tiled Pallas/Triton kernel.
+    where d = r2 - r_centre_b, with the dense Pallas/Triton kernel in metre space.
 
     All per-beam quantities are packed into a single (N, 12) array on the device
     with k folded into every phase coefficient, so the inner kernel loop
     contains no per-beam k multiplications.
     """
-    N, P = r_centre.shape[0], r2.shape[0]
-    f = jnp.float64
-    beams = _pack_gaussian_params(r_centre, dr, amplitude, pathlength, Q_inv, k)
-
-    # Column indices
-    MX, MY = 0, 1
-    KDX, KDY = 2, 3
-    QR_XX, QI_XX, QR_XY, QI_XY, QR_YY, QI_YY = 4, 5, 6, 7, 8, 9
-    AR, AI = 10, 11
-
-    # Tiling & padding
-    T_P, T_B = int(tile_pixels), int(tile_beams)
-    grid_n = -(-P // T_P)
-    n_btiles = -(-N // T_B)
-
-    def _pad(x, n):
-        d = n - x.shape[0]
-        return jnp.pad(x, ((0, d),) + ((0, 0),) * (x.ndim - 1)) if d > 0 else x
-
-    det = _pad(jnp.asarray(r2, f), grid_n * T_P)
-    beams = _pad(beams, n_btiles * T_B)
-
-    out_shape = (
-        jax.ShapeDtypeStruct((grid_n * T_P,), f),
-        jax.ShapeDtypeStruct((grid_n * T_P,), f),
-    )
-
-    # ---- Pallas kernel ----
-    def kernel(det_ref, beams_ref, out_re_ref, out_im_ref):
-        pid = pl.program_id(axis=0)
-        p = pid * T_P + jnp.arange(T_P, dtype=jnp.int32)
-        x, y = det_ref[p, 0], det_ref[p, 1]
-
-        def body(t, acc):
-            re, im = acc
-            b = t * T_B + jnp.arange(T_B, dtype=jnp.int32)
-
-            dx = x[:, None] - beams_ref[b, MX][None, :]
-            dy = y[:, None] - beams_ref[b, MY][None, :]
-            dx2, dy2, dxdy = dx * dx, dy * dy, dx * dy
-
-            # Phase — k already folded into all coefficients before the kernel
-            phase = (dx   * beams_ref[b, KDX][None, :]
-                   + dy   * beams_ref[b, KDY][None, :]
-                   + dx2  * beams_ref[b, QR_XX][None, :]
-                   + dxdy * beams_ref[b, QR_XY][None, :]
-                   + dy2  * beams_ref[b, QR_YY][None, :])
-
-            # Gaussian envelope (imaginary part of quadratic form)
-            atten = jnp.exp(-(dx2  * beams_ref[b, QI_XX][None, :]
-                            + dxdy * beams_ref[b, QI_XY][None, :]
-                            + dy2  * beams_ref[b, QI_YY][None, :]))
-
-            s, c = jnp.sin(phase), jnp.cos(phase)
-            ar = beams_ref[b, AR][None, :]
-            ai = beams_ref[b, AI][None, :]
-
-            re = re + jnp.sum(atten * (ar * c - ai * s), axis=1)
-            im = im + jnp.sum(atten * (ar * s + ai * c), axis=1)
-            return re, im
-
-        re, im = lax.fori_loop(
-            0, n_btiles, body,
-            (jnp.zeros((T_P,), f), jnp.zeros((T_P,), f)),
-        )
-        out_re_ref[p] = re
-        out_im_ref[p] = im
-
-    # ---- Launch ----
-    has_gpu = any(d.platform in ("gpu", "cuda", "rocm") for d in jax.devices())
-    kw = dict(out_shape=out_shape, grid=(grid_n,))
-    if has_gpu:
-        if plgpu is not None:
-            kw["compiler_params"] = plgpu.CompilerParams()
-        else:
-            # Compatibility with older Pallas releases.
-            kw["backend"] = "triton"
-    else:
-        kw["interpret"] = True
-
-    out_re, out_im = pl.pallas_call(kernel, **kw)(det, beams)
-
-    return out_re[:P] + 1j * out_im[:P]
+    params = sanitise_beam_fields(r_centre, dr, amplitude, pathlength, Q_inv, k)
+    config = RenderConfig(forward=Tiles.sized(tile_pixels, tile_beams),
+                          tangent=Tiles.sized(tile_pixels, tile_beams))
+    return evaluate_packed(pack_gaussian_params(*params), r2, config=config, exact=True)
 
 
 def evaluate_gaussians_gpu_kernel_wrapper(
     gaussian_ray,
     grid,
     *,
-    tile_pixels: int = 16,
-    tile_beams: int = 16,
+    tile_pixels: int | None = None,
+    tile_beams: int | None = None,
+    config: RenderConfig | None = None,
 ):
-    r, dr, amp, path, Q_inv, k = _prepare_gaussian_params(gaussian_ray)
-    r2 = grid.coords
+    """Sum every beamlet-pixel pair with the dense GPU kernel (differentiable).
 
-    fld = _evaluate_gaussians_gpu_kernel_impl(
-        r, dr, amp, path, Q_inv, k, r2,
-        tile_pixels=tile_pixels,
-        tile_beams=tile_beams,
-    )
-    return fld.reshape(grid.shape)
+    Parameters
+    ----------
+    gaussian_ray : GaussianBeam
+        The bundle at the plane of ``grid``.
+    grid : Grid
+        Detector or object with ``shape`` and ``coords``.
+    tile_pixels, tile_beams : int, optional
+        Pixel and beam extent of the kernel tile (powers of two).
+    config : RenderConfig, optional
+        Coordinate mode and launch shapes; the exact sum ignores ``config.cutoff``.
+
+    Returns
+    -------
+    array, shape ``grid.shape``
+        Complex128 field.
+    """
+    config = _render_config(config, tile_pixels, tile_beams, None, None)
+    return _render_field(gaussian_ray, grid, config, exact=True)
 
 
 _evaluate_gaussians_gpu_kernel_impl = jax.jit(
@@ -379,6 +443,25 @@ def evaluate_gaussians_jax_scan(
     *,
     batch_size: int | None = 128,
 ):
+    """Sum every beamlet at every pixel with a ``lax.scan`` over beamlets (portable, exact).
+
+    Supports every JAX transformation, on any platform; it is the CPU renderer and the
+    reference the GPU renderers are checked against.
+
+    Parameters
+    ----------
+    gaussian_ray : GaussianBeam
+        The bundle at the plane of ``grid``.
+    grid : Grid
+        Detector or object with ``shape`` and ``coords``.
+    batch_size : int, optional
+        Beamlets evaluated together per scan step (``None``: one at a time).
+
+    Returns
+    -------
+    array, shape ``grid.shape``
+        Complex128 field.
+    """
     # Extract grid properties before JIT boundary
     coords = grid.coords
     shape = grid.shape
@@ -414,6 +497,20 @@ def evaluate_gaussians_for(
     gaussian_ray,
     grid: Grid,
 ):
+    """Sum the beamlets with a plain Python loop: the simplest possible reference evaluator.
+
+    Parameters
+    ----------
+    gaussian_ray : GaussianBeam
+        The bundle at the plane of ``grid``.
+    grid : Grid
+        Detector or object with ``shape`` and ``coords``.
+
+    Returns
+    -------
+    array, shape ``grid.shape``
+        Complex128 field.
+    """
     r, dr, amp, pathlength, Q_inv, k = _prepare_gaussian_params(gaussian_ray)
     r2 = grid.coords
     n = r.shape[0]
@@ -439,6 +536,26 @@ _evaluate_gaussians_jax_scan_impl = jax.jit(
 
 
 def map_reduce(f, reducer, init, xs, *, batch_size: int | None = None):
+    """Reduce ``f`` applied to the leading axis of ``xs`` with ``lax.scan``, ``batch_size`` at a time.
+
+    Parameters
+    ----------
+    f : callable
+        Maps one element of ``xs`` (a pytree slice) to a value ``reducer`` can accumulate.
+    reducer : callable
+        ``reducer(accumulator, value) -> accumulator``.
+    init : object
+        Initial accumulator.
+    xs : pytree
+        Arrays sharing their leading length.
+    batch_size : int, optional
+        Elements mapped together with ``vmap`` per scan step; ``None`` scans one at a time.
+
+    Returns
+    -------
+    object
+        The final accumulator.
+    """
     def scan_fn(acc_inner, x):
         return reducer(acc_inner, f(x)), None
 
@@ -481,12 +598,13 @@ def evaluate_gaussians_gpu(
     gaussian_ray,
     grid: Grid,
     *,
-    tile_pixels: int = 16,
-    tile_beams: int = 16,
+    tile_pixels: int | None = None,
+    tile_beams: int | None = None,
     fallback_batch_size: int | None = 128,
+    config: RenderConfig | None = None,
 ):
-    """Evaluate with the Pallas GPU kernel, falling back to JAX scan on CPU."""
-    if not gpu_kernel_available():
+    """Evaluate with the dense Pallas GPU kernel, falling back to JAX scan on CPU."""
+    if (config is None or config.impl == "auto") and not gpu_kernel_available():
         return evaluate_gaussians_jax_scan(
             gaussian_ray,
             grid,
@@ -497,154 +615,15 @@ def evaluate_gaussians_gpu(
         grid,
         tile_pixels=tile_pixels,
         tile_beams=tile_beams,
+        config=config,
     )
 
 
-class _SpatialBins(NamedTuple):
-    order: jax.Array
-    starts: jax.Array
-    counts: jax.Array
-    origin: jax.Array
-    cell_size: jax.Array
-    use_dense: jax.Array
-
-
-def _build_spatial_bins(r, q, k, *, cutoff, bins_per_axis):
-    # Stable small eigenvalue via determinant / large eigenvalue. A slightly
-    # enlarged support compensates for ordinary floating-point boundary error.
-    precision = k[:, None, None] * (0.5 * (q + jnp.swapaxes(q, -1, -2))).imag
-    a, b, c = precision[:, 0, 0], precision[:, 0, 1], precision[:, 1, 1]
-    largest = 0.5 * (a + c + jnp.hypot(a - c, 2 * b))
-    smallest = (a * c - b * b) / largest
-    # Round down conservatively; near-singular ellipses take the dense path.
-    smallest -= 32 * jnp.finfo(jnp.float64).eps * largest
-    valid = jnp.all(jnp.isfinite(smallest) & (smallest > 0)) & jnp.all(jnp.isfinite(r))
-    radii = jnp.sqrt(-2 * jnp.log(cutoff) / jnp.where(smallest > 0, smallest, 1.))
-    origin = jnp.min(r, axis=0)
-    span = jnp.max(r, axis=0) - origin
-    cell_size = jnp.maximum(jnp.max(radii), jnp.max(span) / (bins_per_axis - 1))
-    cell_size *= 1 + 1e-12
-    valid &= jnp.isfinite(cell_size) & (cell_size > 0)
-    cell_size = jnp.where(valid, cell_size, 1.)
-    safe_r = jnp.where(jnp.isfinite(r), r, 0.)
-    origin = jnp.where(jnp.isfinite(origin), origin, 0.)
-    xy = jnp.clip(jnp.floor((safe_r - origin) / cell_size), 0, bins_per_axis - 1).astype(jnp.int32)
-    keys = xy[:, 1] * bins_per_axis + xy[:, 0]
-    order = jnp.argsort(keys, stable=False)
-    counts = jnp.bincount(keys, length=bins_per_axis**2).astype(jnp.int32)
-    starts = jnp.cumsum(counts, dtype=jnp.int32) - counts
-    # Conservative performance fallback, also covering one-bin/crossover cases.
-    use_dense = ~valid | (9 * jnp.max(counts) >= r.shape[0])
-    return _SpatialBins(order, starts, counts, origin, cell_size, use_dense)
-
-
-def _spatial_kernel(packed, coords, bins, *, bins_per_axis, tile_beams):
-    n_pixels = coords.shape[0]
-
-    def kernel(beam_ref, xy_ref, starts_ref, counts_ref, origin_ref, size_ref,
-               out_re_ref, out_im_ref):
-        pixel = pl.program_id(0)
-        x, y = xy_ref[pixel, 0], xy_ref[pixel, 1]
-        # Clip before integer conversion: far-away coordinates must not overflow.
-        bx = jnp.clip(jnp.floor((x - origin_ref[0]) / size_ref[()]),
-                      -2, bins_per_axis + 1).astype(jnp.int32)
-        by = jnp.clip(jnp.floor((y - origin_ref[1]) / size_ref[()]),
-                      -2, bins_per_axis + 1).astype(jnp.int32)
-
-        def neighbour(i, total):
-            i = i.astype(jnp.int32)
-            ix, iy = bx + i % 3 - 1, by + i // 3 - 1
-            valid_bin = (ix >= 0) & (ix < bins_per_axis) & (iy >= 0) & (iy < bins_per_axis)
-            key = jnp.clip(iy * bins_per_axis + ix, 0, bins_per_axis**2 - 1)
-            start = starts_ref[key]
-            count = jnp.where(valid_bin, counts_ref[key], 0)
-
-            def beam_tile(t, acc):
-                ids = start + t * tile_beams + jnp.arange(tile_beams, dtype=jnp.int32)
-                mask = ids < start + count
-
-                def load(col):
-                    return plgpu.load(beam_ref.at[ids, col], mask=mask, other=0.)
-
-                dx, dy = x - load(0), y - load(1)
-                dx2, dy2, dxdy = dx * dx, dy * dy, dx * dy
-                phase = dx * load(2) + dy * load(3) + dx2 * load(4) + dxdy * load(6) + dy2 * load(8)
-                decay = dx2 * load(5) + dxdy * load(7) + dy2 * load(9)
-                attenuation = jnp.exp(-decay)
-                ar, ai = load(10), load(11)
-                sine, cosine = jnp.sin(phase), jnp.cos(phase)
-                real = jnp.sum(jnp.where(mask, attenuation * (ar * cosine - ai * sine), 0.))
-                imag = jnp.sum(jnp.where(mask, attenuation * (ar * sine + ai * cosine), 0.))
-                return acc[0] + real, acc[1] + imag
-
-            return lax.fori_loop(
-                jnp.int32(0), (count + tile_beams - 1) // tile_beams, beam_tile, total)
-
-        real, imag = lax.fori_loop(
-            jnp.int32(0), jnp.int32(9), neighbour, (jnp.float64(0), jnp.float64(0)))
-        out_re_ref[pixel], out_im_ref[pixel] = real, imag
-
-    real, imag = pl.pallas_call(
-        kernel,
-        out_shape=(jax.ShapeDtypeStruct((n_pixels,), jnp.float64),) * 2,
-        grid=(n_pixels,), compiler_params=plgpu.CompilerParams(num_warps=4),
-        name="gaussian_spatial_bins",
-    )(packed, coords, bins.starts, bins.counts, bins.origin, bins.cell_size)
-    return real + 1j * imag
-
-
-@partial(jax.jit, static_argnames=("cutoff", "bins_per_axis", "tile_beams"))
-def _evaluate_spatial(r, dr, amplitude, pathlength, q, k, coords, *,
-                      cutoff, bins_per_axis, tile_beams):
-    bins = _build_spatial_bins(r, q, k, cutoff=cutoff, bins_per_axis=bins_per_axis)
-
-    def dense(_):
-        return _evaluate_gaussians_gpu_kernel_impl(
-            r, dr, amplitude, pathlength, q, k, coords,
-            tile_pixels=16, tile_beams=tile_beams,
-        )
-
-    def spatial(_):
-        packed = _pack_gaussian_params(r, dr, amplitude, pathlength, q, k)
-        return _spatial_kernel(packed[bins.order], coords, bins,
-                               bins_per_axis=bins_per_axis, tile_beams=tile_beams)
-
-    finite_actions = (jnp.all(jnp.isfinite(dr)) & jnp.all(jnp.isfinite(amplitude))
-                      & jnp.all(jnp.isfinite(pathlength)) & jnp.all(jnp.isfinite(q))
-                      & jnp.all(jnp.isfinite(k)) & jnp.all(jnp.isfinite(coords)))
-    use_dense = bins.use_dense | ~finite_actions
-    return lax.cond(use_dense, dense, spatial, operand=None)
-
-
-def _evaluate_gaussians_spatial(beam, grid, *, cutoff=1e-12, bins_per_axis=64,
-                               tile_beams=32, batch_size=128):
-    """Rebuild spatial bins on GPU and evaluate a coherent, truncated field.
-
-    The absolute omitted-field bound per pixel is
-    ``cutoff * sum(abs(beam.amplitude))``, apart from floating-point roundoff.
-    This is not a relative bound at interference zeros. Broad beams fall back
-    to the dense GPU kernel; CPU execution uses the exact scan evaluator.
-    No index is cached across calls. ``cutoff`` and bin/tile sizes are static
-    JIT configuration. This backend is forward-only (no autodiff rule).
-    """
-    cutoff = float(cutoff)
-    if not math.isfinite(cutoff) or not 0 < cutoff < 1:
-        raise ValueError("spatial cutoff must lie strictly between 0 and 1")
-    bins_per_axis = operator.index(bins_per_axis)
-    tile_beams = operator.index(tile_beams)
-    if not 2 <= bins_per_axis <= 1024:
-        raise ValueError("spatial bins_per_axis must be between 2 and 1024")
-    if tile_beams not in (16, 32, 64):
-        raise ValueError("spatial tile_beams must be 16, 32 or 64")
-    if not gpu_kernel_available():
-        return evaluate_gaussians_jax_scan(beam, grid, batch_size=batch_size)
-    params = _prepare_gaussian_params(beam)
-    if params[0].shape[0] == 0 or math.prod(grid.shape) == 0:
-        return jnp.zeros(grid.shape, dtype=jnp.complex128)
-    return _evaluate_spatial(
-        *params, grid.coords, cutoff=cutoff, bins_per_axis=bins_per_axis,
-        tile_beams=tile_beams,
-    ).reshape(grid.shape)
+def _evaluate_gaussians_sparse(gaussian_ray, grid, *, config, batch_size=128):
+    """Cutoff-truncated GPU rendering (see ``evaluate_gaussians``); scan without a GPU."""
+    if config.impl == "auto" and not gpu_kernel_available():
+        return evaluate_gaussians_jax_scan(gaussian_ray, grid, batch_size=batch_size)
+    return _render_field(gaussian_ray, grid, config, exact=False)
 
 
 @lru_cache(maxsize=1)
@@ -654,10 +633,18 @@ def gpu_kernel_available() -> bool:
     This is a numerical execution probe rather than a package-presence check.
     It requires JAX x64 on a real GPU, exercises the production 16x16 tiles
     with both beam and pixel padding, and compares the result with an
-    independent NumPy evaluation before caching success.  Call
+    independent NumPy evaluation before caching success.  The probe runs in a
+    worker thread, whose JAX trace state is clean, so it executes eagerly even
+    when first called while JAX is tracing (inside ``jit`` or ``grad``); an answer
+    is never cached from a failed conversion of a tracer.  Call
     ``gpu_kernel_available.cache_clear()`` after changing JAX backend
     configuration in a long-lived process.
     """
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_probe_gpu_kernel).result()
+
+
+def _probe_gpu_kernel() -> bool:
     try:
         if jax.default_backend() != "gpu" or not bool(jax.config.x64_enabled):
             return False
@@ -758,6 +745,8 @@ __all__ = [
     "evaluate_gaussians_gpu_kernel",
     "evaluate_gaussians_gpu_kernel_wrapper",
     "evaluate_gaussians_jax_scan",
+    "describe_plan",
     "gpu_kernel_available",
     "map_reduce",
+    "PlanSummary",
 ]
