@@ -9,7 +9,7 @@ representations of a beam:
 |---|---|---|---|
 | Ray | `Ray` | geometry, ABCD matrices, checking a column quickly | available |
 | Gaussian beamlets | `GaussianBeam` | coherent images from $10^5$ to $10^6$ beamlets | available, with first-order gradients through the GPU renderers |
-| Sampled wavefront | complex array on a grid | Collins-integral propagation between planes, independent checks | planned |
+| Sampled wavefront | `Wavefront`: complex array on a `Lattice` | Collins-integral propagation between planes, imported arrays, independent checks | available; experimental |
 
 `run_to_end` carries a ray or a bundle of beamlets from its current plane to each component in
 turn. Between components it applies free-space propagation, and a finite component such as a
@@ -39,6 +39,29 @@ a lens, a biprism, a specimen) are `GaussianActionComponent`s: an optical path a
 as functions of position, expanded to second order around each beamlet's centre.
 `evaluate_gaussians` adds the beamlets' complex fields on a detector. Sum fields, never
 intensities, unless the beamlets are mutually incoherent.
+
+## Sampled wavefronts
+
+A `Wavefront` (`temgym_core.wave`, experimental) is a complex field sampled on a `Lattice`: sample
+positions $\mathbf r = \mathbf c + P\,\boldsymbol\mu$ with a full 2 x 2 pitch matrix $P$, so a lattice can be
+rotated, scaled or sheared. `wave.propagate` runs it through the same column. Every linear stretch of
+the column is one linear canonical (Collins) transform built from its $5\times5$ ray matrix, so the planes in
+between are skipped. Two implementations of one operator cover the regimes: a matrix Fourier transform
+away from an image plane, and a drift, lattice map and chirp near one (the lattice is only rescaled or
+rotated, never interpolated). A thin element that is not linear, such as an aperture or a biprism,
+is a multiplicative mask: exactly the action its Gaussian branch applies, without the second-order
+expansion. Elements whose action depends on the ray slope (`SeidelLens`) are refused.
+
+Three things follow from sampling. The engine **owns the lattices**: rotation and astigmatism change the
+output lattice, so a source is generated on `wave.input_lattice(...)`, the lattice adapted backwards from
+the detector grid, and an array that arrives on a Cartesian grid goes through `wave.resample_field`. A
+**sampling planner** checks each span against the field's support and bandwidth (a span that would alias
+raises `SamplingError` naming the inequality that failed; `check="off"` is the expert override). And the
+**phase** of a span, which its matrix fixes only up to a sign, comes from a chief Gaussian propagated
+through the same components, so the Gouy phase is continuous across a whole column. The field excludes
+the axial carrier, like a beamlet's. The sampled wave is the reference for the beamlet sum, which
+approximates thin elements to second order about each beamlet's centre. See the
+[tutorial](tutorials/skip_planes.md).
 
 ## Units and signs
 

@@ -12,7 +12,7 @@ representations of a beam:
 |---|---|---|---|
 | Ray | `Ray` | geometry, ABCD via `run.column_matrix`, Taylor maps | available |
 | Gaussian beamlets | `GaussianBeam` | $10^5$–$10^6$ coherent beamlets, images via `evaluate_gaussians` | available; first-order gradients through the GPU renderers |
-| Sampled wavefront | complex array + `Grid` + wavelength | Collins-integral propagation between planes, independent reference | **planned** |
+| Sampled wavefront | `Wavefront`: complex array + `Lattice` + voltage | Collins-integral propagation between planes, imported arrays, independent reference | available; **experimental** |
 
 Rules that tie them together:
 
@@ -23,6 +23,10 @@ Rules that tie them together:
    differentiating native ray propagation, never re-derived by hand.
 3. Consistency is tested, not assumed: the chief ray of a Gaussian follows the ray, and a sum
    of Gaussians reproduces the sampled wave on the same column.
+4. In the sampled picture a linear span is one Collins transform planned from its ray matrix, a thin
+   non-linear element is a mask, and the physical phase of a span comes from a chief Gaussian
+   propagated through the same components. The engine owns the lattices; arrays are resampled onto
+   them.
 
 ## Module map
 
@@ -31,6 +35,7 @@ Rules that tie them together:
 | Rays, propagation | `ray`, `run`, `propagator`, `transfer_matrices`, `coordinate_transforms` |
 | Components | `components/` (`planes`, `lenses`, `deflection`, `actions`, `specimens`, `interpolated`) |
 | Gaussian beamlets | `gaussian`, `source`, `evaluate` (public dispatcher), `render/` (GPU renderer), `grid` |
+| Sampled wavefronts (experimental) | `wave/`: `lattice` (affine sample lattices, backward lattice chain), `lct` (plan and apply the Collins transform), `planner` (sampling rules), `masks` (thin elements as multipliers), `column` (`propagate`, `column_transform`), `resample_field`, `reference` (analytic Gaussians, chief phase) |
 | Microscope | `microscope` (named components, current tables, imaging condition) |
 | Measurements and fitting | `moments`, `optimization`, `calibration/`, `reflection_calibration` |
 | Plots | `plotting` (to be replaced by one `plot()` entry point) |

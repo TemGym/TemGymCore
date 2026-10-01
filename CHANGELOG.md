@@ -28,6 +28,21 @@ All notable changes to this project are documented here. The format follows
 - Benchmarks `benchmarks/render.py` (synthetic cases and mixed radii),
   `benchmarks/hologram_gpu.py` (the 160,801-beamlet hologram bundle of
   `benchmarks/hologram_bundle.py`) and `benchmarks/compare.py` (fails on a 3x regression).
+- `temgym_core.wave` (**experimental**): sampled wavefronts propagated through a column by linear
+  canonical (Collins) transforms. `propagate(Wavefront, components, out_lattice)` splits a column at
+  its thin non-linear elements (apertures, biprisms, phase plates, specimens become exact
+  multiplicative masks) and applies one transform per linear span, planned from `run.column_matrix`,
+  with the physical Gouy/Maslov phase taken from a chief Gaussian propagated through the same
+  components (`column_transform`). Lattices are affine (rotation, scale, shear), so a Larmor rotation
+  or astigmatism costs no interpolation; `input_lattice` adapts the source lattice backwards from a
+  detector grid, and `resample` interpolates imported arrays between lattices with the exact
+  band-limited interpolant. Three branches (matrix Fourier transform, drift + lattice map + chirp near an
+  image plane, and the exact `B = 0` map) run in 0.1 to 0.5 ms at 1024^2 and 0.3 to 1.5 ms at 4096^2 on a GH200 (17 ms for the O(N^3) matrix-product mode), are
+  differentiable in the field, the component parameters, the wavelength and the lattice, and `vmap`
+  over the voltage for energy spread. A sampling planner raises `SamplingError` (naming the failing
+  inequality) instead of returning aliased data; `check="off"` is the expert override.
+  `benchmarks/wave.py` times the branches and `benchmarks/compare_wave.py` gates a regression at 3x.
+  Tutorial: *Skipping planes*.
 - `temgym_core.enable_x64()`, `require_x64()` and `x64_enabled()`. Propagation
   (`run_to_end`), rendering (`evaluate_gaussians`), `find_imaging_condition` and the
   calibration workflows now raise a clear error when 64-bit arithmetic is off, instead of
