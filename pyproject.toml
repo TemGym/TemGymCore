@@ -19,7 +19,7 @@ authors = [
   { name="Matthew Bryan", email="matthewbryan52@gmail.com" },
   { name="Dieter Weber", email="d.weber@fz-juelich.de" },
 ]
-description = "An differentiable TEM ray tracing package"
+description = "A differentiable TEM ray tracing package"
 readme = "README.md"
 license-files = ["LICENSE.md"]
 license = "GPL-3.0-only"
