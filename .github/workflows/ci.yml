@@ -32,6 +32,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Choose Python version ${{ matrix.python.version }}
         uses: actions/setup-python@v7
         with:
@@ -53,6 +55,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Choose Python version ${{ matrix.python_version }}
         uses: actions/setup-python@v7
         with:

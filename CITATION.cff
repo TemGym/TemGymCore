@@ -1,0 +1,55 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+title: "TemGymCore"
+abstract: >-
+  A differentiable ray tracing package for transmission electron microscopy
+  built on JAX. Optical systems are described through the Jacobian (ABCD ray
+  transfer matrices) or Taylor-expansion coefficients of the ray coordinates
+  through the system, enabling, for example, the verification of coordinate
+  systems and descan error in 4D STEM shadow-image experiments.
+authors:
+  - family-names: Landers
+    given-names: David
+    email: davidlandersresearch@gmail.com
+    orcid: "https://orcid.org/0000-0002-3295-9473"
+    affiliation: "Univ. Grenoble Alpes, CEA, IRIG, MEM, LEMMA, 17 avenue des Martyrs, Grenoble, 38000, France"
+  - family-names: Bryan
+    given-names: Matthew
+    email: matthewbryan52@gmail.com
+    orcid: "https://orcid.org/0000-0001-9134-384X"
+    affiliation: "CEA LETI, France"
+  - family-names: Weber
+    given-names: Dieter
+    email: d.weber@fz-juelich.de
+    orcid: "https://orcid.org/0000-0001-6635-9567"
+    affiliation: "Ernst Ruska-Centre for Microscopy and Spectroscopy with Electrons, Forschungszentrum Jülich, 52425 Jülich, Germany"
+repository-code: "https://github.com/TemGym/TemGymCore"
+url: "https://github.com/TemGym/TemGymCore"
+license: GPL-3.0-only   # must match the SPDX license in pyproject.toml
+keywords:
+  - electron microscopy
+  - virtual twin
+  - ray tracing
+  - differentiable programming
+  - JAX
+  - 4D STEM
+references:
+  - type: article
+    authors:
+      - family-names: Landers
+        given-names: David
+      - family-names: Clancy
+        given-names: Ian
+      - family-names: Weber
+        given-names: Dieter
+      - family-names: Dunin-Borkowski
+        given-names: Rafal E.
+      - family-names: Stewart
+        given-names: Andrew
+    title: "TEMGYM Basic: transmission electron microscopy simulation software for teaching and training of microscope operation"
+    journal: "Journal of Applied Crystallography"
+    volume: 56
+    issue: 4
+    year: 2023
+    doi: "10.1107/S1600576723005174"
