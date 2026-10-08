@@ -1,5 +1,7 @@
 # TemGymCore
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23241151.svg)](https://doi.org/10.5281/zenodo.23241151)
+
 A ray tracing package that uses the automatic differentiation tools of jax to solve optical systems
 via a Taylor Expansion of a "ray" representing the optical axis. 
 In TemGym, Linear optical systems are represented via the ABCD values of a ray 
@@ -201,7 +203,7 @@ x_1\\
 \end{bmatrix}.
 $$
 
-with $t$ and $\kappa$ representing offsets in position and slope in the system. 
+with $t$ and $\kappa$ representing offsets in position and slope in the system.
 
 A set of chosen $ABCD$ values can be combined to describe how an optical component modifies a ray position or slope.
 
@@ -209,7 +211,7 @@ For instance, to describe how a ray propagating in free space moves a certain di
 we can use the $ABCD$ matrix, with $A=0,\  B=z,\  C=0,\  D=1$
 
 $$
-Free \ Space = 
+Free \ Space =
 \begin{bmatrix}
 1 & z & 0 \\
 0 & 1 & 0 \\
@@ -219,7 +221,7 @@ $$
 
 See [here](https://en.wikipedia.org/wiki/Ray_transfer_matrix_analysis) for more examples of $ABCD$ matrices.
 
-Using TemGym, one can create a ray and a model, and call ```jax.jacobian``` on the ```run_to_end``` function to calculate the partial derivatives of the output ray with respect to the input ray, which will directly enable us to complete $ABCD$ transfer matrix of the system, and in $2D$ with an offset column, is of shape $5 \times 5$. In particular, $ABCD$ matrices are a helpful tool to propagate rays through any number of components in a model in one step, without the burden of propgating from one component to the next each time. 
+Using TemGym, one can create a ray and a model, and call ```jax.jacobian``` on the ```run_to_end``` function to calculate the partial derivatives of the output ray with respect to the input ray, which will directly enable us to complete $ABCD$ transfer matrix of the system, and in $2D$ with an offset column, is of shape $5 \times 5$. In particular, $ABCD$ matrices are a helpful tool to propagate rays through any number of components in a model in one step, without the burden of propgating from one component to the next each time.
 
 ```python
 from temgym_core.utils import custom_jacobian_matrix
@@ -294,3 +296,9 @@ from temgym_core.run import run_iter
 for step_idx, (component, ray) in enumerate(run_iter(ray_in, model)):
     print(f"Step {step_idx}: {ray}")
 ```
+
+## Changelog
+
+### v0.1.0: Initial release (2026-10-08)
+
+It is spinning out and improving the core modeling parts of https://github.com/TemGym/TemGym to make them usable without all the GUI dependencies.
