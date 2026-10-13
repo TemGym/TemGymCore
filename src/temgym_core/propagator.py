@@ -1,5 +1,6 @@
 from typing import NamedTuple, TYPE_CHECKING
 import numpy as np
+import jax_dataclasses as jdc
 
 if TYPE_CHECKING:
     from .ray import Ray
@@ -40,6 +41,7 @@ class Propagator(NamedTuple):
         return self.propagator(ray, self.distance)
 
 
+@jdc.pytree_dataclass
 class FreeSpaceParaxial(BasePropagator):
     """Paraxial free-space propagation with constant slopes.
 
@@ -76,6 +78,7 @@ class FreeSpaceParaxial(BasePropagator):
         return cls.propagate(ray, distance)
 
 
+@jdc.pytree_dataclass
 class FreeSpaceDirCosine(BasePropagator):
     """Free-space propagation using direction cosines (L, M, N).
 
