@@ -1,0 +1,48 @@
+{
+  "parameters": {
+    "voltage": 30000.0,
+    "probe_fwhm": 3e-09,
+    "column_inclination_deg": 2.0,
+    "incidence_deg": 3.0,
+    "rocking_deg": 0.0,
+    "azimuth_deg": 0.0,
+    "camera_length": 0.07,
+    "objective_z": 0.31,
+    "working_distance": 0.04,
+    "aberrations": true,
+    "cs_mm": 1.0,
+    "coma_um": 10.0,
+    "coma_deg": 0.0,
+    "astig_nm": 0.0,
+    "astig_deg": 0.0,
+    "lattice_constant": 7.23e-10,
+    "pixel_pitch": 5.5e-05,
+    "detector_shape": [
+      256,
+      256
+    ],
+    "min_exit_deg": 0.25,
+    "broadening": 8.0,
+    "extent_sigma": 6.0,
+    "inner_potential_v": 21.2,
+    "absorption_ev": 0.0,
+    "material": "Cu(001) 2x1 missing-row reconstruction",
+    "sample_z": 0.35
+  },
+  "camera_pose": {
+    "z_mm": 69.90406743282017,
+    "height_mm": -3.6635169370060687,
+    "distance_m": 0.07,
+    "centre_world_xyz_m": [
+      -0.0036635169370060686,
+      0.0,
+      0.06990406743282017
+    ]
+  },
+  "quality": "Medium render, 192 across",
+  "convergence": {
+    "n128_to_n192": 1.2090586581192361e-07
+  },
+  "source": "sem_reflection.ipynb",
+  "surface": "Cu(001) 2x1 missing-row reconstruction"
+}

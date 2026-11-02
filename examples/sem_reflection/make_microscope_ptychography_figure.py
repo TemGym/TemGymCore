@@ -177,7 +177,8 @@ def finish_envelope_at_surface(ax, trace, *, incidence_deg, objective_z):
         band.set_gid('surface_clipped_incident_envelope')
 
 
-def mini_microscope(fig, box, parameters, spec, deflector_positions, *, muted=False):
+def mini_microscope(fig, box, parameters, spec, deflector_positions, *, muted=False,
+                    symbol_scale=.38):
     ax = fig.add_axes(box)
     # Fixed, unpowered notebook deflectors are identity elements in this
     # on-axis calibration. Their positions and kicks are not inferred.
@@ -195,11 +196,16 @@ def mini_microscope(fig, box, parameters, spec, deflector_positions, *, muted=Fa
     paths = np.stack((np.zeros_like(hits), hits), axis=1)[..., [0, 2]]
     half_height = spec['detector_shape'][0] * spec['pixel_pitch_m'] / 2
     ends = centre + np.array([-1., 1.])[:, None] * half_height * np.asarray(outgoing.u_xyz)
-    draw_microscope(ax, components, trace, symbol_scale=.38, sample_z=0.,
+    draw_microscope(ax, components, trace, symbol_scale=symbol_scale, sample_z=0.,
                     outgoing_paths_xz=paths, detector_segment_xz=ends[:, [0, 2]],
                     column_frame=incoming, specimen_label='Cu(001)', envelope_scale=40.)
-    finish_envelope_at_surface(ax, trace, incidence_deg=spec['incidence_deg'],
-                               objective_z=parameters[3] * 1e-3)
+    try:
+        finish_envelope_at_surface(ax, trace, incidence_deg=spec['incidence_deg'],
+                                   objective_z=parameters[3] * 1e-3)
+    except ValueError:
+        # A strongly defocused guess never closes onto the surface; keep the
+        # renderer's own envelope.
+        pass
     ax.set(xlim=(-465, 195), ylim=(-17, 5))
     ax.set_axis_off()
     for line in ax.lines:
@@ -233,7 +239,8 @@ def box(fig, x, y, width, height, text, color, *, size=7):
     fig.text(x + width / 2, y + height / 2, text, ha='center', va='center', fontsize=size, color=color)
 
 
-def notebook_gui(fig, left=.040, bottom=.631, width=.620, *, compact=True):
+def notebook_gui(fig, left=.040, bottom=.631, width=.620, *, compact=True,
+                 text_size=6., slider_y=.921, height=.234, offsets=None, view_dir=None):
     """Redraw the saved notebook state as a wide native vector microscope view."""
     notebook_path = DATA.parent.parent / 'sem_reflection.ipynb'
     notebook = json.loads(notebook_path.read_text())
@@ -246,7 +253,7 @@ def notebook_gui(fig, left=.040, bottom=.631, width=.620, *, compact=True):
                 definitions[node.targets[0].id] = {
                     kw.arg: ast.literal_eval(kw.value) for kw in node.value.keywords
                     if kw.arg in ('min', 'max', 'step', 'description', 'readout_format')}
-    saved = json.loads((DATA.parent / 'copper/camera_view.json').read_text())
+    saved = json.loads(((view_dir or DATA.parent / 'copper') / 'camera_view.json').read_text())
     values = [saved['parameters']['incidence_deg'] + saved['parameters'].get('rocking_deg', 0.),
               saved['camera_pose']['z_mm'], saved['camera_pose']['height_mm']]
     # Execute only the column setup, never image rendering or saving cells.
@@ -284,38 +291,38 @@ def notebook_gui(fig, left=.040, bottom=.631, width=.620, *, compact=True):
     half_height = env['P']['detector_shape'][0] * env['P']['pixel_pitch'] / 2
     edge = np.asarray(frame.to_world(jnp.array([[-half_height, 0., 0.], [half_height, 0., 0.]])))[:, [0, 2]]
     trace = env['trace_gaussian_basis'](env['column'](kicks), env['source_w'], voltage=env['P']['voltage'])
-    ax = fig.add_axes([left + .03, bottom + .035, width - .045, .234])
+    ax = fig.add_axes([left + .03, bottom + .035, width - .045, height])
     draw_microscope(ax, components, trace, sample_z=env['P']['sample_z'],
         outgoing_paths_xz=paths, detector_segment_xz=edge, column_frame=env['column_frame'],
         component_labels=('C1', 'C2', 'D1', 'D2', 'Objective', 'Reference'),
         specimen_label='Cu(001)', incident_envelope=np.asarray(rows))
     component_names = ['Condenser lens 1', 'Condenser lens 2',
                        'Deflector 1', 'Deflector 2', 'Objective lens']
-    offsets = [(0, -25), (-12, -27), (-23, 23), (12, 38), (13, -26)]
+    offsets = offsets or [(0, -25), (-12, -27), (-23, 23), (12, 38), (13, -26)]
     for component, name, offset in zip(components[:-1], component_names, offsets):
         point = np.asarray(env['column_frame'].to_world(jnp.array([0., 0., component.z])))
         ax.annotate(name, (point[2] * 1000, point[0] * 1000), xytext=offset,
-                    textcoords='offset points', ha='center', fontsize=6, color=INK,
+                    textcoords='offset points', ha='center', fontsize=text_size, color=INK,
                     arrowprops=dict(arrowstyle='-', color='#ACB6BD', lw=.4, shrinkB=10))
     point = np.asarray(env['column_frame'].to_world(jnp.array([0., 0., 0.])))
     ax.annotate('Electron\nsource', (point[2] * 1000, point[0] * 1000), xytext=(0, -5),
-                textcoords='offset points', ha='center', va='top', fontsize=6, color=INK)
-    ax.text(0, 3.2, 'Cu(001) specimen', ha='center', fontsize=6, color=INK)
-    ax.text(values[1], 1.3, 'Detector', ha='center', fontsize=6, color=INK)
+                textcoords='offset points', ha='center', va='top', fontsize=text_size, color=INK)
+    ax.text(0, 3.2, 'Cu(001) specimen', ha='center', fontsize=text_size, color=INK)
+    ax.text(values[1], 1.3, 'Detector', ha='center', fontsize=text_size, color=INK)
     ax.set(xlim=(-375, 150), ylim=(-17, 7), xlabel='Horizontal position (mm)', ylabel='Height (mm)')
-    ax.xaxis.label.set_size(6); ax.yaxis.label.set_size(6)
-    ax.tick_params(labelsize=5.5, length=2, colors=MUTED)
+    ax.xaxis.label.set_size(text_size); ax.yaxis.label.set_size(text_size)
+    ax.tick_params(labelsize=text_size - .5, length=2, colors=MUTED)
     for index, (name, value) in enumerate(zip(('angle_slider', 'z_slider', 'height_slider'), values)):
         definition = definitions[name]
         x0 = left + .008 + index * width / 3
         x1 = x0 + width / 3 - .020
-        fig.text(x0, .943, definition['description'], fontsize=6.1, color=INK)
-        fig.text(x1, .919, format(value, definition['readout_format']), fontsize=6, ha='right', color=INK)
+        fig.text(x0, slider_y + .022, definition['description'], fontsize=text_size + .1, color=INK)
+        fig.text(x1, slider_y - .002, format(value, definition['readout_format']), fontsize=text_size, ha='right', color=INK)
         track_end = x1 - .046
         knob = x0 + (value - definition['min']) / (definition['max'] - definition['min']) * (track_end - x0)
-        fig.add_artist(plt.Line2D([x0, track_end], [.921, .921], transform=fig.transFigure,
+        fig.add_artist(plt.Line2D([x0, track_end], [slider_y, slider_y], transform=fig.transFigure,
                                  color='#D4DCE1', lw=2.2, solid_capstyle='round'))
-        fig.add_artist(plt.Line2D([knob], [.921], transform=fig.transFigure, marker='o', ms=4.3,
+        fig.add_artist(plt.Line2D([knob], [slider_y], transform=fig.transFigure, marker='o', ms=4.3,
                                  color='#6C7983', markeredgecolor='white', markeredgewidth=.5))
     return dict(notebook=str(notebook_path), controls=definitions, values=values,
                 detector_order_labels=[dict(order=int(order), lateral_mm=float(uv[1]*1000),

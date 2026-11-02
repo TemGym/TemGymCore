@@ -3725,12 +3725,14 @@ def export_ray_figure(
     formats: Sequence[str] = ("png", "svg", "pdf"),
     dpi: int = 300,
     metadata: Mapping[str, object] | None = None,
+    bbox_inches: str | None = "tight",
 ) -> dict[str, Path]:
     """Export a ray figure to vector/raster formats plus JSON metadata.
 
     A conservative subset of metadata is embedded in each image.  The complete
     JSON-safe mapping is written to ``<stem>.metadata.json`` for lossless,
-    format-independent provenance.
+    format-independent provenance. ``bbox_inches=None`` keeps the exact canvas
+    size, for figures designed to a fixed page width.
     """
 
     if not isinstance(fig, mpl.figure.Figure):
@@ -3790,7 +3792,7 @@ def export_ray_figure(
             output,
             format=fmt,
             dpi=dpi,
-            bbox_inches="tight",
+            bbox_inches=bbox_inches,
             facecolor=fig.get_facecolor(),
             transparent=False,
             metadata=embedded,
