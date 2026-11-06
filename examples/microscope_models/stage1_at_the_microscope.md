@@ -145,14 +145,8 @@ One row per frame, in a spreadsheet or text file:
   note how far it moved.
 - **The deflectors return** to the same centre values.
 
-## 6. If there is time: the anchors
-
-With a **cross grating with gold**, specimen in, at eucentric height:
-- one image at **setting 0**, about 3 × 3 squares visible;
-- one pattern at the **diffraction setting**, with the gold rings fully on the camera;
-- optionally the grating image at 2–3 other places on the grid.
-
-Stage 2 needs a change of HT; leave it for another day.
+Stage 1 is complete on its own: it gives the predictor. Turning it into physical units and lens
+positions (a specimen for the units, a second HT for the positions) comes later.
 
 ---
 
