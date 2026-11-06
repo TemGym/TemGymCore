@@ -92,10 +92,11 @@ def _nominal_scales(data, setup):
     return scales
 
 
-def fit_session(folder, *, pitch_m=None, save=True):
+def fit_session(folder, *, pitch_m=None, save=True, verbose=False):
     """Fit the stage-1 model to a session folder. Returns the model (a dict, also saved as
     ``model.json``): the fitted parameters, the deflector scales, the camera handedness, the wobble,
-    chi2 and whether the fit reached the noise level."""
+    chi2, whether the fit reached the noise level and the three worst-fitting measurements.
+    ``verbose`` prints each handedness trial and the mixing test."""
     folder = Path(folder)
     data, plan, rows = load_session(folder)
     state = json.loads((folder / "state_before.json").read_text())
@@ -127,8 +128,9 @@ def fit_session(folder, *, pitch_m=None, save=True):
             command = np.conj(fit_data["command"]) if y_flipped else fit_data["command"]
             measured = np.conj(fit_data["measured"]) if mirrored else fit_data["measured"]
             result = P.fit(dict(fit_data, command=command, measured=measured), setup, free=P.ONE_HT_FREE + P.MIX)
-            print(f"  camera mirrored {mirrored!s:5s} y deflector flipped {y_flipped!s:5s}: "
-                  f"chi2/dof {result['chi2'] / result['dof']:.3g}", flush=True)
+            if verbose:
+                print(f"  camera mirrored {mirrored!s:5s} y deflector flipped {y_flipped!s:5s}: "
+                      f"chi2/dof {result['chi2'] / result['dof']:.3g}", flush=True)
             if best is None or result["chi2"] < best[2]["chi2"]:
                 best = (mirrored, y_flipped, result)
     mirrored, y_flipped, mixed = best
@@ -141,13 +143,13 @@ def fit_session(folder, *, pitch_m=None, save=True):
     gain = (pure["chi2"] - mixed["chi2"]) / max(mixed["chi2"] / mixed["dof"], 1.0)
     use_mixing = gain > chi2_dist.ppf(0.99, len(P.MIX))
     result = mixed if use_mixing else pure
-    print(f"  deflectors: {'mixed' if use_mixing else 'pure'} (chi2 drop from fitting the mixing: {gain:.1f}, "
-          f"chance level {chi2_dist.ppf(0.99, len(P.MIX)):.1f})", flush=True)
+    if verbose:
+        print(f"  deflectors: {'mixed' if use_mixing else 'pure'} (chi2 drop from fitting the mixing: {gain:.1f}, "
+              f"chance level {chi2_dist.ppf(0.99, len(P.MIX)):.1f})", flush=True)
     n = len(rows)
     misfit = np.abs(result["residuals"][:n] + 1j * result["residuals"][n:2 * n]) * wobble / np.sqrt(2)
-    print("  worst-fitting measurements: " + ", ".join(
-        f"visit {rows[k]['visit'] + 1} ({rows[k]['setting']}) {rows[k]['kind']} {misfit[k]:.3f} px"
-        for k in np.argsort(misfit)[::-1][:3]), flush=True)
+    worst = [f"visit {rows[k]['visit'] + 1} ({rows[k]['setting']}) {rows[k]['kind']}: {misfit[k]:.3f} px"
+             for k in np.argsort(misfit)[::-1][:3]]
     theta = result["theta"]
     mixing = [complex(theta[P.MIX[0]], theta[P.MIX[1]]), complex(theta[P.MIX[2]], theta[P.MIX[3]])]
     model = dict(theta=theta.tolist(), mirrored=mirrored, y_flipped=y_flipped, deflector_scales=scales,
@@ -157,10 +159,29 @@ def fit_session(folder, *, pitch_m=None, save=True):
                  tilt_axis_angle_rad=float(theta[P.MIX[4]]), wobble_px=wobble,
                  wobble_dof=dof, chi2=result["chi2"], dof=result["dof"], accepted=bool(result["accepted"]),
                  ht_v=setup.v0, units=units.tolist(), base_dac=list(plan["base_dac"]), diffraction=list(plan["diffraction"]),
-                 pitch_m=pitch, frame_width=setup.camera.n, residuals=result["residuals"].tolist())
+                 pitch_m=pitch, frame_width=setup.camera.n, residuals=result["residuals"].tolist(), worst=worst)
     if save:
         (folder / "model.json").write_text(json.dumps(model, indent=1))
     return model
+
+
+def summary(model):
+    """Rows (name, value) describing a fitted model, for a table."""
+    return [["camera image mirrored", model["mirrored"]],
+            ["deflector y axis flipped", model["y_flipped"]],
+            ["deflectors", model["deflectors"]],
+            ["beam-position wobble (from the repeats)", f"{model['wobble_px']:.3f} px"],
+            ["χ²/dof (≈ 1: fits to the wobble)", f"{model['chi2'] / model['dof']:.2f}"],
+            ["worst-fitting measurements", "; ".join(model["worst"])]]
+
+
+def unseen_settings(folder, n=8, seed=7):
+    """``n`` lens settings the session never visited, each a random blend of three of its
+    settings (so inside the explored range): rows of IL1, IL2, IL3, PL1 DAC values."""
+    settings = np.array(list(json.loads((Path(folder) / "plan.json").read_text())["settings"].values()))
+    rng = np.random.default_rng(seed)
+    return np.round([rng.dirichlet(np.ones(3)) @ settings[rng.choice(len(settings), 3, replace=False)]
+                     for _ in range(n)])
 
 
 def predict(model, dac, shift=(0.0, 0.0), tilt=(0.0, 0.0)):

@@ -191,6 +191,29 @@ def select_magnification(eos, magnification):
         eos.UpSelector()
 
 
+def read_diffraction_setting(TEM3, camera_length_cm=80):
+    """Read the 40k row in MAG, then the diffraction setting in DIFF at ``camera_length_cm``.
+
+    Start in MAG at the 40k row. Switches to DIFF, steps the selector up to the camera length,
+    reads every lens, and switches back to MAG. Returns the 40k row and the diffraction setting
+    (IL1, IL2, IL3, PL1 DAC values) and ``{lens: (MAG value, DIFF value)}`` for every lens that
+    differs; only IL1-IL3 and PL1 should.
+    """
+    eos = TEM3.EOS3()
+    in_mag = read_all_lenses(TEM3)
+    eos.SelectFunctionMode(4)                                     # DIFF
+    for _ in range(30):
+        if eos.GetMagValue()[0] >= camera_length_cm:
+            break
+        eos.UpSelector()
+    in_diff = read_all_lenses(TEM3)
+    print(f"DIFF at {eos.GetMagValue()[2]}", flush=True)
+    eos.SelectFunctionMode(0)                                     # back to MAG
+    four = list(FLC_IDS)
+    changed = {k: (in_mag[k], in_diff[k]) for k in ALL_LENSES if in_mag.get(k) != in_diff.get(k)}
+    return (np.array([in_mag[k] for k in four], float), np.array([in_diff[k] for k in four], float), changed)
+
+
 def read_all_lenses(TEM3):
     """Every lens value PyJEM can read (for the MAG / DIFF comparison). Missing getters are skipped."""
     lens, eos = TEM3.Lens3(), TEM3.EOS3()

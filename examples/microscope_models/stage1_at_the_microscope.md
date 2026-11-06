@@ -189,7 +189,14 @@ S.run(TEM3, detector, "D:/stage1/2026-11-06",          # a new, empty folder
   it is good to know;
 - the camera's pixel type. Pass `dtype="<u2"` if the first-frame values look wrong.
 
-`S.read_all_lenses(TEM3)` returns every lens value, for the MAG/DIFF comparison in step 2.
+`S.read_diffraction_setting(TEM3, camera_length_cm=80)` does step 2 in one call: it reads every
+lens in MAG, switches to DIFF at that camera length, reads them again, goes back to MAG, and returns
+the 40k row, the diffraction setting and the lenses that changed. (`S.read_all_lenses(TEM3)` reads
+them once.)
+
+**Worth one check at the real microscope:** take a frame in DIFF mode, then set the same four values
+in MAG with free-lens control and take another. The spot should land in the same place; if it does
+not, DIFF mode changes something besides IL1–IL3 and PL1.
 
 **Afterwards:** copy the folder back. `stage1_analysis.fit_session(folder)` fits the model;
 `stage1_analysis.predict(model, dac, shift=(dx, dy))` predicts beam moves.
