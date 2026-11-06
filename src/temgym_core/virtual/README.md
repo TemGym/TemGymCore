@@ -32,6 +32,7 @@ runs the stage-1 projector calibration on it through PyJEM calls only.
 | Optics (hidden) | TemGym finite solenoid lenses (objective, IL1–IL3, PL1), one Gaussian source per high tension, sigmoid condenser aperture, post-aperture double deflector. Frames come from native ray tracing. | `scope.OpticalTruth`, `calibration.acquisition.setting_column` / `render_rays` |
 | Electronics (hidden) | Linear 16-bit DAC laws for each lens (DAC value → relative control) and CLA1/CLA2 (DAC values → specimen shift and tilt, scaled as 1/p with HT). | `electronics.py` |
 | Modes | TEM MAG (selector rows) and TEM DIFF (camera-length rows; in the virtual NEOARM designed so that A = 0 and \|B\| = camera length, with IL1 weakened). | `scope.VirtualMicroscope`, `virtual_neoarm.design_diffraction_table` |
+| Specimens | None (vacuum) by default. `scope.specimen = CrossGrating(...)`: bars that absorb; rays are weighted by the transmission (in-focus bright-field image). `scope.specimen = PolycrystallineGold(...)`: the direct beam by rays plus one TemGym Gaussian beamlet per lit grain at its Bragg angle (111, 200, 220 rings). Set by hand: PyJEM has no call for it. | `specimens.py` |
 | Camera | Binned sensor, PSF, Poisson + background + read noise, gain/offset, signed 16- or 32-bit output, frame integration. | `camera.py` |
 | Interface | A subset of PyJEM 1.4: `Lens3` (including free-lens control), `Def3`, `EOS3`, `HT3`, `Apt3`, `Stage3`, `detector.Detector`, and `TEMError` with `code = kind*1024 + cause`. Any other name raises `NotEmulatedError`. | `pyjem.py` |
 | Strictness | A state the optics cannot render raises `UnmodelledStateError` listing every reason, for example STEM or LowMAG mode, a moved IS1, an open aperture, an untabulated HT or a changed objective. | `scope.VirtualMicroscope.physical_setting` |
@@ -56,7 +57,7 @@ measuring small spots (the stage-1 rehearsal does).
 | **High tension** | 200 and 195 kV only (one source per HT); lens DAC values stay fixed when HT changes. | Settling and drift. | Drift model. |
 | **Objective** | Fixed at (OLc, OLf) = (45818, 39178). | Kept fixed in stage 1. | — |
 | **Apertures** | Condenser holes 1 = 50 µm, 2 = 20 µm; all others open. | Hole numbering and the ARM aperture API unverified. | Map the real strip. |
-| **Stage / specimen** | Tracked, no optical effect (no specimen). | A grating or gold specimen is needed for the anchors. | Specimen images (the anchors). |
+| **Stage / specimen** | Stage tracked, no optical effect; the specimen is set by hand. The grating is amplitude-only (no phase contrast, no defocus fringes); gold grains scatter independently (no interference, no dynamical effects). | Real grids: alloy decoration, carbon support, specimen height. | Stage position selects grating, gold or a hole. |
 | **Modes** | TEM MAG and DIFF. | LowMAG, STEM and a focused probe exist. | Focused probe. |
 | **Model mismatch** | The truth uses the fit's own model family: hard-edge solenoids, geometric rays. | Real fields and wave optics differ. | Truths from field maps or wave rendering. |
 | **Timing** | Every change is instant; no drift. | Moves and HT changes take time. | Time-stamped drift. |

@@ -154,3 +154,12 @@ def build_virtual_neoarm(*, headroom_word=60000, ray_sample_power=18, detector_s
     gauge = dict(reference_magnification=40000.0, reference_spot=REFERENCE_SPOT,
                  projector_reference_ratios=baselines[40000.0], condenser_reference_ratios=condenser_reference)
     return scope, plan, gauge
+
+
+def true_magnification_and_camera_length(scope):
+    """The hidden |A| and |B| (m/rad) at the scope's present lens setting -- for scoring a
+    rehearsal only; nothing the session sees."""
+    s, t = scope.physical_setting(), scope.truth
+    m = np.asarray(matrix5(at_voltage(np.asarray(t.projector_parameters), s.voltage_v, t.voltages_v[0]),
+                           np.asarray(s.projector_controls)))
+    return float(np.hypot(m[0, 0], m[0, 1])), float(np.hypot(m[0, 2], m[0, 3]))

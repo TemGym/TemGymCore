@@ -184,6 +184,22 @@ def unseen_settings(folder, n=8, seed=7):
                      for _ in range(n)])
 
 
+def anchors(grating_frame, gold_frame, *, period_m, pitch_m, ht_v, dark=0.0):
+    """The two anchors from their frames: the magnification |A| at the 40k row (grating image,
+    certified ``period_m``) and the camera length |B| (m/rad) at the diffraction setting (gold
+    rings). Returns a dict with both and the measured lattice period and ring radii (px)."""
+    from temgym_core.constants import energy2wavelength
+
+    period_px, _, fit = P.grating_period_px(np.asarray(grating_frame, float) - dark)
+    gold = np.asarray(gold_frame, float) - dark
+    radii, _ = P.ring_radii_px(gold, P.Camera(n=gold.shape[0], pitch=pitch_m))
+    lam = energy2wavelength(ht_v)
+    lengths = {k: r * pitch_m / (lam / P.AU_RINGS[k]) for k, r in radii.items()}
+    return dict(magnification=period_px * pitch_m / period_m, camera_length_m=float(np.mean(list(lengths.values()))),
+                period_px=period_px, lattice_fit_explained=fit["explained"], ring_radii_px=radii,
+                camera_length_per_ring_m=lengths)
+
+
 def predict(model, dac, shift=(0.0, 0.0), tilt=(0.0, 0.0)):
     """Predicted beam displacement on the camera (complex px, x + iy, camera axes) for a change
     of the shift (CLA1) and tilt (CLA2) deflectors from their centre values, in deflector units,

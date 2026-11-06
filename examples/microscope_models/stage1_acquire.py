@@ -174,6 +174,19 @@ class Session:
         return used
 
 
+def take_frame(detector, out, name, *, camera_name=None, dtype=None):
+    """One camera frame with the present settings, saved as ``out/name.npy`` and returned (for the
+    anchors: the grating image and the gold pattern)."""
+    camera = detector.Detector(camera_name or detector.get_attached_detector()[0])
+    area = camera.get_detectorsetting()["ImagingArea"]
+    raw = camera.snapshot_rawdata()
+    dtype = dtype or {2: "<i2", 4: "<i4"}[len(raw) // (area["Height"] * area["Width"])]
+    frame = np.frombuffer(raw, dtype=dtype).reshape(area["Height"], area["Width"]).astype(float)
+    Path(out).mkdir(parents=True, exist_ok=True)
+    np.save(Path(out) / f"{name}.npy", frame)
+    return frame
+
+
 def select_magnification(eos, magnification):
     """Step the TEM MAG selector (``TEM3.EOS3()``) to a nominal magnification; returns its index."""
     previous = None
@@ -191,6 +204,15 @@ def select_magnification(eos, magnification):
         eos.UpSelector()
 
 
+def select_camera_length(eos, camera_length_cm):
+    """Switch to DIFF and step the selector up to the first camera length >= ``camera_length_cm``."""
+    eos.SelectFunctionMode(4)
+    for _ in range(30):
+        if eos.GetMagValue()[0] >= camera_length_cm:
+            break
+        eos.UpSelector()
+
+
 def read_diffraction_setting(TEM3, camera_length_cm=80):
     """Read the 40k row in MAG, then the diffraction setting in DIFF at ``camera_length_cm``.
 
@@ -201,11 +223,7 @@ def read_diffraction_setting(TEM3, camera_length_cm=80):
     """
     eos = TEM3.EOS3()
     in_mag = read_all_lenses(TEM3)
-    eos.SelectFunctionMode(4)                                     # DIFF
-    for _ in range(30):
-        if eos.GetMagValue()[0] >= camera_length_cm:
-            break
-        eos.UpSelector()
+    select_camera_length(eos, camera_length_cm)
     in_diff = read_all_lenses(TEM3)
     print(f"DIFF at {eos.GetMagValue()[2]}", flush=True)
     eos.SelectFunctionMode(0)                                     # back to MAG

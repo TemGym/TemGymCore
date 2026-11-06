@@ -235,6 +235,7 @@ class VirtualMicroscope:
         self.exp_kind = 0
         self.apertures = {kind: {"size": 0, "position": list(APERTURE_HOME)} for kind in APERTURE_KINDS}
         self.apertures[CONDENSER_APERTURE]["size"] = min(self.aperture_holes)
+        self.specimen = None                 # vacuum; or a CrossGrating / PolycrystallineGold (virtual.specimens)
         self.stage = [0.0, 0.0, 0.0, 0.0, 0.0]
         binning = max(self.camera.binnings)
         shape, _, _ = self.camera.geometry(binning)
@@ -382,11 +383,15 @@ class VirtualMicroscope:
         numpy.ndarray
             Read-only image per incident electron, full binned frame.
         """
-        key = (setting, binning, self.ray_sample_power, self.detector_samples_per_pixel)
+        specimen = self.specimen
+        key = (setting, binning, self.ray_sample_power, self.detector_samples_per_pixel, id(specimen))
         if key in self._images:
             self._images.move_to_end(key)
             return self._images[key]
+        from .specimens import PolycrystallineGold, render_beamlets
+
         t = self.truth
+        gold = isinstance(specimen, PolycrystallineGold)
         column, mean, covariance, source_z = setting_column(
             np.asarray(t.condenser_parameters), np.asarray(t.projector_parameters),
             voltage_v=setting.voltage_v, reference_voltage_v=t.voltages_v[0],
@@ -394,12 +399,27 @@ class VirtualMicroscope:
             projector_controls=np.asarray(setting.projector_controls),
             specimen_kick=np.asarray(setting.specimen_kick), aperture_index=setting.aperture_index,
             aperture_diameter_um=t.aperture_diameters_um[setting.aperture_index],
-            aperture_edge_width_m=t.aperture_edge_width_m, gap_fractions=t.gap_fractions)
+            aperture_edge_width_m=t.aperture_edge_width_m, gap_fractions=t.gap_fractions,
+            specimen=None if (specimen is None or gold) else specimen)
         shape, pitch, psf = self.camera.geometry(binning)
         image = render_rays(column, mean, covariance, source_z, setting.voltage_v, shape_yx=shape,
                             pixel_pitch_m=pitch, psf_sigma_pixels=psf,
                             ray_sample_power=self.ray_sample_power,
                             detector_samples_per_pixel=self.detector_samples_per_pixel)
+        if gold:                                 # the direct beam by rays, the grains by Gaussian beamlets
+            from ..calibration.projector_model import at_voltage, projector_components
+            from ..components import Plane
+            from ..run import column_matrix
+
+            projector = projector_components(at_voltage(np.asarray(t.projector_parameters), setting.voltage_v,
+                                                        t.voltages_v[0]), np.asarray(setting.projector_controls))
+            condenser = (*column[:len(column) - len(projector)], Plane(z=0.0))
+            m = np.asarray(column_matrix(condenser, source_z=source_z, voltage=setting.voltage_v))
+            incident_mean = m[:4, :4] @ np.asarray(mean) + m[:4, 4]
+            incident_covariance = m[:4, :4] @ np.asarray(covariance) @ m[:4, :4].T
+            beams, weights = specimen.beamlets(incident_mean, incident_covariance, setting.voltage_v)
+            image = (1 - specimen.scattered_fraction) * image + render_beamlets(
+                beams, weights, projector, shape_yx=shape, pixel_pitch_m=pitch, psf_sigma_pixels=psf)
         image.setflags(write=False)
         self._images[key] = image
         if len(self._images) > 64:

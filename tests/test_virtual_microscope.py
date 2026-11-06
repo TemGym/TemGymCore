@@ -147,3 +147,52 @@ def test_diff_mode_loads_its_own_rows_and_puts_the_back_focal_plane_on_the_camer
 def test_truth_is_available_for_scoring_only(scope):
     truth = json.loads((neoarm.ACQUISITION / "scoring_truth.json").read_text())
     assert scope.truth.scoring_truth() == truth
+
+
+def _anchor_scope():
+    from temgym_core.virtual.pyjem import facade
+    built, _, _ = neoarm.build_virtual_neoarm(ray_sample_power=17, detector_samples_per_pixel=4)   # 256 x 256, 110 um
+    tem3, detector = facade(built)
+    camera = detector.Detector(detector.get_attached_detector()[0])
+    camera.set_detectorsetting({"BinningSize": 8, "ExposureTimeValue": 0.01e6})
+    return built, tem3, camera
+
+
+def _true_ab(scope):
+    s = scope.physical_setting()
+    m = np.asarray(neoarm.matrix5(neoarm.at_voltage(np.asarray(scope.truth.projector_parameters), s.voltage_v),
+                                  np.asarray(s.projector_controls)))
+    return np.hypot(m[0, 0], m[0, 1]), np.hypot(m[0, 2], m[0, 3])
+
+
+def _frame(camera):
+    return np.frombuffer(camera.snapshot_rawdata(), "<i4").reshape(256, 256).astype(float)
+
+
+def test_cross_grating_image_gives_the_true_magnification():
+    """Rays weighted by the grating's transmission; the whole-image lattice fit gives |A|."""
+    calibration = load("projector_calibration", ROOT / "examples/microscope_models/projector_calibration.py")
+    from temgym_core.virtual import CrossGrating
+    scope, tem3, camera = _anchor_scope()
+    lens = tem3.Lens3()
+    lens.SetFLCSw(2, 1)
+    lens.SetFLCAbs(2, int(0.7 * lens.GetCL3()))          # spread the beam over the frame
+    scope.specimen = CrossGrating(period=230e-9)
+    period_px, _, info = calibration.grating_period_px(_frame(camera))
+    assert info["explained"] > 0.9
+    assert period_px * 110e-6 / 230e-9 == pytest.approx(_true_ab(scope)[0], rel=2e-3)
+
+
+def test_gold_rings_give_the_true_camera_length():
+    """Gaussian beamlets, one per lit grain, through the projector; the ring radius gives |B|."""
+    calibration = load("projector_calibration", ROOT / "examples/microscope_models/projector_calibration.py")
+    from temgym_core.constants import energy2wavelength
+    from temgym_core.virtual import PolycrystallineGold
+    scope, tem3, camera = _anchor_scope()
+    eos = tem3.EOS3()
+    eos.SelectFunctionMode(4)
+    eos.SetSelector(7)                                   # 80 cm
+    scope.specimen = PolycrystallineGold()
+    radii, _ = calibration.ring_radii_px(_frame(camera), calibration.Camera(n=256, pitch=110e-6))
+    b = radii["111"] * 110e-6 / (energy2wavelength(200e3) / calibration.AU_RINGS["111"])
+    assert b == pytest.approx(_true_ab(scope)[1], rel=1e-3)

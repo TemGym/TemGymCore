@@ -1,9 +1,10 @@
 # Projector calibration: the experiment and its mathematics
 
-Status: design outline, 2026-11-05. The code is in `projector_calibration.py` (figures in
-`projector_figures.py`). The simulation notebook of stages 1-2 and the anchors was removed on
-2026-11-06 until stage 2 is rebuilt (Git revision `b2d873e` retains it); stage 1 is rehearsed in
-`stage1_virtual_session.ipynb`. Sections 7, 8 and 10 still describe the earlier stage-2a/2b and
+Status: design outline, 2026-11-05. The model and fit are in `projector_calibration.py` (figures in
+`projector_figures.py`); stage 1 is rehearsed in `stage1_virtual_session.ipynb` on the virtual
+NEOARM, the only simulator (TemGym rays, and TemGym waves for specimens). The numbers in sections
+7–10 came from an earlier analytic simulator, removed on 2026-11-06 (Git revision `df4c7dc` retains
+it, with the stages 1–2 notebook); sections 7, 8 and 10 still describe the earlier stage-2a/2b and
 pilot plan.
 
 **Decision:** the **no-sample track**. Everything is measured from beam centroids in vacuum, with
@@ -343,13 +344,13 @@ Simulated results at a 0.01 px wobble:
 
 Working choice: stage 1 and the anchors at **60 kV**; stage 2 adds **80 kV** with the same DAC values.
 The kick factor at 80 kV is taken as known, because it can be recalibrated at the new HT.
-`projector_calibration.SimulatedMicroscope(v0=60e3)` and `Setup(v0=60e3, v1=80e3, ...)` set this up.
+The results below came from the analytic simulator that was removed on 2026-11-06 (Git revision
+`df4c7dc` retains it); they will be re-run on the virtual NEOARM once it covers 60 and 80 kV.
 
 **How it is modelled:**
 - At 60 kV, the console re-excites the objective and scales the free-lens DAC values by
   p(60)/p(200) = 0.515. The 40k row becomes IL1–PL1 ≈ [21534, 12814, 18319, 32985].
-- This is used only to build the simulated microscope. On the microscope, read the DAC values with
-  `GetFLCInfo`.
+- On the microscope, read the DAC values with `GetFLCInfo`.
 - PL1 at about 33 000 removes the 200 kV headroom problem.
 - At 80 kV every lens weakens by p(60)/p(80) = 0.858, against 0.985 for 200 → 195 kV.
   The beam stays on the camera at all 9 sets.

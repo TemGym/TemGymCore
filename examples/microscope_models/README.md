@@ -9,7 +9,7 @@ those moves for any IL1, IL2, IL3, PL1 DAC values in the explored range.
 | [stage1_at_the_microscope.md](stage1_at_the_microscope.md) | The session sheet: what to do at the microscope, by hand or with PyJEM. |
 | [stage1_acquire.py](stage1_acquire.py) | The session script. numpy + PyJEM only; copy it to the microscope PC. |
 | [stage1_analysis.py](stage1_analysis.py) | Saved frames → beam moves → the predictive model (`fit_session`, `predict`, `compare`). |
-| [projector_calibration.py](projector_calibration.py) | The fit: TemGym projector model, deflector scales and mixing, weighted least squares; also anchors and stage 2. |
+| [projector_calibration.py](projector_calibration.py) | The model and the fit: TemGym projector ray maps, deflector scales and mixing, weighted least squares; the anchor measurements (grating lattice, gold rings). |
 | [projector_figures.py](projector_figures.py) | Paper-style figures: the column with ring lenses, frames, fits. |
 | [stage1_virtual_session.ipynb](stage1_virtual_session.ipynb) | The whole session rehearsed on the virtual NEOARM through PyJEM calls. |
 | [virtual_neoarm.py](virtual_neoarm.py) | Builds the virtual NEOARM (MAG 40k/45k rows, DIFF 15 cm – 1 m). |

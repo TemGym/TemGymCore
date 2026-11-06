@@ -176,3 +176,16 @@ def prediction_check_figure(rows):
     axes[2].set_xlabel("unseen lens setting")
     axes[2].set_ylabel("|measured − predicted| (px)"); axes[2].legend(); axes[2].set_title("(c)  Prediction error")
     fig.tight_layout()
+
+
+def anchor_frames(grating, gold, result):
+    """The two anchor frames side by side, with the measured magnification and camera length."""
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4.4))
+    axes[0].imshow(grating, cmap="gray")
+    axes[0].set_title(f"(a)  cross grating, 40k row: |A| = {result['magnification']:.0f}")
+    axes[1].imshow(np.arcsinh(np.clip(gold, 0, None) / max(np.percentile(gold, 50), 1.0)), cmap="magma")
+    axes[1].set_title(f"(b)  gold, diffraction: |B| = {result['camera_length_m']:.4f} m")
+    for ax in axes:
+        ax.set_xticks([]); ax.set_yticks([])
+    fig.tight_layout()
+    return fig

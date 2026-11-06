@@ -20,6 +20,7 @@ def setting_column(
     aperture_diameter_um,
     aperture_edge_width_m,
     gap_fractions=(0.3, 0.7),
+    specimen=None,
 ):
     """Native source-to-detector column for one physical microscope setting.
 
@@ -43,6 +44,8 @@ def setting_column(
         Inserted aperture diameter and its sigmoid edge width.
     gap_fractions : tuple of float, optional
         Illustrative deflector positions as fractions of the aperture-to-mini gap.
+    specimen : Component, optional
+        A thin specimen at the specimen plane, between the condenser and the projector.
 
     Returns
     -------
@@ -80,6 +83,7 @@ def setting_column(
     )
     column = (
         *column,
+        *(() if specimen is None else (specimen,)),
         *projector_components(pp, projector_controls),
     )
     mean, covariance = map(np.asarray, source_moments(cp, voltage_v))
@@ -92,15 +96,16 @@ def _ray_renderer(shape):
     import jax
     import jax.numpy as jnp
 
-    from temgym_core.components import Detector, SigmoidAperture
+    from temgym_core.components import Detector, GaussianActionComponent
+    from temgym_core.components._base import _uses_default_log_transmission
     from temgym_core.run import run_iter
 
     @jax.jit
     def render(column, source_rays, pixel_pitch):
         weights = jnp.ones_like(source_rays.x)
         for component, rays in run_iter(source_rays, column):
-            if isinstance(component, SigmoidAperture):
-                # Native Rays have no amplitude; accumulate intensity separately.
+            if isinstance(component, GaussianActionComponent) and not _uses_default_log_transmission(component):
+                # Native Rays have no amplitude; accumulate intensity separately (apertures, specimens).
                 weights *= jnp.exp(2 * component.log_transmission(rays.r_xy))
         detector = Detector(
             z=rays.z, shape=shape, pixel_size=(pixel_pitch, pixel_pitch)

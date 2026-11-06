@@ -9,6 +9,7 @@ Scripts written against PyJEM run on it unchanged. See
 from .camera import CameraModel
 from .electronics import DeflectorDrive, Electronics, LensDrive, WordRangeError
 from .pyjem import ErrorCodeKind, ErrorTypeKind, NotEmulatedError, TEMError, facade, install
+from .specimens import CrossGrating, PolycrystallineGold
 from .scope import (
     OpticalTruth,
     PhysicalSetting,
@@ -18,6 +19,7 @@ from .scope import (
 
 __all__ = [
     "CameraModel",
+    "CrossGrating",
     "DeflectorDrive",
     "Electronics",
     "ErrorCodeKind",
@@ -25,6 +27,7 @@ __all__ = [
     "LensDrive",
     "NotEmulatedError",
     "OpticalTruth",
+    "PolycrystallineGold",
     "PhysicalSetting",
     "TEMError",
     "UnmodelledStateError",
