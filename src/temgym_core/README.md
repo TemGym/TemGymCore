@@ -1,8 +1,10 @@
 # Reading TemGymCore
 
-Start with the [calibration notebook](../../examples/microscope_models/microscope_calibration_pipeline.ipynb).
-Its public functions live in [calibration/workflow.py](calibration/workflow.py):
-**generate images → measure images → fit components → check predictions**.
+The microscope work starts at
+[examples/microscope_models](../../examples/microscope_models/README.md): the stage-1 projector
+calibration (a PyJEM session script, its analysis and fit) rehearsed on the
+[virtual microscope](virtual/README.md). Both use the TemGym projector and condenser models in
+[calibration/](calibration/README.md).
 
 | Responsibility | Code |
 |---|---|
@@ -11,17 +13,18 @@ Its public functions live in [calibration/workflow.py](calibration/workflow.py):
 | Gaussian fields and integrated detector images | `evaluate.py`, `grid.py` |
 | Image measurements and their matrix predictions | `moments.py` |
 | Bounded JAX least squares and fits with shared parameters | `optimization.py` |
-| Interpolated and Fourier Bragg specimens; nominal MAGICAL recipe | `components/specimens.py`, `components/interpolated.py`; `calibration/gaussian.py` |
+| Interpolated and Fourier Bragg specimens | `components/specimens.py`, `components/interpolated.py` |
 | Analytical matrices and transport through supplied matrices | `transfer_matrices.py` |
 | Experimental atomic potentials and `AtomicPotential` component | `experimental/potential.py` |
 | Microscope configuration, operating modes and plots | `microscope.py`, `plotting.py` |
+| TEM column models for calibration (projector, condenser, ray-traced setting) | `calibration/` |
+| Virtual PyJEM-driven microscope | `virtual/` |
 
 `microscope.py` holds a named collection of native components, current tables in
 amperes, and the explicit `find_imaging_condition` design solve.
 The solve differentiates native ray propagation and uses the shared bounded
 JAX least-squares solver. `run.column_matrix` returns the local Jacobian and
-affine offset; it is also differentiable with respect to component parameters. See the
-[short API example](../../examples/microscope_models/IMAGING_MODES.md).
+affine offset; it is also differentiable with respect to component parameters.
 It replaces `microscope_model.py` and `imaging_modes.py`; no compatibility layer
 or second component configuration hierarchy remains. The calibration workflow
 uses its own parameter-to-component builders and does not depend on this container.
@@ -30,9 +33,8 @@ uses its own parameter-to-component builders and does not depend on this contain
 specimen by selected Fourier orders of its complex transmission. Each incident
 Gaussian creates one child per order, preserving the phase at its centre. It
 uses the ordinary `run_to_end` and detector renderer; pass a whole bundle
-directly rather than wrapping it in another `vmap`. See the executable
-[Bragg example](../../archived/examples/gaussians/diffraction_bragg.ipynb) for a sinusoidal
-phase grating with analytic intensity and flux checks. Unit-cell samples use
+directly rather than wrapping it in another `vmap`. A Bragg example (a sinusoidal
+phase grating with analytic intensity and flux checks) was removed in the 2026-11-06 cleanup; Git revision `b2d873e` retains it. Unit-cell samples use
 image (y, x) order without repeated endpoints, and all lengths use the beam's
 coordinate unit. Refine the input grid and retained orders separately; omitted
 orders are not renormalized. The transmission must be supplied for the chosen
@@ -50,8 +52,8 @@ their existing NumPy/JAX interfaces and axial phase conventions. Angular-spectru
 propagation lives there too. These sampled-field routines also provide independent
 checks of Gaussian propagation.
 
-The magnetic cube recipe and its projection helper live beside their notebooks in
-[holography_distortion/magnetic_cube.py](../../archived/examples/holography_distortion/magnetic_cube.py).
+The magnetic cube recipe and its projection helper (`holography_distortion/magnetic_cube.py`)
+were removed in the 2026-11-06 cleanup; Git revision `b2d873e` retains it.
 The unused 1D Fresnel and action-centre helpers were removed; the circular
 comparison mask and thin-lens FFT reference live in `tests/test_gaussians.py`.
 This cleanup passed 108 targeted tests with two existing skips. Before/after
@@ -69,8 +71,7 @@ This corrects the old helper's reversed order; the calibration workflow uses
 Atomic-scattering work is now imported explicitly from
 `temgym_core.experimental.potential`. Its Gaussian component still uses the
 regular TemGym interface, but importing ordinary components does not load it.
-The notebook that calls it moved to
-[archived/examples/experimental/glauber_ray_example.ipynb](../../archived/examples/experimental/glauber_ray_example.ipynb).
+The notebook that called it (`glauber_ray_example.ipynb`) was removed in the 2026-11-06 cleanup; Git revision `b2d873e` retains it.
 
 ## Reading components
 
@@ -179,27 +180,11 @@ The generic intensity renderer remains in `evaluate.py`; calibration uses
 coherent Gaussian images only. Exposure/background fitting lives in
 `optimization.py`. There is no calibration-specific intensity renderer.
 
-The active calibration notebook uses aperture-in beam images over vacuum, with
-an already calibrated length scale. Its four public steps and experimental
-assumptions are described in the [calibration code map](calibration/README.md).
-Image generation checks its moments against the independent aperture/matrix
-calculation and refines pixel integration where necessary.
-
 `InterpolatedSample2D.from_action_maps(...)` constructs a regular component
 from optical path in metres, log field amplitude, and x/y pixel-centre arrays.
 Maps use image (y, x) order. The C2 cubic spline, spatial derivatives, specimen
 pose, periodic boundaries and Gaussian update are retained from `SampleView`.
 The existing complex-array constructor, `from_array`, keeps its original behaviour.
-
-`calibration.gaussian.make_magical_sample()` returns that component, known
-feature dimensions and a calibration centre. The 40k
-MAGICAL imaging notebook uses this synthetic recipe; beam calibration uses a
-vacuum region instead. It makes the same fixed
-specimen map as before, without building unused regional maps or pyramids.
-The old atlas, certificates and automatic field selection have been removed;
-Git revision `5aa2ae7` retains them. This fixed map is an overview target, not an
-atomic-resolution model. Refine specimen sampling and the Gaussian approximation
-separately when changing the scene.
 
 Gaussian approximation diagnostics now live only in `tests/gaussian_sampling.py`.
 One helper compares explicit optical-path and log-amplitude functions with their
@@ -249,8 +234,8 @@ validated geometry parameterization. The exploratory code stays outside the
 maintained source tree.
 
 Older APIs and experiments remain in Git: `fc992bc` precedes the first core
-cleanup and `31adfc3` precedes this consolidation. The active calibration notebook now has four public steps; see its code map
-for the aperture-in beam-image procedure.
+cleanup and `31adfc3` precedes this consolidation. The moment-based beam-image calibration
+(workflow, inference, checks) was removed in the 2026-11-06 cleanup; Git revision `b2d873e` retains it.
 
 At the sample-cleanup checkpoint, core and calibration contained 34 Python files.
 That cleanup removed about 2,200 source lines. At both 200 and 195 kV, the fixed specimen maps, spline

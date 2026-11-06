@@ -587,8 +587,8 @@ def browse_images(directory):
 
 
 def show_result(directory):
-    """Reuse the microscope calibration notebook's geometry table formatter."""
-    from .calibration.viewer import show_result as show_calibration_result
+    """Summary lines and a Markdown table of the fitted geometry against the truth."""
+    from IPython.display import Markdown
 
     root = Path(directory)
     result = json.loads((root / "fit.json").read_text())
@@ -600,8 +600,13 @@ def show_result(directory):
                 for name, p, t, e, s in zip(NAMES, result["best"]["parameters"], truth, error, std)]
     print(f"Local rank {result['rank']}/{len(NAMES)}; near bounds: {result['near_bounds'] or 'none'}")
     print(f"Fit accepted: {result['accepted']}; prediction/approximation checks: {checks['validated']}")
-    return show_calibration_result(checks=dict(geometry=geometry,
-        fit_residual_rms=checks["fit_rms_noise_units"], prediction_residual_rms=checks["prediction_rms_noise_units"]))
+    print(f"Fit RMS: {checks['fit_rms_noise_units']:.3f}; prediction RMS: {checks['prediction_rms_noise_units']:.3f}")
+    table = ["| Parameter | Fitted | Truth | Error | Standard deviation |", "|---|---:|---:|---:|---:|"]
+    for row in geometry:
+        values = " | ".join("—" if row[key] is None else f"{row[key]:.6g}"
+                            for key in ("fitted", "truth", "error", "standard_deviation"))
+        table.append(f"| {row['parameter']} | {values} |")
+    return Markdown("\n".join(table))
 
 
 def plot_diagnostics(directory):

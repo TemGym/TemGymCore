@@ -184,7 +184,8 @@ def compute_Rc_from_voltage(U_accel: float) -> float:
     References
     ----------
     Glaser bell model for electromagnetic lenses.
-    See archived/examples/lens_inversion/n_lens_inversion.ipynb.
+    (Worked example: archived/examples/lens_inversion/n_lens_inversion.ipynb, removed in
+    the 2026-11-06 cleanup; Git revision b2d873e retains it.)
     """
     e = ELEMENTARY_CHARGE
     m_e = ELECTRON_MASS

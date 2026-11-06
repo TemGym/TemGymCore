@@ -174,6 +174,23 @@ class Session:
         return used
 
 
+def select_magnification(eos, magnification):
+    """Step the TEM MAG selector (``TEM3.EOS3()``) to a nominal magnification; returns its index."""
+    previous = None
+    while eos.GetCurrentMagSelectorID()[0] != previous:          # to the lowest row
+        previous = eos.GetCurrentMagSelectorID()[0]
+        eos.DownSelector()
+    previous = None
+    while True:
+        index, value = eos.GetCurrentMagSelectorID()
+        if value == magnification:
+            return index
+        if index == previous:
+            raise ValueError(f"the magnification selector has no {magnification:g}x row")
+        previous = index
+        eos.UpSelector()
+
+
 def read_all_lenses(TEM3):
     """Every lens value PyJEM can read (for the MAG / DIFF comparison). Missing getters are skipped."""
     lens, eos = TEM3.Lens3(), TEM3.EOS3()

@@ -434,35 +434,3 @@ class VirtualMicroscope:
             incident = self.beam_current_a * detector["exposure_us"] * 1e-6 / elementary_charge
             expected = self.expected_image(self.physical_setting(), binning) * incident
         return self.camera.expose(expected[y:y + height, x:x + width], self.rng, detector["frames"])
-
-
-def vendor_calibration(scope, *, kick_scale=1.0, kick_rotation_rad=0.0, gain_scale=1.0):
-    """The calibration a user would be given, optionally biased against the truth.
-
-    Parameters
-    ----------
-    scope : VirtualMicroscope
-        Microscope whose hidden deflector and camera are described.
-    kick_scale : float, optional
-        Multiplies the stated kick per word (1 = exact).
-    kick_rotation_rad : float, optional
-        Rotates the stated shift and tilt directions about the optical axis.
-    gain_scale : float, optional
-        Multiplies the stated camera gain.
-
-    Returns
-    -------
-    temgym_core.calibration.protocol.VendorCalibration
-    """
-    from ..calibration.protocol import VendorCalibration
-
-    c, s = np.cos(kick_rotation_rad), np.sin(kick_rotation_rad)
-    rotation = np.kron(np.eye(2), np.array([[c, -s], [s, c]]))
-    deflector, camera = scope.electronics.deflector, scope.camera
-    return VendorCalibration(
-        kick_per_word=kick_scale * rotation @ deflector.kick_per_word,
-        zero_words=deflector.zero_words, reference_voltage_v=deflector.reference_voltage_v,
-        camera_gain_adu_per_electron=gain_scale * camera.gain_adu_per_electron,
-        camera_offset_adu=camera.offset_adu, camera_read_noise_electrons=camera.read_noise_electrons,
-        camera_background_electrons=camera.background_electrons, sensor_pixel_m=camera.sensor_pixel_m,
-        psf_sigma_sensor_pixels=camera.psf_sigma_sensor_pixels)

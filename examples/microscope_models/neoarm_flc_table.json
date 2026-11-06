@@ -1,6 +1,6 @@
 {
  "description": "JEOL ARM-200F (NEOARM) free-lens-control look-up table: nominal magnification -> raw 16-bit lens DAC values (hex). Magnifications are nominal labels, not calibrated measurements.",
- "source": "RAW_DAC_HEX in archived/examples/lens_inversion/dac_lens_inversion.ipynb",
+ "source": "RAW_DAC_HEX in archived/examples/lens_inversion/dac_lens_inversion.ipynb (removed 2026-11-06; Git revision b2d873e retains it)",
  "raw_dac_hex": {
   "2000": {
    "IL1": "0x4b4b",

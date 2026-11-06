@@ -101,21 +101,16 @@ def test_hologram_line_and_patch_match_baseline(rendered):
 
 
 def test_saved_calibration_results_are_unchanged():
-    """The tracked outputs of the SEM and TEM calibration threads are the M5 targets."""
+    """The tracked outputs of the SEM calibration thread are the M5 targets."""
     saved = BASELINE["saved_results"]
     for key, path in {
         "sem_fit": "examples/sem_reflection/output/calibration_gaussian/fit.json",
         "sem_checks": "examples/sem_reflection/output/calibration_gaussian/checks.json",
-        "tem_validation": "examples/microscope_models/calibration_results/tilt_y_30_ray_acquisition/validation.json",
-        "tem_repeats": "examples/microscope_models/calibration_results/tilt_y_30_ray_acquisition/repeat_validation.json",
     }.items():
         digest = hashlib.sha256((scenario.ROOT / path).read_bytes()).hexdigest()
         assert digest == saved["sha256"][key], f"{path} changed"
     assert saved["sem"]["rank"] == 9 and saved["sem"]["accepted"]
     close(saved["sem"]["objective_working_distance_mm"], 40.15395340430102, rtol=1e-12)
-    assert saved["tem"]["used_images"] == 356 and saved["tem"]["rank"] == 47
-    assert saved["tem"]["repeat_seeds"] == list(range(262510, 262516))
-    assert saved["tem"]["repeat_accepted"] == 6
 
 
 @pytest.mark.gpu

@@ -1,9 +1,0 @@
-{
-  "provenance": "Illustrative engineering priors around the existing approximate layout; not measured NEOARM positions. All z coordinates are relative to the specimen.",
-  "position_names": ["Objective", "IL1", "IL2", "IL3", "PL1", "Detector"],
-  "position_mean_mm": [3.0, 210.0, 290.0, 355.0, 425.0, 740.0],
-  "position_sigma_mm": [1.0, 20.0, 15.0, 15.0, 20.0, 50.0],
-  "position_bounds_mm": [[1.0, 6.0], [170.0, 250.0], [265.0, 315.0], [325.0, 385.0], [395.0, 475.0], [640.0, 840.0]],
-  "length_bounds_mm": [[0.15, 1.5], [1.0, 8.0], [1.0, 8.0], [1.0, 8.0], [0.25, 3.0]],
-  "distribution": "Independent Gaussian position priors truncated at the stated hard bounds. Effective lengths have hard bounds and the declared log-coordinate regularization used by the fit."
-}

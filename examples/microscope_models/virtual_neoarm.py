@@ -1,27 +1,21 @@
-"""Build the virtual NEOARM and run the microscope calibration through PyJEM calls.
+"""Build the virtual NEOARM: a PyJEM-driven microscope with hidden TemGym optics.
 
-The hidden optics are the selected synthetic acquisition's truth
+The hidden optics are a synthetic truth
 (``calibration_results/tilt_y_30_ray_acquisition/scoring_truth.json``). The hidden
-electronics map 16-bit words to lens controls and kicks, and the camera is ideal.
-TEM MAG has the 40k and 45k rows; TEM DIFF has camera lengths 0.15-1 m designed on
-the hidden optics (:func:`design_diffraction_table`).
-Lens headroom is *relaxed* here: each lens's largest planned control maps to
-``headroom_word`` (60000 by default), so the selected plan can be executed. The
-recorded NEOARM words leave PL1 only 2.4% headroom; with that, the plan is
-rejected (see ``src/temgym_core/virtual/README.md``).
+electronics map 16-bit DAC values to lens controls and deflector kicks, and the camera
+is ideal by default. TEM MAG has the 40k and 45k rows; TEM DIFF has camera lengths
+0.15-1 m designed on the hidden optics (:func:`design_diffraction_table`).
 
-The protocol (``temgym_core.calibration.protocol``) only uses PyJEM calls and the
-vendor calibration; the truth is used afterwards, to score the fit.
+Drive it through PyJEM's own names::
 
-Run from the repository root (GPU recommended for the full fidelity)::
+    from temgym_core.virtual.pyjem import facade
+    scope, _, _ = build_virtual_neoarm(ray_sample_power=17, detector_samples_per_pixel=8)
+    TEM3, detector = facade(scope)
 
-    JAX_PLATFORMS=cpu .venv/bin/python examples/microscope_models/virtual_neoarm.py --quick
-    .venv/bin/python examples/microscope_models/virtual_neoarm.py --rays 22 --subsamples 32
+``stage1_virtual_session.ipynb`` runs the stage-1 session this way.
 """
 
-import argparse
 import json
-import shutil
 from pathlib import Path
 
 import jax
@@ -32,9 +26,7 @@ import numpy as np  # noqa: E402
 from scipy.constants import elementary_charge  # noqa: E402
 from scipy.optimize import least_squares  # noqa: E402
 
-from temgym_core.calibration import check_microscope, fit_microscope, measure_images  # noqa: E402
 from temgym_core.calibration.projector_model import at_voltage, matrix5  # noqa: E402
-from temgym_core.calibration.protocol import acquire_calibration  # noqa: E402
 from temgym_core.virtual import (  # noqa: E402
     CameraModel,
     DeflectorDrive,
@@ -42,14 +34,11 @@ from temgym_core.virtual import (  # noqa: E402
     LensDrive,
     OpticalTruth,
     VirtualMicroscope,
-    install,
-    vendor_calibration,
 )
 
 HERE = Path(__file__).parent
 ACQUISITION = HERE / "calibration_results" / "tilt_y_30_ray_acquisition"
 PRESETS = HERE.parents[1] / "src" / "temgym_core" / "calibration" / "presets"
-OUTPUT = HERE.parent / "generated" / "virtual_neoarm"
 PROJECTOR = ("IL1", "IL2", "IL3", "PL1")
 CONDENSER = ("CL1", "CL3", "CM")
 REFERENCE_SPOT = 2                        # PyJEM index of "spot 3"
@@ -165,42 +154,3 @@ def build_virtual_neoarm(*, headroom_word=60000, ray_sample_power=18, detector_s
     gauge = dict(reference_magnification=40000.0, reference_spot=REFERENCE_SPOT,
                  projector_reference_ratios=baselines[40000.0], condenser_reference_ratios=condenser_reference)
     return scope, plan, gauge
-
-
-def run(output, *, rows=None, number_of_starts=4, **build):
-    """Acquire through PyJEM calls, fit, and score against the hidden truth."""
-    scope, plan, gauge = build_virtual_neoarm(**build)
-    if rows is not None:
-        plan = {k: v[rows] for k, v in plan.items()}
-    vendor = vendor_calibration(scope)
-    spec = json.loads((ACQUISITION / "experiment.json").read_text())
-    if output.exists():
-        shutil.rmtree(output)
-    with install(scope):
-        from PyJEM import TEM3, detector  # the virtual microscope, through PyJEM's own names
-
-        folder = acquire_calibration(
-            TEM3, detector, plan=plan, vendor=vendor, output_directory=output,
-            voltages_v=spec["voltages_v"], aperture_diameters_um=spec["aperture_diameters_um"],
-            aperture_holes=APERTURE_HOLES, exposure_s=EXPOSURE_S, binning=8, projector_aperture_um=50.0,
-            model_assumptions=dict(aperture_edge_width_m=spec["aperture_edge_width_m"], aperture_diffraction=False,
-                                   crossover_fraction_bounds=[0.01, 0.99], moment_margin_pixels=16),
-            **gauge)
-    measure_images(experiment_directory=folder)
-    microscope = fit_microscope(measurements_directory=folder, number_of_starts=number_of_starts,
-                                projector_aperture_um=50.0)
-    (folder / "scoring_truth.json").write_text(json.dumps(scope.truth.scoring_truth(), indent=2) + "\n")
-    return folder, check_microscope(experiment_directory=folder, microscope=microscope, render_images=False)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--rays", type=int, default=18, help="log2 of rays per image")
-    parser.add_argument("--subsamples", type=int, default=1, help="detector sub-samples per pixel axis")
-    parser.add_argument("--quick", action="store_true", help="2**14 rays, two starts")
-    args = parser.parse_args()
-    rays = 14 if args.quick else args.rays
-    folder, checks = run(OUTPUT / f"rays{rays}_sub{args.subsamples}", ray_sample_power=rays,
-                         detector_samples_per_pixel=args.subsamples, number_of_starts=2 if args.quick else 4)
-    print(json.dumps({k: v for k, v in checks.items() if not isinstance(v, (list, dict))}, indent=2))
-    print("saved", folder)

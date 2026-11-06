@@ -1,7 +1,10 @@
 # Projector calibration: the experiment and its mathematics
 
-Status: design outline, 2026-11-05. Simulation results are in
-`projector_calibration.ipynb`; the code is in `projector_calibration.py` (figures in `projector_figures.py`).
+Status: design outline, 2026-11-05. The code is in `projector_calibration.py` (figures in
+`projector_figures.py`). The simulation notebook of stages 1-2 and the anchors was removed on
+2026-11-06 until stage 2 is rebuilt (Git revision `b2d873e` retains it); stage 1 is rehearsed in
+`stage1_virtual_session.ipynb`. Sections 7, 8 and 10 still describe the earlier stage-2a/2b and
+pilot plan.
 
 **Decision:** the **no-sample track**. Everything is measured from beam centroids in vacuum, with
 raw deflector kicks. A sample (a cross grating with gold) is used only for **two anchor frames**,

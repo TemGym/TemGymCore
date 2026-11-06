@@ -25,8 +25,6 @@ ROOT = scenario.ROOT
 SAVED_RESULTS = {
     "sem_fit": "examples/sem_reflection/output/calibration_gaussian/fit.json",
     "sem_checks": "examples/sem_reflection/output/calibration_gaussian/checks.json",
-    "tem_validation": "examples/microscope_models/calibration_results/tilt_y_30_ray_acquisition/validation.json",
-    "tem_repeats": "examples/microscope_models/calibration_results/tilt_y_30_ray_acquisition/repeat_validation.json",
 }
 
 
@@ -43,11 +41,9 @@ def raw_constants():
 
 
 def saved_results():
-    """Key numbers from the tracked results of the SEM and TEM calibration threads."""
+    """Key numbers from the tracked results of the SEM calibration thread."""
     load = lambda key: json.loads((ROOT / SAVED_RESULTS[key]).read_text())
     fit, checks = load("sem_fit"), load("sem_checks")
-    validation, repeats = load("tem_validation"), load("tem_repeats")
-    selected = validation["selected"]
     return {
         "sha256": {key: sha256(ROOT / path) for key, path in SAVED_RESULTS.items()},
         "sem": {
@@ -58,22 +54,6 @@ def saved_results():
             "prediction_rms_noise_units": checks["prediction_rms_noise_units"],
             "fit_rms_noise_units": checks["fit_rms_noise_units"],
             "objective_working_distance_mm": checks["objective_working_distance_mm"],
-        },
-        "tem": {
-            "used_images": selected["used_images"],
-            "fit_rms": selected["fit_rms"],
-            "prediction_rms": selected["prediction_rms"],
-            "rank": selected["rank"],
-            "source_z": selected["source_z"],
-            "PL1_z": selected["PL1_z"],
-            "detector_z": selected["detector_z"],
-            "repeat_seeds": repeats["seeds"],
-            "repeat_accepted": repeats["accepted_realizations"],
-            "repeat_geometry": [
-                {key: row[key] for key in ("parameter", "rms_error", "empirical_sd",
-                                          "maximum_absolute_error", "mean_local_sd")}
-                for row in repeats["geometry"]
-            ],
         },
     }
 

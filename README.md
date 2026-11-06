@@ -107,8 +107,8 @@ a portable implementation with the same result.
 
 ## Going further
 
-- [`examples/microscope_models/microscope_calibration_pipeline.ipynb`](https://github.com/TemGym/TemGymCore/blob/main/examples/microscope_models/microscope_calibration_pipeline.ipynb):
-  invert a microscope from beam images.
+- [`examples/microscope_models/`](https://github.com/TemGym/TemGymCore/tree/main/examples/microscope_models):
+  calibrate a TEM projector from beam moves, rehearsed on a virtual PyJEM-driven microscope.
 - [`examples/sem_reflection/`](https://github.com/TemGym/TemGymCore/tree/main/examples/sem_reflection):
   a scanning-electron column with reflection diffraction.
 - [`examples/holography/gaussian_biprism_hologram.ipynb`](https://github.com/TemGym/TemGymCore/blob/main/examples/holography/gaussian_biprism_hologram.ipynb):

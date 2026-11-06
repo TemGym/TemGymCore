@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from temgym_core.calibration.acquisition import render_ray_image
 from temgym_core.virtual import (
     CameraModel,
     DeflectorDrive,
@@ -90,7 +89,7 @@ def test_virtual_microscope_renders_exactly_like_the_ray_pipeline(scope):
                                       tuple(settings["projector_controls"][row]),
                                       tuple(settings["specimen_kick"][row]), aperture)
             expected = scope.expected_image(setting, 8) * spec["nominal_incident_electrons_per_image"]
-            assert np.array_equal(expected, render_ray_image(spec, settings, truth, row, aperture))
+            assert np.array_equal(expected, golden.render_row(spec, settings, truth, row, aperture))
 
 
 def test_words_map_to_the_planned_controls(scope):

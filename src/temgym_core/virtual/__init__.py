@@ -1,8 +1,8 @@
 """A virtual JEOL-like TEM behind a PyJEM-compatible interface.
 
-The hidden truth is the calibration model of :mod:`temgym_core.calibration`;
-the controls are 16-bit words, volts and indices; frames come from a camera
-model. Calibration protocols written against PyJEM run on it unchanged. See
+The hidden optics are TemGym components (:mod:`temgym_core.calibration`); the
+controls are 16-bit DAC values, volts and indices; frames come from a camera model.
+Scripts written against PyJEM run on it unchanged. See
 ``README.md`` in this package for what is modelled and the realism still missing.
 """
 
@@ -14,7 +14,6 @@ from .scope import (
     PhysicalSetting,
     UnmodelledStateError,
     VirtualMicroscope,
-    vendor_calibration,
 )
 
 __all__ = [
@@ -33,5 +32,4 @@ __all__ = [
     "WordRangeError",
     "facade",
     "install",
-    "vendor_calibration",
 ]
