@@ -3,14 +3,14 @@
 Status: 2026-11-06. Two stages:
 
 1. **Stage 1, the predictor** (one HT, no specimen): where the beam lands on the camera for any lens
-   setting and any beam shift or tilt, in deflector units. Session: `stage1_acquire.py`; analysis:
-   `stage1_analysis.py`; rehearsal: `stage1_virtual_session.ipynb`.
+   setting and any beam shift or tilt, in deflector units. Session: `acquire.stage1`; analysis:
+   `analyse.stage1`; rehearsal: `stage1_rehearsal.ipynb`; sheet: `stage1_session_sheet.md`.
 2. **Stage 2, the physical calibration**: two specimen frames (a cross grating and gold) and the
    beam moves at a second HT, fitted together with stage 1. It gives real units and the lens and
-   camera positions. Session: `stage2_acquire.py`; analysis: `stage2_analysis.py`; rehearsal:
-   `stage2_virtual_session.ipynb`.
+   camera positions. Session: `acquire.stage2`; analysis: `analyse.stage2` (both drafts); rehearsal:
+   to come (`stage2_rehearsal.ipynb`).
 
-The model and fit are in `projector_calibration.py`. The rehearsals run on the virtual NEOARM
+The model and fit are in `model.py`, the figures in `figures.py`. The rehearsals run on the virtual NEOARM
 (TemGym rays for the beam and the grating, TemGym Gaussian beamlets for the gold rings) through its
 PyJEM interface.
 
@@ -135,8 +135,8 @@ level is kept.
 **Acceptance.** $\chi^2$ inside its 99% range (the discrepancy principle), and a prediction check
 at lens settings the session never visited.
 
-**Rehearsal on the virtual NEOARM:** $\chi^2/\text{dof} = 0.6$; the mirrored camera and the pure
-deflectors found by the fit; predictions at 8 unvisited settings within 0.006 px.
+**Rehearsal on the virtual NEOARM at 60 kV:** $\chi^2/\text{dof} = 0.6$; the mirrored camera and the
+pure deflectors found by the fit; predictions at 8 unvisited settings within 0.009 px.
 
 ## 6. Stage 2: the physical calibration
 

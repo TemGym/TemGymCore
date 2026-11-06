@@ -4,7 +4,7 @@ TemGym models of a TEM column, used in two places:
 
 - as the **hidden optics** of the [virtual microscope](../virtual/README.md);
 - as the **fit model** of the stage-1 projector calibration
-  ([`examples/microscope_models/projector_calibration.py`](../../../examples/microscope_models/projector_calibration.py)).
+  ([`examples/microscope_models/model.py`](../../../examples/microscope_models/model.py)).
 
 | Module | What it holds |
 |---|---|

@@ -8,7 +8,7 @@ Scripts written against PyJEM run on it unchanged. See
 
 from .camera import CameraModel
 from .electronics import DeflectorDrive, Electronics, LensDrive, WordRangeError
-from .pyjem import ErrorCodeKind, ErrorTypeKind, NotEmulatedError, TEMError, facade, install
+from .pyjem import ErrorCodeKind, ErrorTypeKind, NotEmulatedError, TEMError, pyjem_interface, install
 from .specimens import CrossGrating, PolycrystallineGold
 from .scope import (
     OpticalTruth,
@@ -33,6 +33,6 @@ __all__ = [
     "UnmodelledStateError",
     "VirtualMicroscope",
     "WordRangeError",
-    "facade",
     "install",
+    "pyjem_interface",
 ]

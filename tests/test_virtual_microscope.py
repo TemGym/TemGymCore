@@ -126,8 +126,8 @@ def test_blanked_beam_gives_a_dark_frame_even_in_unmodelled_states(scope):
 
 
 def test_diff_mode_loads_its_own_rows_and_puts_the_back_focal_plane_on_the_camera(scope):
-    from temgym_core.virtual.pyjem import facade
-    tem3, _ = facade(scope)
+    from temgym_core.virtual.pyjem import pyjem_interface
+    tem3, _ = pyjem_interface(scope)
     eos, lens = tem3.EOS3(), tem3.Lens3()
     mag = [lens.GetIL1(), lens.GetIL2(), lens.GetIL3(), lens.GetPL1()]
     eos.SelectFunctionMode(4)
@@ -150,9 +150,9 @@ def test_truth_is_available_for_scoring_only(scope):
 
 
 def _anchor_scope():
-    from temgym_core.virtual.pyjem import facade
+    from temgym_core.virtual.pyjem import pyjem_interface
     built, _, _ = neoarm.build_virtual_neoarm(ray_sample_power=17, detector_samples_per_pixel=4)   # 256 x 256, 110 um
-    tem3, detector = facade(built)
+    tem3, detector = pyjem_interface(built)
     camera = detector.Detector(detector.get_attached_detector()[0])
     camera.set_detectorsetting({"BinningSize": 8, "ExposureTimeValue": 0.01e6})
     return built, tem3, camera
@@ -171,7 +171,7 @@ def _frame(camera):
 
 def test_cross_grating_image_gives_the_true_magnification():
     """Rays weighted by the grating's transmission; the whole-image lattice fit gives |A|."""
-    calibration = load("projector_calibration", ROOT / "examples/microscope_models/projector_calibration.py")
+    calibration = load("model", ROOT / "examples/microscope_models/model.py")
     from temgym_core.virtual import CrossGrating
     scope, tem3, camera = _anchor_scope()
     lens = tem3.Lens3()
@@ -185,7 +185,7 @@ def test_cross_grating_image_gives_the_true_magnification():
 
 def test_gold_rings_give_the_true_camera_length():
     """Gaussian beamlets, one per lit grain, through the projector; the ring radius gives |B|."""
-    calibration = load("projector_calibration", ROOT / "examples/microscope_models/projector_calibration.py")
+    calibration = load("model", ROOT / "examples/microscope_models/model.py")
     from temgym_core.constants import energy2wavelength
     from temgym_core.virtual import PolycrystallineGold
     scope, tem3, camera = _anchor_scope()

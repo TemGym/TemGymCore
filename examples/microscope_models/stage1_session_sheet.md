@@ -23,22 +23,11 @@ Everything below is by hand: at the console, with free-lens control (FLC). PyJEM
   any setting. Write both down.
 - Take one **dark frame**, with the beam blanked.
 
-## 0b. Two-minute deflector test (are CLA1 and CLA2 pure shift and pure tilt?)
+## 0b. The deflectors
 
-**At the 40k row, in focus:** the camera sees the specimen plane. Change **CLA2** (tilt) by a large
-amount.
-- The spot stays put: CLA2 is a pure tilt.
-- The spot moves: CLA2 also shifts the beam.
-
-**At the diffraction setting** (step 2): the camera sees angles. Change **CLA1** (shift) by a large
-amount.
-- The spot stays put: CLA1 is a pure shift.
-- The spot moves: CLA1 also tilts.
-
-Note what you see. **Either way, stage 1 still works.** The analysis treats each deflector as an
-unknown mix of shift and tilt. It uses the mixed model only if the data need it, and otherwise
-assumes pure deflectors. Stage 1 itself repeats this test in its frames: the tilt at setting 0 and
-the shift at the diffraction setting.
+With the pivot points aligned, CLA1 is a pure beam shift and CLA2 a pure tilt. No test is needed:
+the analysis checks this from the stage-1 data and uses a mix of shift and tilt only if the data
+need it.
 
 ## 1. Read the 40k-row lens values
 
@@ -51,17 +40,11 @@ Every other setting is a fixed multiple of these.
 
 ## 2. Read the diffraction setting
 
-1. In **MAG** mode, write down **every** lens value the console shows: OL coarse, OL fine, OM,
-   IL1–IL4, PL1–PL3.
-2. Switch to **DIFF** mode. Choose a camera length that would put gold rings well inside the
-   camera. The camera length that matters is at *our* camera, which may differ from the console's
-   number. Roughly: about 0.4 m at 60 kV, about 0.8 m at 200 kV. If a gold specimen is to hand,
-   just check the Au rings fit.
-3. Write down **every** lens value again.
-4. Note which lenses changed. If only IL1, IL2, IL3 and PL1 changed, DIFF mode is safe to use
-   later. If others changed too, we always use the copy route.
-5. **The diffraction setting = the four DIFF-mode values of IL1, IL2, IL3, PL1.** Go back to MAG.
-   For stage 1, always set these four values with free-lens control **in MAG mode**.
+1. Switch to **DIFF** mode. Choose a camera length that would put gold rings well inside the
+   camera (for stage 2 later). The camera length that matters is at *our* camera, which may differ
+   from the console's number. Roughly: about 0.4 m at 60 kV, about 0.8 m at 200 kV.
+2. **The diffraction setting = the four DIFF-mode values of IL1, IL2, IL3, PL1.** Write them down
+   and go back to MAG. Stage 1 sets these four values with free-lens control **in MAG mode**.
 
 ## 3. The 12 visits
 
@@ -102,7 +85,7 @@ number:
 | diff. | the four DIFF-mode values from step 2 | | | |
 
 ("1" means unchanged from the 40k row.) Check that nothing exceeds 65535. At 200 kV the largest is
-IL2 at 1.609 × 24 862 ≈ 40 000, so it fits.
+IL2 at 1.609 × 24 862 ≈ 40 000, so it fits; at 60 kV every value is about half as large.
 
 **The order of visits:**
 
@@ -150,21 +133,23 @@ positions (a specimen for the units, a second HT for the positions) comes later.
 
 ---
 
-## With PyJEM: the script does steps 3–5 for you
+## With PyJEM: the script does steps 1–5 for you
 
-Copy **`stage1_acquire.py`** to the microscope PC. It needs only numpy and PyJEM. Do steps 0–2 by
-hand: setup, the 40k row, and reading the diffraction setting. Then, in Python on the microscope PC:
+Copy **`acquire.py`** to the microscope PC. It needs only numpy and PyJEM. Do step 0 by hand
+(setup, ending in MAG at the 40k row, free-lens control off). Then, in Python on the microscope PC:
 
 ```python
 from PyJEM import TEM3, detector
-import stage1_acquire as S
+import acquire
 
-S.run(TEM3, detector, "D:/stage1/2026-11-06",          # a new, empty folder
-      diffraction=[IL1, IL2, IL3, PL1],                 # the four DIFF-mode values from step 2
-      max_units=(5000, 5000))                           # start cautious: largest deflector change
+folder = acquire.stage1(TEM3, detector, "D:/stage1/2026-11-06",   # a new, empty folder
+                        camera_length_cm=40,              # DIFF row of the diffraction setting (60 kV)
+                        max_units=(5000, 5000))           # start cautious: largest deflector change
 ```
 
 **What the script does:**
+- reads the diffraction setting: switches to DIFF at the camera length, reads IL1–PL1, and goes back
+  to MAG;
 - reads the 40k row from the lenses as they are, writes it into free-lens control for IL1–PL1 and
   switches that on (a value left in free-lens control from earlier cannot creep in);
 - takes a dark frame;
@@ -179,31 +164,21 @@ S.run(TEM3, detector, "D:/stage1/2026-11-06",          # a new, empty folder
 
 **Before relying on it, check on the real system:**
 - the free-lens ids (IL1 10, IL2 11, IL3 12, PL1 14);
-- what CLA1 and CLA2 do (step 0b). The analysis copes with any mix of shift and tilt, but
-  it is good to know;
+- that CLA1 is the beam shift and CLA2 the tilt (the analysis copes with any mix of the two);
 - the camera's pixel type. Pass `dtype="<u2"` if the first-frame values look wrong.
 
-`S.read_diffraction_setting(TEM3, camera_length_cm=80)` does step 2 in one call: it reads every
-lens in MAG, switches to DIFF at that camera length, reads them again, goes back to MAG, and returns
-the 40k row, the diffraction setting and the lenses that changed. (`S.read_all_lenses(TEM3)` reads
-them once.)
-
-**Worth one check at the real microscope:** take a frame in DIFF mode, then set the same four values
-in MAG with free-lens control and take another. The spot should land in the same place; if it does
-not, DIFF mode changes something besides IL1–IL3 and PL1.
-
-**Afterwards:** copy the folder back. `stage1_analysis.fit_session(folder)` fits the model;
-`stage1_analysis.predict(model, dac, shift=(dx, dy))` predicts beam moves.
+**Afterwards:** copy the folder back. `model = analyse.stage1(folder)` fits the model;
+`analyse.predict(model, dac, shift=(dx, dy))` predicts beam moves.
 
 **If there is time, check the model at the microscope.** Pick some new lens settings within the
 range of the 9, and run:
 
 ```python
-S.check_run(TEM3, detector, "D:/stage1/check", settings, offsets=(2000, 2000))
+check = acquire.check(TEM3, detector, "D:/stage1/check", settings, offsets=(2000, 2000))
 ```
 
-`stage1_analysis.compare(model, check_folder)` then shows measured against predicted.
+`analyse.compare(model, check)` then shows measured against predicted.
 
-Dry run on the virtual NEOARM (`stage1_virtual_session.ipynb`, now with a DIFF mode): 111 frames,
-χ²/dof 0.5. The fit found the virtual camera's mirror on its own. At 8 lens settings stage 1 never
-used, predictions matched the measurements to 0.001–0.009 px.
+Dry run on the virtual NEOARM at 60 kV (`stage1_rehearsal.ipynb`): χ²/dof 0.6. The fit found
+the virtual camera's mirror on its own. At 8 lens settings stage 1 never used, predictions matched
+the measurements to within 0.009 px.

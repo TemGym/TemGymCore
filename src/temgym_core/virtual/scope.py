@@ -69,8 +69,9 @@ class OpticalTruth:
     condenser_parameters, projector_parameters : tuple of float
         Physical calibration-model parameters (31 and 16 values).
     voltages_v : tuple of float, optional
-        Modelled high tensions; the first is the parameters' reference voltage and
-        each has its own source (index in this tuple).
+        Modelled operating high tensions; each has its own source (index in this tuple).
+    reference_voltage_v : float, optional
+        The high tension at which the parameters are stated.
     aperture_diameters_um : tuple of float, optional
         Diameters of the two condenser-aperture holes with fitted centres
         (aperture index 0 and 1).
@@ -83,6 +84,7 @@ class OpticalTruth:
     condenser_parameters: tuple
     projector_parameters: tuple
     voltages_v: tuple = (200e3, 195e3)
+    reference_voltage_v: float = 200e3
     aperture_diameters_um: tuple = (20.0, 50.0)
     aperture_edge_width_m: float = 150e-9
     gap_fractions: tuple = (0.3, 0.7)
@@ -95,7 +97,7 @@ class OpticalTruth:
             object.__setattr__(self, name, tuple(float(v) for v in getattr(self, name)))
 
     @classmethod
-    def from_files(cls, experiment_path, scoring_truth_path):
+    def from_files(cls, experiment_path, scoring_truth_path, voltages_v=None):
         """Load a saved synthetic acquisition's truth.
 
         Parameters
@@ -105,6 +107,9 @@ class OpticalTruth:
             ``aperture_edge_width_m`` (and optionally ``deflector_gap_fractions``).
         scoring_truth_path : str or Path
             ``scoring_truth.json`` with the 31 + 16 physical parameters.
+        voltages_v : tuple of float, optional
+            Operating high tensions (default: those of ``experiment.json``). The parameters stay
+            stated at the first voltage of ``experiment.json``.
 
         Returns
         -------
@@ -113,7 +118,8 @@ class OpticalTruth:
         spec = json.loads(Path(experiment_path).read_text())
         truth = json.loads(Path(scoring_truth_path).read_text())
         return cls(truth["condenser_parameters"], truth["projector_parameters"],
-                   voltages_v=spec["voltages_v"], aperture_diameters_um=spec["aperture_diameters_um"],
+                   voltages_v=voltages_v or spec["voltages_v"], reference_voltage_v=spec["voltages_v"][0],
+                   aperture_diameters_um=spec["aperture_diameters_um"],
                    aperture_edge_width_m=spec["aperture_edge_width_m"],
                    gap_fractions=spec.get("deflector_gap_fractions", (0.3, 0.7)))
 
@@ -359,7 +365,7 @@ class VirtualMicroscope:
             raise UnmodelledStateError(reasons)
         drives = self.electronics.lenses
         condenser_controls = tuple(drives[n].control(self.lens_word(n)) for n in CONDENSER_LENSES)
-        projector_controls = (1.0,) + tuple(drives[n].control(self.lens_word(n)) for n in PROJECTOR_LENSES)
+        projector_controls = (self.electronics.objective_control,) + tuple(drives[n].control(self.lens_word(n)) for n in PROJECTOR_LENSES)
         words = (*self.deflectors["CLA1"], *self.deflectors["CLA2"])
         kick = tuple(float(k) for k in self.electronics.deflector.kick(words, self.ht_v))
         diameter = self.aperture_holes[condenser["size"]]
@@ -394,7 +400,7 @@ class VirtualMicroscope:
         gold = isinstance(specimen, PolycrystallineGold)
         column, mean, covariance, source_z = setting_column(
             np.asarray(t.condenser_parameters), np.asarray(t.projector_parameters),
-            voltage_v=setting.voltage_v, reference_voltage_v=t.voltages_v[0],
+            voltage_v=setting.voltage_v, reference_voltage_v=t.reference_voltage_v,
             source_index=setting.source_index, condenser_controls=np.asarray(setting.condenser_controls),
             projector_controls=np.asarray(setting.projector_controls),
             specimen_kick=np.asarray(setting.specimen_kick), aperture_index=setting.aperture_index,
@@ -412,7 +418,7 @@ class VirtualMicroscope:
             from ..run import column_matrix
 
             projector = projector_components(at_voltage(np.asarray(t.projector_parameters), setting.voltage_v,
-                                                        t.voltages_v[0]), np.asarray(setting.projector_controls))
+                                                        t.reference_voltage_v), np.asarray(setting.projector_controls))
             condenser = (*column[:len(column) - len(projector)], Plane(z=0.0))
             m = np.asarray(column_matrix(condenser, source_z=source_z, voltage=setting.voltage_v))
             incident_mean = m[:4, :4] @ np.asarray(mean) + m[:4, 4]

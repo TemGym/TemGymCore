@@ -1,6 +1,6 @@
 """PyJEM-1.4-compatible control interface for :class:`~.scope.VirtualMicroscope`.
 
-``facade(scope)`` returns two module objects, ``TEM3`` and ``detector``, that
+``pyjem_interface(scope)`` returns two module objects, ``TEM3`` and ``detector``, that
 mirror ``from PyJEM import TEM3, detector`` (PyJEM 1.4.0.3782): the same class
 and method names, bare return values (``int``, ``float`` or ``list``),
 setters returning ``None``, and :class:`TEMError` with
@@ -635,7 +635,7 @@ class Detector:
 
 
 # -------------------------------------------------------------- module glue
-def facade(scope):
+def pyjem_interface(scope):
     """Build ``TEM3`` and ``detector`` module objects bound to one virtual microscope.
 
     Parameters
@@ -685,7 +685,7 @@ def install(scope, *, include_offline=True, force=False):
     """
     if "PyJEM" in sys.modules and not getattr(sys.modules["PyJEM"], "_temgym_virtual", False) and not force:
         raise RuntimeError("A real PyJEM is already imported; pass force=True to shadow it.")
-    tem3, det = facade(scope)
+    tem3, det = pyjem_interface(scope)
     package = types.ModuleType("PyJEM", "Virtual-microscope emulation of PyJEM 1.4.")
     package.__path__ = []
     package._temgym_virtual = True
@@ -710,4 +710,4 @@ def install(scope, *, include_offline=True, force=False):
                 sys.modules[name] = module
 
 
-__all__ = ["TEMError", "ErrorTypeKind", "ErrorCodeKind", "NotEmulatedError", "facade", "install"]
+__all__ = ["TEMError", "ErrorTypeKind", "ErrorCodeKind", "NotEmulatedError", "pyjem_interface", "install"]

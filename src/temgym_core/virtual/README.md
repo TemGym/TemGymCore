@@ -5,9 +5,9 @@ drive it with the same calls as PyJEM 1.4. Behind those calls sit hidden TemGym 
 electronics and a camera:
 
 ```python
-from temgym_core.virtual.pyjem import facade
+from temgym_core.virtual.pyjem import pyjem_interface
 
-TEM3, detector = facade(scope)            # scope: a VirtualMicroscope
+TEM3, detector = pyjem_interface(scope)   # scope: a VirtualMicroscope
 TEM3.EOS3().SelectFunctionMode(4)         # DIFF
 ```
 
@@ -22,7 +22,7 @@ with install(scope):
 
 [`examples/microscope_models/virtual_neoarm.py`](../../../examples/microscope_models/virtual_neoarm.py)
 builds the virtual NEOARM, and
-[`stage1_virtual_session.ipynb`](../../../examples/microscope_models/stage1_virtual_session.ipynb)
+[`stage1_rehearsal.ipynb`](../../../examples/microscope_models/stage1_rehearsal.ipynb)
 runs the stage-1 projector calibration on it through PyJEM calls only.
 
 ## What is modelled
@@ -54,7 +54,7 @@ measuring small spots (the stage-1 rehearsal does).
 | **Free-lens control** | Switch-on keeps a stored value if there is one, else the present value; selector, mode and spot changes leave free-lens lenses alone. | Not verified. `stage1_acquire.run` writes the values before switching on, so either behaviour is safe. | Check on the instrument. |
 | **Deflectors** | CLA1 = pure shift, CLA2 = pure tilt, linear. | Mixing, balances and hysteresis unknown; the stage-1 analysis can fit a mix. | Mixing as a switch. |
 | **Camera** | Ideal by default: 32-bit output, never saturates. Its image is mirrored relative to the column's x + iy (the stage-1 analysis detects this). | 16-bit or 12-bit words; orientation unknown. | `CameraModel(data_bits=16, …)`. |
-| **High tension** | 200 and 195 kV only (one source per HT); lens DAC values stay fixed when HT changes. | Settling and drift. | Drift model. |
+| **High tension** | Aligned at 200 kV or 60 kV (`build_virtual_neoarm(ht_v=...)`): the console tables are the 200 kV ones scaled by p(HT)/p(200 kV), objective included, so the optics are the same. One second HT each (195 or 80 kV) with the DAC values held. The gun source is the same at every HT. | Each HT has its own alignment and source; settling and drift. | Drift model; a different source per HT. |
 | **Objective** | Fixed at (OLc, OLf) = (45818, 39178). | Kept fixed in stage 1. | — |
 | **Apertures** | Condenser holes 1 = 50 µm, 2 = 20 µm; all others open. | Hole numbering and the ARM aperture API unverified. | Map the real strip. |
 | **Stage / specimen** | Stage tracked, no optical effect; the specimen is set by hand. The grating is amplitude-only (no phase contrast, no defocus fringes); gold grains scatter independently (no interference, no dynamical effects). | Real grids: alloy decoration, carbon support, specimen height. | Stage position selects grating, gold or a hole. |

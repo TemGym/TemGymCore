@@ -7,9 +7,9 @@ Deflector commands enter through unknown scales (and optionally a mix of shift a
 camera through an unknown rotation. The fit is weighted least squares to the measured
 half-differences of +/- kicks, at the beam-position wobble.
 
-* **Stage 1** (one HT, no specimen; ``stage1_acquire.py`` / ``stage1_analysis.py``) fixes the
+* **Stage 1** (one HT, no specimen; ``acquire.stage1`` / ``analyse.stage1``) fixes the
   predictions; lens positions are not unique yet.
-* **Stage 2** (``stage2_acquire.py`` / ``stage2_analysis.py``) makes it physical. Two specimen
+* **Stage 2** (``acquire.stage2`` / ``analyse.stage2``, draft) makes it physical. Two specimen
   frames: a cross-grating image at setting 0 gives |A| (:func:`grating_period_px`) and a gold ring
   pattern at the diffraction setting gives |B| (:func:`ring_radii_px`), so the kick scales are in
   metres and radians (:func:`specimen_scales`); and the beam moves at a second HT fix the lens and

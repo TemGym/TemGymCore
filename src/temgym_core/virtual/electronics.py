@@ -188,13 +188,16 @@ class Electronics:
     deflector : DeflectorDrive
         Beam shift (CLA1) and tilt (CLA2).
     objective_words : tuple of int, optional
-        ``(OLc, OLf)`` words at which the objective has its reference strength
-        (relative control one). Other objective words are not modelled.
+        ``(OLc, OLf)``: the objective's words. Other objective words are not modelled.
+    objective_control : float, optional
+        The objective's relative control at those words (1 at the reference HT's alignment;
+        p(HT) / p(reference) for a console aligned at another HT).
     """
 
     lenses: dict
     deflector: DeflectorDrive
     objective_words: tuple = (45818, 39178)
+    objective_control: float = 1.0
     modelled: tuple = field(default=("CL1", "CL3", "CM", "IL1", "IL2", "IL3", "PL1"), init=False)
 
     def __post_init__(self):

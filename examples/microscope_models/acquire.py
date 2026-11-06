@@ -1,29 +1,39 @@
-"""Stage 1 at the microscope, through PyJEM only (needs numpy and PyJEM; nothing from TemGym).
+"""Drive the microscope for the projector calibration, through PyJEM only (numpy + PyJEM;
+nothing from TemGym). This is the one file to copy to the microscope PC.
 
-What it does, at the HT and 40k row the microscope is at:
+Start in MAG at the 40k row, free-lens control off, at the HT of the session (60 kV planned).
+
+    from PyJEM import TEM3, detector
+    import acquire
+
+    folder = acquire.stage1(TEM3, detector, "D:/stage1/2026-11-06", camera_length_cm=40)
+
+:func:`stage1` (no specimen, one HT):
 
 1. records the full microscope state;
-2. reads the DAC values of IL1, IL2, IL3 and PL1 (the 40k row), writes them into free-lens control
-   (FLC) and switches it on;
-3. takes a dark frame (beam blanked);
-4. visits 12 lens settings (8 multiples of the 40k row, the diffraction setting, setting 0 three
+2. reads the diffraction setting: switches to DIFF at ``camera_length_cm``, reads IL1, IL2, IL3
+   and PL1, and goes back to MAG;
+3. reads the same four lenses at the 40k row, writes them into free-lens control (FLC) and
+   switches it on;
+4. takes a dark frame (beam blanked);
+5. visits 12 lens settings (8 multiples of the 40k row, the diffraction setting, setting 0 three
    times in all, and setting 0 once with y kicks). At each: a frame without a kick, a small test
    kick, then a +/- beam shift (CLA1) and a +/- beam tilt (CLA2), each scaled to move the beam
    about ``target_px``, kept on the camera;
-5. saves every frame (``frames/NNNN.npy``) and a log line per frame (``log.json``, rewritten after
+6. saves every frame (``frames/NNNN.npy``) and a log line per frame (``log.json``, rewritten after
    every frame), and restores the lenses, deflectors and blanking at the end, even after an error.
 
-Use at the microscope::
+:func:`check` measures beam moves at new lens settings, to test the model's predictions.
+:func:`stage2` (draft) is the second-HT part of stage 2; :func:`take_frame` takes the specimen
+frames.
 
-    from PyJEM import TEM3, detector
-    import stage1_acquire as S
-    S.run(TEM3, detector, "D:/stage1/2026-11-06", diffraction=[IL1, IL2, IL3, PL1])
+``camera_length_cm`` is the DIFF row of the diffraction setting (about 40 cm at 60 kV, 80 cm at
+200 kV, so the gold rings fit on the camera for stage 2). To use values read by hand instead, pass
+``diffraction=[IL1, IL2, IL3, PL1]``.
 
-``diffraction`` are the four DAC values read in DIFF mode (see ``stage1_at_the_microscope.md``).
-:func:`read_all_lenses` reads every lens value, for the MAG / DIFF comparison.
-
-Check on the real system before relying on it: the free-lens ids (IL1 10, IL2 11, IL3 12, PL1 14),
-that CLA1 is the beam shift and CLA2 the beam tilt, and the camera data type (``dtype``; by default 2 or 4 bytes per pixel are read as signed integers).
+Check on the real system before relying on it: the free-lens ids (IL1 10, IL2 11, IL3 12, PL1 14,
+CL3 2), that CLA1 is the beam shift and CLA2 the beam tilt, and the camera data type (``dtype``; by
+default 2 or 4 bytes per pixel are read as signed integers).
 """
 
 import json
@@ -269,27 +279,22 @@ def select_camera_length(eos, camera_length_cm):
         eos.UpSelector()
 
 
-def read_diffraction_setting(TEM3, camera_length_cm=80):
-    """Read the 40k row in MAG, then the diffraction setting in DIFF at ``camera_length_cm``.
-
-    Start in MAG at the 40k row. Switches to DIFF, steps the selector up to the camera length,
-    reads every lens, and switches back to MAG. Returns the 40k row and the diffraction setting
-    (IL1, IL2, IL3, PL1 DAC values) and ``{lens: (MAG value, DIFF value)}`` for every lens that
-    differs; only IL1-IL3 and PL1 should.
-    """
-    eos = TEM3.EOS3()
-    in_mag = read_all_lenses(TEM3)
+def read_diffraction_setting(TEM3, camera_length_cm=40):
+    """Read IL1, IL2, IL3, PL1 at the 40k row (MAG), then in DIFF at ``camera_length_cm`` (the
+    diffraction setting), and go back to MAG. Start in MAG at the 40k row, with free-lens control
+    off, so the console's own values are read. Returns both as arrays of DAC values."""
+    lens, eos = TEM3.Lens3(), TEM3.EOS3()
+    four = lambda: np.array([getattr(lens, f"Get{name}")() for name in FLC_IDS], float)
+    base = four()
     select_camera_length(eos, camera_length_cm)
-    in_diff = read_all_lenses(TEM3)
     print(f"DIFF at {eos.GetMagValue()[2]}", flush=True)
+    diffraction = four()
     eos.SelectFunctionMode(0)                                     # back to MAG
-    four = list(FLC_IDS)
-    changed = {k: (in_mag[k], in_diff[k]) for k in ALL_LENSES if in_mag.get(k) != in_diff.get(k)}
-    return (np.array([in_mag[k] for k in four], float), np.array([in_diff[k] for k in four], float), changed)
+    return base, diffraction
 
 
 def read_all_lenses(TEM3):
-    """Every lens value PyJEM can read (for the MAG / DIFF comparison). Missing getters are skipped."""
+    """Every lens value PyJEM can read (saved with each session). Missing getters are skipped."""
     lens, eos = TEM3.Lens3(), TEM3.EOS3()
     values = {}
     for name in ALL_LENSES:
@@ -304,13 +309,16 @@ def read_all_lenses(TEM3):
     return values
 
 
-def run(TEM3, detector, out, *, diffraction, camera_name=None, dtype=None, settle_s=2.0, target_px=50.0,
-        test_units=(300, 300), max_units=(20000, 20000)):
-    """Run stage 1 (see the module docstring). ``diffraction`` = the four DIFF-mode DAC values
-    (IL1, IL2, IL3, PL1). Returns the output folder."""
+def stage1(TEM3, detector, out, *, camera_length_cm=40, diffraction=None, camera_name=None, dtype=None,
+        settle_s=2.0, target_px=50.0, test_units=(300, 300), max_units=(20000, 20000)):
+    """Stage 1 (see the module docstring). The diffraction setting is read in DIFF at
+    ``camera_length_cm``, unless given as ``diffraction`` (IL1, IL2, IL3, PL1 DAC values).
+    Returns the output folder."""
     s = Session(TEM3, detector, out, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
     state = s.save_state(TEM3)
     centre = s.deflectors()
+    if diffraction is None:
+        _, diffraction = read_diffraction_setting(TEM3, camera_length_cm)
     try:
         base = s.take_over_lenses(state)
         settings, flipped = {}, []
@@ -341,7 +349,7 @@ def run(TEM3, detector, out, *, diffraction, camera_name=None, dtype=None, settl
     return s.out
 
 
-def check_run(TEM3, detector, out, settings, *, offsets=(3000, 3000), camera_name=None, dtype=None, settle_s=2.0):
+def check(TEM3, detector, out, settings, *, offsets=(3000, 3000), camera_name=None, dtype=None, settle_s=2.0):
     """Measure fixed +/- shift and tilt kicks (``offsets``, deflector units) at lens ``settings``
     (rows of IL1, IL2, IL3, PL1 DAC values) -- for comparing with the model's predictions."""
     s = Session(TEM3, detector, out, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
@@ -373,94 +381,97 @@ def check_run(TEM3, detector, out, settings, *, offsets=(3000, 3000), camera_nam
     return s.out
 
 
-def _half_differences(session, entries):
-    """Half the centroid difference of the last plus/minus frames of each kind in ``entries``."""
-    out = {}
-    for kind in ("shift", "tilt"):
-        plus = [e for e in entries if e["kind"] == kind and e["role"] == "plus"]
-        minus = [e for e in entries if e["kind"] == kind and e["role"] == "minus"]
-        if plus and minus:
-            frames = [np.load(session.out / e["file"]) for e in (plus[-1], minus[-1])]
-            centres = [measure_spot(f, session.background)[0] for f in frames]
-            out[kind] = (centres[0] - centres[1]) / 2
+# ---------------------------------------------------------------------------- stage 2 (draft)
+#: Free-lens id of CL3 (the brightness): re-condensing after an HT change.
+CL3_ID = 2
+
+
+def fixed_settings(base_dac, n=30):
+    """The fixed stage-2 list: ``n`` lens settings spread evenly (a Halton sequence) over 0.1-2x
+    the 40k-row DAC values, within the DAC range. Known before the session."""
+    base = np.asarray(base_dac, float)
+    lo, hi = 0.1 * base, np.minimum(2 * base, DAC_MAX)
+    return np.round(lo + (hi - lo) * _halton(n, (2, 3, 5, 7)))
+
+
+def _halton(n, bases):
+    """Points 1..n of the Halton sequence (radical inverses in the given prime bases)."""
+    out = np.zeros((n, len(bases)))
+    for j, b in enumerate(bases):
+        for i in range(1, n + 1):
+            f, k, x = 1.0, i, 0.0
+            while k:
+                f /= b
+                x += f * (k % b)
+                k //= b
+            out[i - 1, j] = x
     return out
 
 
-def deflector_test(TEM3, detector, out, focus_dac, diffraction_dac, *, units=10000, camera_name=None,
-                   dtype=None, settle_s=2.0):
-    """The two-minute deflector test. At the in-focus setting a pure tilt does not move the spot;
-    at the diffraction setting a pure shift does not. Returns the beam movement (px) for a change
-    of ``units`` in CLA1 (shift) and CLA2 (tilt) at both settings."""
+def recondense(s, dac, *, span=0.06, steps=25):
+    """At lens setting ``dac``, step CL3 (free-lens control) over +/- ``span`` of its present value
+    and keep the value that gives the smallest spot with the beam fully on the camera. Returns it."""
+    s.set_lenses(dac)
+    start = s.lens.GetFLCInfo(CL3_ID)[1]
+    s.lens.SetFLCAbs(CL3_ID, start)
+    s.lens.SetFLCSw(CL3_ID, 1)
+    trials = []
+    for value in np.round(start * np.linspace(1 - span, 1 + span, steps)).astype(int):
+        s.lens.SetFLCAbs(CL3_ID, int(value))
+        frame = s.snap(role="condense", kind="none", offset=[0, 0], visit=-1, setting="condense", direction="x",
+                       dac=list(dac), cl3=int(value))
+        _, rms, edge = measure_spot(frame, s.background)
+        trials.append((int(value), rms, edge, float(np.sum(frame - s.background))))
+    most = max(t[3] for t in trials)
+    whole = [t for t in trials if t[2] < 1e-3 and t[3] > 0.9 * most]     # the whole beam on the camera
+    if not whole:
+        raise RuntimeError("no CL3 value in the range puts the whole beam on the camera; condense by hand")
+    value, rms = min(whole, key=lambda t: t[1])[:2]
+    s.lens.SetFLCAbs(CL3_ID, value)
+    print(f"  re-condensed: CL3 {start} -> {value} (spot rms {rms:.1f} px)", flush=True)
+    return value
+
+
+def stage2(TEM3, detector, out, *, stage1_folder, ht_v1, n_settings=30, ht_settle_s=60.0, camera_name=None, dtype=None,
+        settle_s=2.0, target_px=50.0, test_units=(300, 300), max_units=(20000, 20000)):
+    """**Draft.** The second-HT part of stage 2, specimen out: at HT ``ht_v1`` the 9 stage-1
+    settings and a fixed list of ``n_settings`` more, then the fixed list again back at the stage-1
+    HT. The projector DAC values stay fixed; after each HT change the beam is re-condensed with CL3
+    (:func:`recondense`). Settings whose beam is off the camera are skipped. Everything, including
+    the HT and CL3, is restored at the end. Returns the output folder."""
+    plan1 = json.loads((Path(stage1_folder) / "plan.json").read_text())
+    stage1 = {k: np.asarray(v, float) for k, v in plan1["settings"].items()}
     s = Session(TEM3, detector, out, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
-    flc = {n: s.lens.GetFLCInfo(i) for n, i in FLC_IDS.items()}
-    centre = s.deflectors()
-    results = {}
+    state = s.save_state(TEM3)
+    ht_v0, centre = state["ht_v"], s.deflectors()
+    cl3 = s.lens.GetFLCInfo(CL3_ID)                                  # [switch, value], restored at the end
     try:
-        for i in FLC_IDS.values():
-            s.lens.SetFLCSw(i, 1)
-        for k, (label, dac) in enumerate((("in focus", focus_dac), ("diffraction", diffraction_dac))):
-            start = len(s.log)
-            s.visit(k, label, dac, "x", centre=centre, target_px=0, test_units=(0, 0), max_units=(0, 0),
-                    offsets={"shift": units, "tilt": units})
-            moves = _half_differences(s, s.log[start:])
-            results[label] = {"CLA1 (shift)": abs(moves["shift"]), "CLA2 (tilt)": abs(moves["tilt"])}
-    finally:
-        for name in ("CLA1", "CLA2"):
-            s.set_deflector(name, centre[name])
-        for (name, i) in FLC_IDS.items():
-            s.lens.SetFLCAbs(i, flc[name][1])
-            s.lens.SetFLCSw(i, flc[name][0])
-    return results
-
-
-def find_diffraction_il3(TEM3, detector, out, start_dac, *, span=0.3, steps=11, units=3000, camera_name=None,
-                         dtype=None, settle_s=2.0, max_moves=6):
-    """Fallback when DIFF mode cannot be read: from ``start_dac`` (IL1, IL2, IL3, PL1), step IL3 and
-    measure how far a CLA1 (shift) change of ``units`` moves the spot. Where it does not move, A = 0:
-    that is the diffraction setting.
-
-    The window (+/- ``span`` around the start) moves on while the smallest movement sits at its edge,
-    then is refined twice around the smallest. Returns the four DAC values and every (IL3, movement)."""
-    s = Session(TEM3, detector, out, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
-    flc = {n: s.lens.GetFLCInfo(i) for n, i in FLC_IDS.items()}
-    centre = s.deflectors()
-    start_dac = np.asarray(start_dac, float)
-    scan = []
-
-    def measure(il3):
-        dac = np.r_[start_dac[:2], round(il3), start_dac[3]]
-        start = len(s.log)
-        s.visit(len(scan), "IL3 scan", dac, "x", centre=centre, target_px=0, test_units=(0, 0),
-                max_units=(0, 0), offsets={"shift": units, "tilt": 0})
-        scan.append((float(dac[2]), abs(_half_differences(s, s.log[start:])["shift"])))
-
-    try:
-        for i in FLC_IDS.values():
-            s.lens.SetFLCSw(i, 1)
-        width = 2 * span * start_dac[2]
-        lo = start_dac[2] - width / 2
-        for move in range(max_moves + 1):                          # coarse: move the window downhill
-            grid = np.clip(np.linspace(lo, lo + width, steps), 1, DAC_MAX)
-            for il3 in grid:
-                measure(il3)
-            values = [m for _, m in scan[-steps:]]
-            k = int(np.argmin(values))
-            if 0 < k < steps - 1 or move == max_moves:
-                break
-            lo = lo - width * 0.8 if k == 0 else lo + width * 0.8
-            if lo + width < 1 or lo > DAC_MAX:
-                break
-        for _ in range(2):                                         # refine around the smallest
-            best = min(scan, key=lambda t: t[1])[0]
-            step = width / (steps - 1)
-            width = 2 * step
-            for il3 in np.clip(np.linspace(best - step, best + step, steps), 1, DAC_MAX):
-                measure(il3)
-    finally:
-        for name in ("CLA1", "CLA2"):
-            s.set_deflector(name, centre[name])
-        for (name, i) in FLC_IDS.items():
-            s.lens.SetFLCAbs(i, flc[name][1])
-            s.lens.SetFLCSw(i, flc[name][0])
-    best = min(scan, key=lambda t: t[1])
-    return np.r_[start_dac[:2], round(best[0]), start_dac[3]], scan
+        base = s.take_over_lenses(state)
+        if np.any(base != np.asarray(plan1["base_dac"])):
+            print(f"  note: the 40k row reads {base}, stage 1 had {plan1['base_dac']}", flush=True)
+        fixed = {f"f{k}": dac for k, dac in enumerate(fixed_settings(base, n_settings))}
+        visits = [(label, ht_v1) for label in [*stage1, *fixed]] + [(label, ht_v0) for label in fixed]
+        settings = {**stage1, **fixed}
+        (s.out / "plan.json").write_text(json.dumps(dict(
+            base_dac=base.tolist(), diffraction=plan1["diffraction"], ht_v0=ht_v0, ht_v1=ht_v1,
+            settings={k: v.tolist() for k, v in settings.items()}, visits=visits, centre=centre,
+            stage1_folder=str(stage1_folder), target_px=target_px), indent=1, default=_plain))
+        s.dark_frame(base)
+        skipped = []
+        for visit, (label, ht) in enumerate(visits):
+            if s.ht.GetHtValue() != ht:
+                print(f"HT -> {ht / 1e3:g} kV, waiting {ht_settle_s:g} s", flush=True)
+                s.ht.SetHtValue(ht)
+                time.sleep(ht_settle_s)
+                recondense(s, base)
+            used = s.visit(visit, label, settings[label], "x", centre=centre, target_px=target_px,
+                           test_units=test_units, max_units=max_units, skip_off_camera=True)
+            if used is None:
+                skipped.append(f"{label} at {ht / 1e3:g} kV")
+        print(f"{len(visits) - len(skipped)} of {len(visits)} visits measured"
+              + (f"; skipped (beam off the camera): {', '.join(skipped)}" if skipped else ""), flush=True)
+    finally:                                                         # always put the microscope back
+        s.lens.SetFLCAbs(CL3_ID, cl3[1])
+        s.lens.SetFLCSw(CL3_ID, cl3[0])
+        s.restore(state, centre)
+    return s.out
