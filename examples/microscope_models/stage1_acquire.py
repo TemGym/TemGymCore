@@ -3,7 +3,8 @@
 What it does, at the HT and 40k row the microscope is at:
 
 1. records the full microscope state;
-2. switches free-lens control (FLC) on for IL1, IL2, IL3 and PL1 and reads their DAC values (the 40k row);
+2. reads the DAC values of IL1, IL2, IL3 and PL1 (the 40k row), writes them into free-lens control
+   (FLC) and switches it on;
 3. takes a dark frame (beam blanked);
 4. visits 12 lens settings (8 multiples of the 40k row, the diffraction setting, setting 0 three
    times in all, and setting 0 once with y kicks). At each: a frame without a kick, a small test
@@ -131,17 +132,72 @@ class Session:
         (self.out / "log.json").write_text(json.dumps(self.log, indent=1, default=_plain))
         return frame
 
+    # -- session bookkeeping (shared by stage 1 and stage 2) ---------------------------------------
+    def save_state(self, TEM3):
+        """Record the whole microscope state (``state_before.json``) and return it."""
+        state = dict(time=time.time(), ht_v=self.ht.GetHtValue(), mag=self.eos.GetMagValue(),
+                     function_mode=self.eos.GetFunctionMode(), lenses=read_all_lenses(TEM3),
+                     flc={n: self.lens.GetFLCInfo(i) for n, i in FLC_IDS.items()}, **self.deflectors(),
+                     beam_blank=self.defl.GetBeamBlank(), camera=self.camera.get_detectorsetting())
+        (self.out / "state_before.json").write_text(json.dumps(state, indent=1, default=_plain))
+        return state
+
+    def take_over_lenses(self, state):
+        """Put IL1-PL1 under free-lens control at the values they run at now (the 40k row), and
+        return those values. They are read before free-lens control is touched and written into it
+        before switching on, so a value left over from earlier cannot replace them."""
+        base = np.array([state["lenses"][name] for name in FLC_IDS], float)
+        if any(state["flc"][name][0] for name in FLC_IDS):
+            print("  note: free-lens control was already on; its values are taken as the 40k row", flush=True)
+        for k, (name, i) in enumerate(FLC_IDS.items()):
+            self.lens.SetFLCAbs(i, int(base[k]))
+            self.lens.SetFLCSw(i, 1)
+        readback = np.array([self.lens.GetFLCInfo(i)[1] for i in FLC_IDS.values()], float)
+        if np.any(readback != base):
+            raise RuntimeError(f"free-lens control reads {readback}, expected the 40k row {base}")
+        return base
+
+    def dark_frame(self, dac):
+        """A frame with the beam blanked; its median is the background of every later frame."""
+        self.defl.SetBeamBlank(1)
+        time.sleep(0.5)
+        dark = self.snap(role="dark", kind="none", offset=[0, 0], visit=-1, setting="dark", direction="x",
+                         dac=list(dac))
+        self.defl.SetBeamBlank(0)
+        self.background = float(np.median(dark))
+
+    def restore(self, state, centre):
+        """Put the deflectors, free-lens control, blanking and HT back as they were."""
+        for name in ("CLA1", "CLA2"):
+            self.set_deflector(name, centre[name])
+        for (name, i) in FLC_IDS.items():
+            self.lens.SetFLCAbs(i, state["flc"][name][1])
+            self.lens.SetFLCSw(i, state["flc"][name][0])
+        self.defl.SetBeamBlank(state["beam_blank"])
+        if self.ht.GetHtValue() != state["ht_v"]:
+            self.ht.SetHtValue(state["ht_v"])
+
     # -- one lens setting --------------------------------------------------------------------
-    def visit(self, visit, label, dac, direction, *, centre, target_px, test_units, max_units, offsets=None):
+    def visit(self, visit, label, dac, direction, *, centre, target_px, test_units, max_units, offsets=None,
+              skip_off_camera=False):
         """Base frame, then for shift (CLA1) and tilt (CLA2): a test kick (unless ``offsets`` are
         given), and the +/- pair, scaled to move the beam ``target_px``. If either frame of the
         pair shows the beam cut by the frame edge, the kick is halved and the pair retaken.
-        Returns the offsets used, in deflector units."""
+        With ``skip_off_camera``, a setting whose beam is cut by the frame edge (or off the camera)
+        without any kick is skipped. Returns the offsets used, in deflector units, or ``None`` if
+        skipped."""
         readback = self.set_lenses(dac)
         meta = dict(visit=visit, setting=label, direction=direction, dac=[readback[n] for n in FLC_IDS])
         base = self.snap(role="base", kind="none", offset=[0, 0], **meta)
         c0, rms, edge0 = measure_spot(base, self.background)
         clipped = 1e-3                              # more signal near the frame edge than this: the beam is cut
+        signal = float(np.sum(base - self.background))
+        self.reference_signal = getattr(self, "reference_signal", None) or signal      # the first visit's
+        if skip_off_camera and signal < 0.05 * self.reference_signal:
+            edge0 = 1.0                                              # (almost) no beam on the camera
+        if edge0 > clipped and skip_off_camera:
+            print(f"  skipped setting {label}: the beam is cut by the frame edge or off the camera", flush=True)
+            return None
         if edge0 > clipped:
             print(f"  WARNING visit {visit + 1} (setting {label}): the beam touches the frame edge even without a "
                   f"kick (spot rms {rms:.0f} px). Condense the beam, or these frames will be dropped.", flush=True)
@@ -176,7 +232,7 @@ class Session:
 
 def take_frame(detector, out, name, *, camera_name=None, dtype=None):
     """One camera frame with the present settings, saved as ``out/name.npy`` and returned (for the
-    anchors: the grating image and the gold pattern)."""
+    specimen frames of stage 2: the grating image and the gold pattern)."""
     camera = detector.Detector(camera_name or detector.get_attached_detector()[0])
     area = camera.get_detectorsetting()["ImagingArea"]
     raw = camera.snapshot_rawdata()
@@ -253,25 +309,10 @@ def run(TEM3, detector, out, *, diffraction, camera_name=None, dtype=None, settl
     """Run stage 1 (see the module docstring). ``diffraction`` = the four DIFF-mode DAC values
     (IL1, IL2, IL3, PL1). Returns the output folder."""
     s = Session(TEM3, detector, out, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
-    state = dict(time=time.time(), ht_v=s.ht.GetHtValue(), mag=s.eos.GetMagValue(),
-                 function_mode=s.eos.GetFunctionMode(), lenses=read_all_lenses(TEM3),
-                 flc={n: s.lens.GetFLCInfo(i) for n, i in FLC_IDS.items()}, **s.deflectors(),
-                 beam_blank=s.defl.GetBeamBlank(), camera=s.camera.get_detectorsetting())
-    (s.out / "state_before.json").write_text(json.dumps(state, indent=1, default=_plain))
+    state = s.save_state(TEM3)
     centre = s.deflectors()
     try:
-        # The 40k row = what the lenses run at now, read before free-lens control is touched. It is
-        # written into free-lens control before switching on, so a value left over from earlier
-        # (free-lens control may keep it while switched off) cannot replace it.
-        base = np.array([state["lenses"][name] for name in FLC_IDS], float)
-        if any(state["flc"][name][0] for name in FLC_IDS):
-            print("  note: free-lens control was already on; its values are taken as the 40k row", flush=True)
-        for name, i in FLC_IDS.items():
-            s.lens.SetFLCAbs(i, int(base[list(FLC_IDS).index(name)]))
-            s.lens.SetFLCSw(i, 1)
-        readback = np.array([s.lens.GetFLCInfo(i)[1] for i in FLC_IDS.values()], float)
-        if np.any(readback != base):
-            raise RuntimeError(f"free-lens control reads {readback}, expected the 40k row {base}")
+        base = s.take_over_lenses(state)
         settings, flipped = {}, []
         for k, m in enumerate(MULTIPLIERS):
             m = m.copy()
@@ -290,23 +331,13 @@ def run(TEM3, detector, out, *, diffraction, camera_name=None, dtype=None, settl
                                                          settings={str(k): v.tolist() for k, v in settings.items()},
                                                          plan=[[str(a), b] for a, b in PLAN], centre=centre, flipped=flipped,
                                                          target_px=target_px), indent=1, default=_plain))
-        s.defl.SetBeamBlank(1)
-        time.sleep(0.5)
-        dark = s.snap(role="dark", kind="none", offset=[0, 0], visit=-1, setting="dark", direction="x",
-                      dac=list(base))
-        s.defl.SetBeamBlank(0)
-        s.background = float(np.median(dark))
+        s.dark_frame(base)
         for visit, (label, direction) in enumerate(PLAN):
             s.visit(visit, str(label), settings[label], direction, centre=centre, target_px=target_px,
                     test_units=test_units, max_units=max_units)
             print(f"visit {visit + 1}/{len(PLAN)} (setting {label}, {direction} kicks) done", flush=True)
     finally:                                                         # always put the microscope back
-        for name in ("CLA1", "CLA2"):
-            s.set_deflector(name, centre[name])
-        for (name, i) in FLC_IDS.items():
-            s.lens.SetFLCAbs(i, state["flc"][name][1])
-            s.lens.SetFLCSw(i, state["flc"][name][0])
-        s.defl.SetBeamBlank(state["beam_blank"])
+        s.restore(state, centre)
     return s.out
 
 

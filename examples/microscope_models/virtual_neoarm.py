@@ -163,3 +163,21 @@ def true_magnification_and_camera_length(scope):
     m = np.asarray(matrix5(at_voltage(np.asarray(t.projector_parameters), s.voltage_v, t.voltages_v[0]),
                            np.asarray(s.projector_controls)))
     return float(np.hypot(m[0, 0], m[0, 1])), float(np.hypot(m[0, 2], m[0, 3]))
+
+
+def true_projector(scope, units):
+    """The hidden projector as the 16 fit parameters, in the fit's DAC-unit convention
+    (``stage1_analysis`` maps DAC values by ``units`` and ``projector_calibration.controls``) --
+    for scoring and drawing a rehearsal only."""
+    from projector_calibration import CONTROL_PER_DAC
+    p = np.array(scope.truth.projector_parameters, float)
+    per_unit = np.array([scope.electronics.lenses[n].words_per_unit for n in PROJECTOR])
+    p[12:16] += np.log((1 / per_unit) / (np.asarray(units) * CONTROL_PER_DAC))
+    return p
+
+
+def true_deflector_calibration(scope):
+    """The hidden beam shift (m) and tilt (rad) per deflector unit at the reference HT -- for
+    scoring a rehearsal only."""
+    k = np.asarray(scope.electronics.deflector.kick_per_word)
+    return float(k[0, 0]), float(k[2, 2])

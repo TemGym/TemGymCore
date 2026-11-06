@@ -9,10 +9,11 @@ half-differences of +/- kicks, at the beam-position wobble.
 
 * **Stage 1** (one HT, no specimen; ``stage1_acquire.py`` / ``stage1_analysis.py``) fixes the
   predictions; lens positions are not unique yet.
-* **Anchors**: a cross-grating image at setting 0 gives |A| (:func:`grating_period_px`) and a
-  gold ring pattern at the diffraction setting gives |B| (:func:`ring_radii_px`); with them the
-  kick scales are in metres and radians (:func:`make_anchors`).
-* **Stage 2** (a second HT) fixes the lens and camera positions.
+* **Stage 2** (``stage2_acquire.py`` / ``stage2_analysis.py``) makes it physical. Two specimen
+  frames: a cross-grating image at setting 0 gives |A| (:func:`grating_period_px`) and a gold ring
+  pattern at the diffraction setting gives |B| (:func:`ring_radii_px`), so the kick scales are in
+  metres and radians (:func:`specimen_scales`); and the beam moves at a second HT fix the lens and
+  camera positions.
 
 See ``projector_calibration_outline.md`` for the mathematics. Lens DAC values map to model controls
 by a fixed unit convention (:func:`controls`); the fitted gains absorb any per-lens scale.
@@ -137,7 +138,7 @@ class Setup:
     mix_unit: float = 4e4                       # rad of tilt command per m of shift command, per deflector unit
 
 
-# ---------------------------------------------------------------------------- the anchors
+# ---------------------------------------------------------------------------- the specimen frames
 def _fft_lattice(image, min_cycles=1.5, pad=16):
     """Two perpendicular fundamental wave vectors (cycles per px) from the zero-padded FFT."""
     n = image.shape[0]
@@ -245,8 +246,8 @@ def ring_radii_px(image, camera, rings=("111", "200"), half_width_px=5.0, direct
     return radii, dict(centre=centre, bins=bins, profile=profile)
 
 
-def make_anchors(*, a_dac, magnification, magnification_sigma, b_dac, b_abs, b_sigma):
-    """The two anchors: measured |A| at ``a_dac`` and |B| (m/rad) at ``b_dac`` (HT v0), with
+def specimen_scales(*, a_dac, magnification, magnification_sigma, b_dac, b_abs, b_sigma):
+    """The two specimen measurements: |A| at ``a_dac`` and |B| (m/rad) at ``b_dac`` (HT v0), with
     relative uncertainties."""
     return dict(a_dac=np.asarray(a_dac), magnification=magnification, magnification_sigma=magnification_sigma,
                 b_dac=np.asarray(b_dac), b_abs=b_abs, b_sigma=b_sigma)
@@ -305,23 +306,23 @@ def _rotation_start(data, setup):
     return theta
 
 
-def _least_squares(data, setup, free, anchors, start):
+def _least_squares(data, setup, free, specimen, start):
     free = np.asarray(free)
     sigma = data["wobble_px"] / np.sqrt(2)
     meas = jnp.asarray(data["measured"])
-    if anchors is not None:
-        anchor_dac = np.vstack([anchors["a_dac"], anchors["b_dac"]])
-        anchor_us = jnp.asarray(np.array([controls(w) for w in anchor_dac]))
+    if specimen is not None:
+        specimen_dac = np.vstack([specimen["a_dac"], specimen["b_dac"]])
+        specimen_us = jnp.asarray(np.array([controls(w) for w in specimen_dac]))
 
     def residual(x):
         theta = jnp.asarray(start).at[free].set(x)
         r = (predict(theta, data, setup) - meas) / sigma
         r = jnp.concatenate([jnp.real(r), jnp.imag(r)])
-        if anchors is not None:
-            a, b = _responses(theta[:16], anchor_us, jnp.asarray([setup.v0, setup.v0]), jnp.asarray(setup.v0))
+        if specimen is not None:
+            a, b = _responses(theta[:16], specimen_us, jnp.asarray([setup.v0, setup.v0]), jnp.asarray(setup.v0))
             r = jnp.concatenate([r, jnp.array([
-                (jnp.abs(a[0]) / anchors["magnification"] - 1) / anchors["magnification_sigma"],
-                (jnp.abs(b[1]) / anchors["b_abs"] - 1) / anchors["b_sigma"]])])
+                (jnp.abs(a[0]) / specimen["magnification"] - 1) / specimen["magnification_sigma"],
+                (jnp.abs(b[1]) / specimen["b_abs"] - 1) / specimen["b_sigma"]])])
         return r
 
     f, j = jax.jit(residual), jax.jit(jax.jacfwd(residual))
@@ -340,33 +341,33 @@ def _least_squares(data, setup, free, anchors, start):
                 residuals=np.asarray(out.fun))
 
 
-def fit(data, setup, *, free, anchors=None, start=None):
-    """Weighted least squares of the half-differences (and the anchors), from a data-driven start.
+def fit(data, setup, *, free, specimen=None, start=None):
+    """Weighted least squares of the half-differences (and the two specimen measurements), from a data-driven start.
 
     Without a ``start``: the gains (and with two HTs the objective q) come from the closed-form
     rotation regression and the camera rotation from the strongest shift. That rotation is known
     only modulo pi (the start model may invert the image), so both are fitted and the better is
-    kept. With ``anchors`` the kick scales are first read off the anchors (continuation), then
+    kept. With ``specimen`` the kick scales are first read off the specimen measurements (continuation), then
     everything is freed. Returns theta, chi2, dof, the covariance of the free parameters and the
     acceptance at the 99 % point of chi2.
     """
     free = list(free)
     if start is not None:
-        return _least_squares(data, setup, free, anchors, np.asarray(start, float))
+        return _least_squares(data, setup, free, specimen, np.asarray(start, float))
     geometry = [f for f in free if f not in (LOG_KS, LOG_KT)]
     best = None
     for flip in (0.0, np.pi):
         start = _rotation_start(data, setup)
         start[PHI] += flip
         result = _least_squares(data, setup, geometry, None, start)
-        if anchors is not None:
+        if specimen is not None:
             theta = result["theta"]
-            a, _ = responses(theta[:16], anchors["a_dac"], setup.v0, setup.v0)
-            _, b = responses(theta[:16], anchors["b_dac"], setup.v0, setup.v0)
-            theta[LOG_KS] += np.log(abs(a[0]) / anchors["magnification"])
-            theta[LOG_KT] += np.log(abs(b[0]) / anchors["b_abs"])
+            a, _ = responses(theta[:16], specimen["a_dac"], setup.v0, setup.v0)
+            _, b = responses(theta[:16], specimen["b_dac"], setup.v0, setup.v0)
+            theta[LOG_KS] += np.log(abs(a[0]) / specimen["magnification"])
+            theta[LOG_KT] += np.log(abs(b[0]) / specimen["b_abs"])
             theta = _least_squares(data, setup, geometry, None, theta)["theta"]
-            result = _least_squares(data, setup, free, anchors, theta)
+            result = _least_squares(data, setup, free, specimen, theta)
         if best is None or result["chi2"] < best["chi2"]:
             best = result
     return best

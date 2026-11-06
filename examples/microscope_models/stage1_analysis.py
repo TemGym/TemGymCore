@@ -184,8 +184,8 @@ def unseen_settings(folder, n=8, seed=7):
                      for _ in range(n)])
 
 
-def anchors(grating_frame, gold_frame, *, period_m, pitch_m, ht_v, dark=0.0):
-    """The two anchors from their frames: the magnification |A| at the 40k row (grating image,
+def magnification_and_camera_length(grating_frame, gold_frame, *, period_m, pitch_m, ht_v, dark=0.0):
+    """The two specimen measurements from their frames: the magnification |A| at the 40k row (grating image,
     certified ``period_m``) and the camera length |B| (m/rad) at the diffraction setting (gold
     rings). Returns a dict with both and the measured lattice period and ring radii (px)."""
     from temgym_core.constants import energy2wavelength

@@ -1,16 +1,22 @@
 # Projector calibration: the experiment and its mathematics
 
-Status: design outline, 2026-11-05. The model and fit are in `projector_calibration.py` (figures in
-`projector_figures.py`); stage 1 is rehearsed in `stage1_virtual_session.ipynb` on the virtual
-NEOARM, the only simulator (TemGym rays, and TemGym waves for specimens). The numbers in sections
-7–10 came from an earlier analytic simulator, removed on 2026-11-06 (Git revision `df4c7dc` retains
-it, with the stages 1–2 notebook); sections 7, 8 and 10 still describe the earlier stage-2a/2b and
-pilot plan.
+Status: 2026-11-06. Two stages:
+
+1. **Stage 1, the predictor** (one HT, no specimen): where the beam lands on the camera for any lens
+   setting and any beam shift or tilt, in deflector units. Session: `stage1_acquire.py`; analysis:
+   `stage1_analysis.py`; rehearsal: `stage1_virtual_session.ipynb`.
+2. **Stage 2, the physical calibration**: two specimen frames (a cross grating and gold) and the
+   beam moves at a second HT, fitted together with stage 1. It gives real units and the lens and
+   camera positions. Session: `stage2_acquire.py`; analysis: `stage2_analysis.py`; rehearsal:
+   `stage2_virtual_session.ipynb`.
+
+The model and fit are in `projector_calibration.py`. The rehearsals run on the virtual NEOARM
+(TemGym rays for the beam and the grating, TemGym Gaussian beamlets for the gold rings) through its
+PyJEM interface.
 
 **Decision:** the **no-sample track**. Everything is measured from beam centroids in vacuum, with
-raw deflector kicks. A sample (a cross grating with gold) is used only for **two anchor frames**,
-which turn kick units into metres and radians, and optionally for a few **validation frames**.
-The beam width and shape are never used.
+raw deflector kicks. A specimen is used only for the two frames of stage 2, which turn deflector
+units into metres and radians. The beam width and shape are never used.
 
 ---
 
@@ -69,48 +75,28 @@ they are not used.
 A deflector command $c$ (CLA DAC values, complex: x + iy) gives
 
 $$
-\delta = \kappa_s\,r(V)\,\gamma(V)\,c, \qquad \tau = \kappa_t\,r(V)\,\gamma(V)\,c .
+\delta = \kappa_s\,r(V)\,c, \qquad \tau = \kappa_t\,r(V)\,c .
 $$
 
-- $\kappa_s$ and $\kappa_t$ are the unknown kick scales, in nm and µrad per deflector unit.
-- $r(V) = p_0/p$ is the magnetic-deflection scaling with electron momentum (1.0148 at 195 kV).
-- $\gamma(V)$ is an unknown factor for anything the console does to the deflectors when the HT
-  changes. $\gamma(V_0) = 1$ by definition, and $\gamma(195\,\text{kV})$ is fitted.
+- $\kappa_s$ and $\kappa_t$ are the kick scales, in m and rad per deflector unit, at the stage-1 HT.
+- $r(V) = p_0/p$ is the magnetic-deflection scaling with electron momentum (1.0148 at 195 kV). It is
+  taken as known: the deflector calibration can be re-measured at the new HT. (A fitted factor
+  $\gamma(V)$ on top was tested earlier: it costs almost nothing, and a wrong fixed value shows in
+  $\chi^2$, 0.3% off giving $\chi^2/\text{dof} = 31$.)
 
 The measured data are
 
 $$
-m_{u,V,\text{shift}} = e^{i\varphi} A(u,V)\,\kappa_s\,r\gamma\,\Delta c, \qquad
-m_{u,V,\text{tilt}} = e^{i\varphi} B(u,V)\,\kappa_t\,r\gamma\,\Delta c .
+m_{u,V,\text{shift}} = e^{i\varphi} A(u,V)\,\kappa_s\,r\,\Delta c, \qquad
+m_{u,V,\text{tilt}} = e^{i\varphi} B(u,V)\,\kappa_t\,r\,\Delta c .
 $$
 
-**The 195 kV kick factor (checked 2026-11-04).** Fitting $\gamma$ costs almost nothing:
-
-| | detector error, typical anchors | detector error, good anchors |
-|---|---|---|
-| $\gamma$ known | 0.91 mm | 0.37 mm |
-| $\gamma$ fitted | 0.98 mm | 0.43 mm |
-
-$\gamma$ is recovered to about $3\times10^{-5}$. A wrong fixed $\gamma$ is caught by $\chi^2$:
-0.3% off gives $\chi^2/\text{dof} = 31$, and a console that holds the kick constant gives 800.
-So $\gamma$ is always fitted. This removes the question of what the JEOL console does at an HT
-change.
-
-**Kick purity (to test).** Two effects the current model leaves out:
-
-1. **Cross-talk.** Unless the pivot points are set exactly, a "shift" also tilts:
-   $\tau = \epsilon_{st}\,c$, and vice versa. The shift data become
-   $e^{i\varphi}(A\kappa_s + B\epsilon_{st})\Delta c$. Since $A(u)/B(u)$ varies across the
-   settings, $\epsilon_{st}$ and $\epsilon_{ts}$ should be identifiable as extra complex
-   unknowns. Not yet tested.
-2. **Shift and tilt directions.** The shift and tilt deflections may reach the specimen rotated
-   relative to each other, for example by the objective pre-field. That makes $\kappa_s$ and
-   $\kappa_t$ complex. One common phase is degenerate with $\varphi$; the relative phase
-   $\arg(\kappa_t/\kappa_s)$ is a further unknown. The current code uses real $\kappa$ and one
-   $\varphi$, so it assumes the two are aligned. Not yet tested.
-
-Both get tested in the fit-robustness runs, together with random columns and error-bar
-calibration.
+**Kick purity.** With the pivot points aligned, CLA1 and CLA2 are a pure shift and a pure tilt.
+If not, a shift also tilts and a tilt also shifts, and the two may act along rotated axes. The fit
+has an optional model for this: each deflector a complex mix of shift and tilt, and an angle
+between them. It is used only when it lowers $\chi^2$ by more than chance would; otherwise the
+deflectors are taken as pure. A quick check at the console shows the same thing: in focus a pure
+tilt does not move the spot, at the diffraction setting a pure shift does not.
 
 ## 4. Gauges: what the beam data cannot determine
 
@@ -127,21 +113,53 @@ The beam data therefore give $A$ and $B$ up to **two real numbers**, one for shi
 tilts, plus the camera rotation. This is the stage-1 result: a model that predicts where the beam
 lands for any lens setting and any kick, in kick units. That is all you need to drive the microscope.
 
-The two numbers are what a sample supplies.
+The two numbers, and with a second HT the lens positions, are what stage 2 supplies.
 
-## 5. The anchors: two frames of a cross grating with gold
+## 5. Stage 1: the predictor
 
-**Image anchor (|A|).** A cross grating of period $p_g$ images to fringes of period
+**Measured** (no specimen, one HT, about 100 frames): 12 visits.
+- The 8 lens settings, as multiples of the 40k row.
+- The diffraction setting (read in DIFF mode; $A = 0$).
+- Setting 0 twice more (the beam-position wobble) and once with y kicks (round deflectors).
+
+At each visit, a ± shift and a ± tilt, each auto-scaled to about 50 px.
+
+**Fit.** Weighted least squares of the half-differences, with $\sigma = \text{wobble}/\sqrt2$ per
+component (maximum likelihood for Gaussian centroid noise), and exact derivatives through the
+TemGym model. Free: the projector parameters except the gauges, at fixed nominal kick scales (any
+error in them is absorbed by the gauge). Start: lens gains from a closed-form regression on the
+rotations, the camera rotation from the strongest shift, at $\varphi$ and $\varphi + \pi$. The
+camera handedness (mirror) and the deflector y axis are each tried both ways; the one at the noise
+level is kept.
+
+**Acceptance.** $\chi^2$ inside its 99% range (the discrepancy principle), and a prediction check
+at lens settings the session never visited.
+
+**Rehearsal on the virtual NEOARM:** $\chi^2/\text{dof} = 0.6$; the mirrored camera and the pure
+deflectors found by the fit; predictions at 8 unvisited settings within 0.006 px.
+
+## 6. Stage 2: the physical calibration
+
+Stage 1 leaves two numbers open: the kick scales $\kappa_s$ and $\kappa_t$ (equivalently the
+true magnification and camera length), and with them the lens positions. Stage 2 supplies both,
+and its two parts are useful only together:
+- **specimen frames alone** give real units, but at one HT the lens positions are still not unique;
+- **a second HT alone** separates the lens positions, but only up to the kick scales (about 2 mm of
+  position per 1% of scale).
+
+### 6a. The specimen frames
+
+**The grating frame (|A|).** A cross grating of period $p_g$ images to fringes of period
 
 $$
 P = |A(u_1)|\,p_g / p_{px} \quad \text{pixels}.
 $$
 
 For coherent illumination this holds at any focus. Each diffraction order is a beam, and the
-fringe period comes from their angular separation alone. The anchor setting $u_1$ need not be in
+fringe period comes from their angular separation alone. The setting $u_1$ of this frame need not be in
 focus; it needs enough periods in the frame.
 
-The model predicts $A$ at every set, so the anchor can be taken at **any** set. Choose the set by
+The model predicts $A$ at every set, so this frame can be taken at **any** set. Choose the set by
 the grating, not by the usual viewing magnification:
 
 - **Period visible at 40–60k.** The squares are visible there, but only a few periods fit in the
@@ -165,15 +183,16 @@ simulated column:
 Rule: number of periods ≈ (frame width / magnification) / grating period. Pick the lowest-
 magnification set where the period is still at least about 4 px.
 
-The code currently assumes the image anchor is at set 0, and needs changing.
-
-**Working choice (2026-11-05).** A grating with about 3 × 3 squares in the frame at the 40k row
-(set 0; period about 230 nm, about 85 px), measured by a lattice fit. Repeat the anchor at 2–3
+**Working choice.** A grating with about 3 × 3 squares in the frame at the 40k row (set 0; period
+about 230 nm, about 85 px), with the beam spread to fill the frame. The period comes from a fit of
+the whole image: a square lattice times a smooth beam profile. Fitting the profile matters: square
+centroids were biased by 0.5–9% by uneven illumination. On the virtual NEOARM the lattice fit is
+within 0.1%. Repeat the frame at 2–3
 stage positions to average, and measure, the cell-to-cell variation.
 
 Cost of the grating uncertainty (8 runs each, 0.01 px wobble, rings 0.1%):
 
-| grating anchor | absolute magnification | IL1 → PL1 position error | detector | χ²/dof |
+| grating period error | absolute magnification | IL1 → PL1 position error | detector | χ²/dof |
 |---|---|---|---|---|
 | 0.2% | 0.09% | 0.5–0.8 mm | 0.8 mm | 0.97 |
 | 0.5% | 0.28% | 1.0–1.3 mm | 0.8 mm | 0.95 |
@@ -185,11 +204,11 @@ The beam-position error in stage 1 is 0.018 px throughout.
 Above about 0.5%, the IL and PL position errors grow in proportion to the grating error, at about
 2 mm per 1%. The detector position is set by the gold rings and does not change.
 
-**$\chi^2$ cannot detect a wrong anchor.** It stays near 1 in every row, because the anchor is a
+**$\chi^2$ cannot detect a wrong grating period.** It stays near 1 in every row, because the period is a
 gauge choice that the beam data cannot contradict. The grating error therefore has to be measured
 (repeat positions, certificate), not inferred from the fit.
 
-**Diffraction anchor (|B|).** At the diffraction setting ($A \approx 0$), a polycrystalline
+**The gold frame (|B|).** At the diffraction setting ($A \approx 0$), a polycrystalline
 film gives rings of radius
 
 $$
@@ -210,10 +229,10 @@ particles, so rings rather than single spots are expected; spotty rings still gi
 
 Pure Au has a lattice constant known far better than the measurement. **Many replicas are
 shadowed with Au–Pd or Pt–Pd instead.** An alloy's lattice constant depends on its composition and
-can differ from Au by percent. That would make the ring anchor as uncertain as the composition.
+can differ from Au by percent. That would make the ring measurement as uncertain as the composition.
 Check what the decoration is. Ellipticity of the rings would show projector distortion, as a free check.
 
-With a gold-shadowed cross grating, both anchors come from **one sample at one stage position**.
+With a gold-shadowed cross grating, both frames come from **one sample at one stage position**.
 Only the lens DAC values change between the two frames.
 
 **The two scales.** The fit adds two residuals,
@@ -222,11 +241,11 @@ $$
 \frac{|A(u_1)|\,p_g}{P\,p_{px}} - 1, \qquad \frac{|B(u_D)|\,\lambda}{R\,d\,p_{px}} - 1 ,
 $$
 
-weighted by the anchor tolerances. These fix $\alpha$ and $\beta$, and hence $\kappa_s$ and
-$\kappa_t$. The anchors are taken at the specimen height, so they also define which plane
+weighted by their uncertainties. These fix $\alpha$ and $\beta$, and hence $\kappa_s$ and
+$\kappa_t$. The frames are taken at the specimen height, so they also define which plane
 "specimen" means.
 
-**What limits the anchors:**
+**What limits the specimen frames:**
 - The accuracy of the grating period. Replica gratings are nominal; check the certificate. The
   simulations assumed 0.2% (typical) or 0.05% (good).
 - Image distortion over the field.
@@ -236,7 +255,39 @@ $\kappa_t$. The anchors are taken at the specimen height, so they also define wh
 These errors set the limit for absolute lens positions (section 7). Imaging the sample at more
 settings does not reduce them, because the period error is common to all frames.
 
-## 6. Why not a sample at every setting
+
+### 6b. The second HT
+
+Specimen out. The lens DAC values stay fixed while the HT changes, so every lens strength changes by
+the known ratio $r(V)$, and the lens positions become identifiable. One block:
+1. at HT $V_1$: the 9 stage-1 settings and a fixed list of 30 more (a Halton sequence over
+   0.1–2× the 40k row, within the DAC range);
+2. back at $V_0$: the 30 again.
+
+Each setting is measured as in stage 1; settings whose beam is off the camera are skipped live.
+
+### 6c. The fit
+
+Everything together: stage 1, stage 2 and the two specimen residuals
+
+$$
+\frac{|A(u_1)|\,p_g}{P\,p_{px}} - 1, \qquad \frac{|B(u_D)|\,\lambda}{R\,d\,p_{px}} - 1 ,
+$$
+
+weighted by their uncertainties (grating 0.2%, rings 0.1% by default). Free: all projector
+parameters (the detector gap now too), the camera rotation and both kick scales. Start: the
+stage-1 continuation, then the kick scales read off the specimen frames, then everything free.
+
+**Outputs.** The lens and camera positions with 1σ uncertainties, and the deflector calibration:
+the beam shift in m and the tilt in rad per deflector unit.
+
+**Status: draft.** The target is 60 → 80 kV, which the virtual NEOARM does not cover yet (its hidden
+optics have sources and lens tables for 200 and 195 kV only). A first trial of the scripts at
+200 → 195 kV recovered the lens positions to 0.04 mm (1σ 0.6–2.0 mm, set by the 0.2% grating) and
+the beam shift and tilt per deflector unit to 0.1%, at χ²/dof 0.2. After the HT change the beam
+had to be re-condensed (CL3), which does not affect the beam centres.
+
+## 7. Why not a sample at every setting
 
 | | beam + kicks | sample at every setting |
 |---|---|---|
@@ -254,95 +305,18 @@ of the beam displaced by $B\lambda/d$, with fringes of period $|A| d$ where the 
 frame gives $A$ and $B$ without kicks, but only at settings where both are measurable. This has not
 been simulated.
 
-## 7. Fitting
+## 8. Open items
 
-Weighted least squares on all $m$, plus the anchor residuals. With Gaussian centroid noise
-$\sigma = \text{wobble}/\sqrt2$ per component, this is maximum likelihood.
+- The virtual NEOARM covers 200 and 195 kV only; 60 → 80 kV needs per-HT lens tables and sources.
+- Fit robustness: random columns, and whether the fit's error bars match the scatter over repeats.
+- Check the grating certificate: the period and its tolerance, and whether the decoration is pure Au
+  or an Au–Pd or Pt–Pd alloy.
+- Verify on the real NEOARM: the PyJEM names, the camera data type, lens settling, what DIFF mode
+  changes besides IL1–IL3 and PL1, and how the HT is stepped.
 
-**Free parameters:**
-- the projector parameters, minus the gauges at one HT;
-- $\varphi$;
-- $\log\kappa_s$ and $\log\kappa_t$;
-- $\gamma$ when two HTs are used.
+## 9. HT pair 60 → 80 kV (2026-11-05, earlier simulator)
 
-**Start.** Lens gains from a closed-form regression on the rotations. $\varphi$ from the strongest
-shift, tried at $\varphi$ and $\varphi + \pi$. Then a continuation: kicks alone, then the scales
-from the anchors, then everything free.
-
-**Acceptance.** $\chi^2$ inside its 99% range, the discrepancy principle. No tuned tolerances.
-
-**Stage 2 (absolute positions).** The HT step from 200 to 195 kV changes every lens strength by
-the known ratio $r(V)$. The DAC values stay fixed, so lens positions become identifiable. Further lens
-settings are chosen greedily (A-optimal) from the stage-2a fit, under the DAC limits and with the beam
-kept on the camera.
-
-Simulated results at a 0.01 px wobble:
-
-| stage | result |
-|---|---|
-| stage 1, at a held-out set, for a 50 px kick | 0.024 px |
-| stage 2b, detector position, typical anchors | 0.5–0.9 mm |
-| stage 2b, detector position, good anchors | 0.2–0.4 mm |
-| objective, either case | about 0.01 mm |
-
-**Not yet checked:**
-- convergence from the start on columns other than the one simulated;
-- whether the fit's own error bars match the Monte Carlo scatter;
-- the kick-purity terms from section 3.
-
-## 8. The session
-
-**Before stage 1 (operator):**
-- Parallel TEM beam, 200 kV, at the 40k row.
-- Free lens control on IL1–IL3 and PL1.
-- Condenser aperture in. No objective aperture and no SA aperture.
-- Specimen out, or the beam through a hole.
-- Pivot points (shift/tilt purity) set. Beam centred.
-- Find the diffraction setting by eye: the beam focused to a spot on the camera with the DAC values that give $A \approx 0$.
-
-**Pilot (30–60 min):**
-1. Beam-position wobble: repeat a ± pair 10 times at one set.
-2. Lens return: leave a set and come back, and look for a centroid jump.
-3. Auto-scale loop: a test kick, scaled to 50 px; check the beam stays on the camera.
-4. Rotational symmetry: at one set, an x kick and a y kick. Expect $\Delta_y = i\,\Delta_x$.
-   A difference means unequal or non-orthogonal deflector axes.
-5. Kick-scale stability: a fixed reference kick at the start and end of the session (and of
-   later sessions). This decides whether the anchors can be taken in a separate session.
-
-**Stage 1 (no specimen, 200 kV), 36 frames:**
-- 9 lens settings (8 plus D).
-- At each: ± shift and ± tilt, auto-scaled to about 50 px.
-- A dark frame, with the beam blanked, at the start.
-- Log every DAC value, HT, command and frame.
-
-**Anchors (cross grating with gold, same height):**
-1. Image frame at the lowest-magnification set where the grating period is still at least about 4 px.
-2. Ring pattern at the diffraction setting.
-3. Optionally 3–5 validation frames: grating images at sets the fit has not seen. Compare the
-   measured $|A|$ and rotation with the fitted model. This is the one test of model error that
-   simulation cannot provide.
-
-**Stage 2 (optional, specimen out):**
-- **2a:** replay stage 1 at 195 kV (36 frames).
-- **2b:** about 30 designed sets at both HTs (about 240 frames).
-- Ask the staff about stepping the HT by 5 kV.
-
-**Restore the microscope at the end:** free lens control off, CLA values, HT, blanking.
-
-## 9. Open items
-
-- Fit robustness: random columns, error-bar calibration, cross-talk and the shift/tilt relative
-  phase.
-- Allow the image anchor at any set, not only set 0.
-- A gold-ring measurement (circle or ellipse fit) and a cross-grating period measurement, tested
-  on TemGym-simulated frames.
-- The session script in PyJEM calls, frames to centroids, the loader into the fit, and a dry run
-  on the virtual NEOARM.
-- Check the grating certificate: the period and its tolerance, and whether the decoration is pure Au or an Au–Pd or Pt–Pd alloy.
-
-## 10. HT pair 60 → 80 kV (2026-11-05)
-
-Working choice: stage 1 and the anchors at **60 kV**; stage 2 adds **80 kV** with the same DAC values.
+Working choice: stage 1 and the specimen frames at **60 kV**; stage 2 adds **80 kV** with the same DAC values.
 The kick factor at 80 kV is taken as known, because it can be recalibrated at the new HT.
 The results below came from the analytic simulator that was removed on 2026-11-06 (Git revision
 `df4c7dc` retains it); they will be re-run on the virtual NEOARM once it covers 60 and 80 kV.
@@ -367,10 +341,10 @@ The diffraction setting is moved to a shorter camera length, IL2 = 21400 (DAC va
 
 The ring radius changes steeply with IL2 here. On the microscope, the diffraction setting is found by eye.
 
-**Results** (8 runs per row; anchors: typical = grating 0.5% and rings 0.1%, good = 0.05% and
+**Results** (8 runs per row; specimen frames: typical = grating 0.5% and rings 0.1%, good = 0.05% and
 0.03%):
 
-| wobble | anchors | stage 1 beam error (50 px kick) | absolute magnification | 2a: IL1 → detector | 2b: IL1 → PL1 | 2b: detector |
+| wobble | specimen frames | stage 1 beam error (50 px kick) | absolute magnification | second HT, stage-1 settings only: IL1 → detector | with the 30 extra settings: IL1 → PL1 | with the 30: detector |
 |---|---|---|---|---|---|---|
 | 0.01 px | typical | 0.019 px | 0.29% | 2.4–15 mm | 1.0–1.4 mm | 0.8 mm |
 | 0.01 px | good | 0.019 px | 0.04% | 2.7–16 mm | 0.15–0.23 mm | 0.27 mm |
@@ -381,6 +355,6 @@ The ring radius changes steeply with IL2 here. On the microscope, the diffractio
 
 **Comparison with 200 → 195 kV.**
 - Stage 1 is unchanged.
-- At a 0.01 px wobble the final positions are the same, because the anchors limit them.
-- The larger HT step makes stage 2 **robust to a worse beam-position wobble**. With good anchors at
+- At a 0.01 px wobble the final positions are the same, because the specimen frames limit them.
+- The larger HT step makes stage 2 **robust to a worse beam-position wobble**. With good specimen frames at
   0.03 px, the error is 0.18–0.35 mm here against 0.36–0.71 mm at 200 → 195 kV.

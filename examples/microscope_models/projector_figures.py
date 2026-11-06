@@ -178,8 +178,8 @@ def prediction_check_figure(rows):
     fig.tight_layout()
 
 
-def anchor_frames(grating, gold, result):
-    """The two anchor frames side by side, with the measured magnification and camera length."""
+def specimen_frames(grating, gold, result):
+    """The two specimen frames side by side, with the measured magnification and camera length."""
     fig, axes = plt.subplots(1, 2, figsize=(9, 4.4))
     axes[0].imshow(grating, cmap="gray")
     axes[0].set_title(f"(a)  cross grating, 40k row: |A| = {result['magnification']:.0f}")
