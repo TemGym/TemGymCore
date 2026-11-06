@@ -1,4 +1,4 @@
-"""Regenerate ``acquisition_render.npz`` next to this file.
+"""Regenerate ``ray_images.npz`` next to this file.
 
 It freezes the ray-traced images of ``calibration.acquisition`` (``setting_column``
 then ``render_rays``) on a few rows of the selected ray acquisition at low fidelity
@@ -6,7 +6,7 @@ then ``render_rays``) on a few rows of the selected ray acquisition at low fidel
 microscope that reuses it) cannot silently change the images. Run from the repository root, on CPU, and
 only for an intended, reviewed numerical change::
 
-    JAX_PLATFORMS=cpu PYTHONPATH=src:tests python tests/golden/make_acquisition_render.py
+    JAX_PLATFORMS=cpu PYTHONPATH=src:tests python tests/reference/make_ray_images.py
 """
 import json
 from pathlib import Path
@@ -26,7 +26,7 @@ ROWS = (0, 144, 108, 250, 283)
 
 
 def scenario():
-    """Low-fidelity specification, settings and truth used by the golden images."""
+    """Low-fidelity specification, settings and truth used by the saved reference images."""
     spec = json.loads((ACQUISITION / "experiment.json").read_text())
     spec.update(shape_yx=[64, 64], pixel_pitch_m=4 * spec["pixel_pitch_m"],
                 psf_sigma_pixels=spec["psf_sigma_pixels"] / 4, ray_sample_power=10,
@@ -59,5 +59,5 @@ def render(spec, settings, truth):
 
 if __name__ == "__main__":
     images = render(*scenario())
-    np.savez_compressed(HERE / "acquisition_render.npz", rows=np.array(ROWS), images=images)
+    np.savez_compressed(HERE / "ray_images.npz", rows=np.array(ROWS), images=images)
     print("saved", images.shape, "total electrons per frame:", images.sum(axis=(-2, -1)).round(1).tolist())

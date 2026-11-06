@@ -5,7 +5,7 @@ Collins transforms and the biprism is an exact mask on a fine lattice. The beaml
 biprism's action to second order around each beamlet's centre and uses a finite beamlet basis, so it
 differs from the wave by a few parts in 1e3, and the difference shrinks with the beamlet waist.
 
-The reduced problem keeps the column and the camera pixel of the golden scenario and shrinks the
+The reduced problem keeps the column and the camera pixel of the reference scenario and shrinks the
 arrays: a 120 nm beam (the two half beams must overlap on the camera, which needs 2 x 6.5 mm of beam
 there), 96 x 96 camera pixels, and a biprism plane sampled at 8 nm on 1024 x 1024 samples.
 """
@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import golden_scenario as scenario
+import reference_scenario as scenario
 from temgym_core.components import Detector
 from temgym_core.constants import energy2wavelength
 from temgym_core.evaluate import evaluate_gaussians
@@ -79,9 +79,9 @@ def test_wave_and_beamlet_sum_agree_on_the_biprism_hologram(hologram):
 
 
 def test_the_hologram_fringes_have_the_frozen_period(hologram):
-    """Two half beams cross on the camera: fringes of the period the golden baseline froze for the full beam
+    """Two half beams cross on the camera: fringes of the period the saved baseline froze for the full beam
     (146.3 um from a 1024-pixel line; a 96-pixel row resolves it to one bin, 149.3 um)."""
-    baseline = 0.00014628571428571428      # tests/golden/baseline.json, fringes.period_m
+    baseline = 0.00014628571428571428      # tests/reference/baseline.json, fringes.period_m
     for field in (hologram["wave"].data, hologram["beamlets"]):
         row = np.abs(np.asarray(field)[CAMERA_PIXELS // 2]) ** 2
         spectrum = np.abs(np.fft.rfft(row - row.mean()))

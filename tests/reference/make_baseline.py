@@ -3,9 +3,9 @@
 Run from the repository root, on CPU, and only when a numerical change has been
 intended and reviewed::
 
-    JAX_PLATFORMS=cpu PYTHONPATH=src:tests python tests/golden/make_baseline.py
+    JAX_PLATFORMS=cpu PYTHONPATH=src:tests python tests/reference/make_baseline.py
 
-``tests/test_golden.py`` recomputes every scenario and compares it with these
+``tests/test_reference_values.py`` recomputes every scenario and compares it with these
 files, so a refactor that silently changes physics fails there.
 """
 import hashlib
@@ -17,7 +17,7 @@ import jax
 import numpy as np
 import scipy
 
-import golden_scenario as scenario
+import reference_scenario as scenario
 
 HERE = Path(__file__).parent
 ROOT = scenario.ROOT

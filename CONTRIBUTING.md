@@ -24,10 +24,10 @@ The test suite runs on CPU in float64 unless `JAX_PLATFORMS` is set (`conftest.p
 
 ## Numbers are frozen on purpose
 
-`tests/test_golden.py` compares the physical constants, the focused example column, Gaussian
+`tests/test_reference_values.py` compares the physical constants, the focused example column, Gaussian
 propagation through the biprism column and the coherent renderer with values stored in
-`tests/golden/`. If a change moves one of them, say why in the pull request and regenerate
-with `tests/golden/make_baseline.py`. A refactor should move none of them.
+`tests/reference/`. If a change moves one of them, say why in the pull request and regenerate
+with `tests/reference/make_baseline.py`. A refactor should move none of them.
 
 Complex fields are compared after removing the global phase, to 1e-6 of the peak. That is
 not sloppiness: `Ray.pathlength` is the excess optical path, so $k\cdot\text{path}$ is about

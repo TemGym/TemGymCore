@@ -1,7 +1,7 @@
 """Count public functions, classes and methods without a docstring, per module.
 
 ``tests/test_docstring_ratchet.py`` fails when any module gets worse than the
-numbers in ``tests/golden/docstring_baseline.json`` and requires every new module
+numbers in ``tests/reference/docstring_baseline.json`` and requires every new module
 to be fully documented. Improve a module, then lower its number::
 
     python tools/docstring_ratchet.py --update
@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "src" / "temgym_core"
-BASELINE = ROOT / "tests" / "golden" / "docstring_baseline.json"
+BASELINE = ROOT / "tests" / "reference" / "docstring_baseline.json"
 
 
 def missing_docstrings(path):

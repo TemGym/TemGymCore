@@ -37,7 +37,7 @@ def hologram_bundle(aperture=600e-9, waist=3e-9, lattice=1.5e-9):
     tuple
         The ``GaussianBeam`` bundle at the detector plane and the ``Detector``.
     """
-    import golden_scenario as G
+    import reference_scenario as G
     from temgym_core.components import Detector, Plane
     from temgym_core.run import run_to_end
     from temgym_core.source import rectangular_input_wave

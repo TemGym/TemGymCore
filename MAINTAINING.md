@@ -45,7 +45,7 @@ Require the `lint`, `tests`, `minimum-dependencies` and `package` checks on `mai
 ## Releasing
 
 1. Update `CHANGELOG.md` (move *Unreleased* under the new version) and check that any change to
-   `tests/golden/` is explained.
+   `tests/reference/` is explained.
 2. Confirm `CI`, `GPU` and the docs build are green on `main`.
 3. Tag a release candidate: `git tag v0.1.0rc1 && git push origin v0.1.0rc1`. `release.yml`
    publishes it to TestPyPI. In a clean environment run
@@ -58,6 +58,6 @@ Require the `lint`, `tests`, `minimum-dependencies` and `package` checks on `mai
 
 ## Numerical changes
 
-`tests/test_golden.py` is the guard. If a change must move a frozen number, regenerate with
-`JAX_PLATFORMS=cpu PYTHONPATH=src:tests python tests/golden/make_baseline.py`, and say why in the
+`tests/test_reference_values.py` is the guard. If a change must move a frozen number, regenerate with
+`JAX_PLATFORMS=cpu PYTHONPATH=src:tests python tests/reference/make_baseline.py`, and say why in the
 pull request and in the changelog.

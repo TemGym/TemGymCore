@@ -17,7 +17,7 @@ from temgym_core.virtual import (
 )
 
 ROOT = Path(__file__).parents[1]
-GOLDEN = Path(__file__).parent / "golden"
+REFERENCE = Path(__file__).parent / "reference"
 
 
 def load(name, path):
@@ -29,9 +29,9 @@ def load(name, path):
 
 
 neoarm = load("virtual_neoarm_example", ROOT / "examples/microscope_models/virtual_neoarm.py")
-golden = load("make_acquisition_render", GOLDEN / "make_acquisition_render.py")
+ray_images = load("make_ray_images", REFERENCE / "make_ray_images.py")
 
-#: 512 sensor pixels of 55 um binned by 8: the golden scenario's 64x64 frame at 440 um, PSF 0.25 px.
+#: 512 sensor pixels of 55 um binned by 8: the reference scenario's 64x64 frame at 440 um, PSF 0.25 px.
 SMALL_CAMERA = CameraModel(sensor_shape=(512, 512), sensor_pixel_m=55e-6, psf_sigma_sensor_pixels=2.0,
                            binnings=(8,))
 
@@ -75,21 +75,21 @@ def test_camera_noise_statistics_and_digitisation():
     assert summed.mean() == pytest.approx(100.0 + 4 * 3.0, rel=0.01)
 
 
-def test_refactored_ray_image_matches_frozen_golden():
-    frozen = np.load(GOLDEN / "acquisition_render.npz")
-    np.testing.assert_allclose(golden.render(*golden.scenario()), frozen["images"], rtol=1e-9, atol=0)
+def test_ray_images_match_the_saved_reference_images():
+    saved = np.load(REFERENCE / "ray_images.npz")
+    np.testing.assert_allclose(ray_images.render(*ray_images.scenario()), saved["images"], rtol=1e-9, atol=0)
 
 
 def test_virtual_microscope_renders_exactly_like_the_ray_pipeline(scope):
-    spec, settings, truth = golden.scenario()
-    for row in golden.ROWS:
+    spec, settings, truth = ray_images.scenario()
+    for row in ray_images.ROWS:
         vi = int(settings["voltage_index"][row])
         for aperture in range(2):
             setting = PhysicalSetting(spec["voltages_v"][vi], vi, tuple(settings["condenser_controls"][row]),
                                       tuple(settings["projector_controls"][row]),
                                       tuple(settings["specimen_kick"][row]), aperture)
             expected = scope.expected_image(setting, 8) * spec["nominal_incident_electrons_per_image"]
-            assert np.array_equal(expected, golden.render_row(spec, settings, truth, row, aperture))
+            assert np.array_equal(expected, ray_images.render_row(spec, settings, truth, row, aperture))
 
 
 def test_words_map_to_the_planned_controls(scope):

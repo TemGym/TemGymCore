@@ -1,7 +1,7 @@
 """Frozen numerical baseline: refactors must not change these numbers.
 
-The scenarios live in ``golden_scenario.py``; the frozen values in
-``tests/golden/baseline.{json,npz}`` were written by ``golden/make_baseline.py``.
+The scenarios live in ``reference_scenario.py``; the frozen values in
+``tests/reference/baseline.{json,npz}`` were written by ``reference/make_baseline.py``.
 Regenerate them only for an intended, reviewed numerical change.
 """
 import hashlib
@@ -12,12 +12,12 @@ import jax
 import numpy as np
 import pytest
 
-import golden_scenario as scenario
+import reference_scenario as scenario
 from temgym_core.evaluate import evaluate_gaussians, gpu_kernel_available
 
-GOLDEN = Path(__file__).parent / "golden"
-BASELINE = json.loads((GOLDEN / "baseline.json").read_text())
-ARRAYS = np.load(GOLDEN / "baseline.npz")
+REFERENCE = Path(__file__).parent / "reference"
+BASELINE = json.loads((REFERENCE / "baseline.json").read_text())
+ARRAYS = np.load(REFERENCE / "baseline.npz")
 
 jax.config.update("jax_enable_x64", True)
 

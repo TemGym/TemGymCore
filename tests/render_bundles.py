@@ -79,7 +79,7 @@ def pixel_bundle(rng, n, shape, *, waist_px, tilt=0.6, curv=0.02, amp_scale=1.0,
 def field_scan(packed, coords, limit=None):
     """Independent forward evaluation: ``lax.scan`` over beams (the ordinary autodiff target).
 
-    Mirrors ``evaluate_gaussians_jax_scan`` on the packed representation and is the golden
+    Mirrors ``evaluate_gaussians_jax_scan`` on the packed representation and is the reference
     reference for ``jax.jvp`` / ``jax.vjp`` at identical packed inputs.  With ``limit`` it is
     the truncated sum, whose autodiff derivative freezes the (non-differentiable) pair mask,
     i.e. exactly the semantics of the kernels.

@@ -1,10 +1,10 @@
-"""Fast, deterministic scenarios whose numbers are frozen in ``tests/golden/``.
+"""Fast, deterministic scenarios whose numbers are frozen in ``tests/reference/``.
 
 These are the safety net for the refactor to a public release: every scenario
 runs on CPU in float64 in a few seconds and touches a different layer (physical
 constants, the microscope column, Gaussian propagation through the biprism
-column, the coherent renderer). ``tests/golden/make_baseline.py`` writes the
-files; ``tests/test_golden.py`` recomputes and compares.
+column, the coherent renderer). ``tests/reference/make_baseline.py`` writes the
+files; ``tests/test_reference_values.py`` recomputes and compares.
 """
 from pathlib import Path
 

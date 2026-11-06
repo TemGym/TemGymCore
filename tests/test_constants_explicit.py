@@ -6,7 +6,7 @@ import pytest
 
 from temgym_core import constants
 
-RAW = json.loads((Path(__file__).parent / "golden" / "baseline.json").read_text())["raw_constants"]
+RAW = json.loads((Path(__file__).parent / "reference" / "baseline.json").read_text())["raw_constants"]
 
 
 def test_explicit_constants_match_the_frozen_snapshot():

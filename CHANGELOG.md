@@ -48,7 +48,7 @@ All notable changes to this project are documented here. The format follows
   calibration workflows now raise a clear error when 64-bit arithmetic is off, instead of
   silently computing in single precision. Importing the package changes no JAX setting.
 - `temgym_core.__version__`, derived from git tags (hatch-vcs).
-- Frozen numerical baseline (`tests/test_golden.py`) covering physical constants, the
+- Frozen numerical baseline (`tests/test_reference_values.py`) covering physical constants, the
   focused example column, Gaussian propagation through the biprism column and the
   coherent renderer, on CPU and GPU.
 - Public constants in `temgym_core.constants` (`ELEMENTARY_CHARGE`, `ELECTRON_MASS`,
@@ -131,6 +131,6 @@ All notable changes to this project are documented here. The format follows
   beamlets, 0.81 for 39.9 um with 21 x 21, and about 0.99 at hologram scale. The interior
   intensity is now `amp`^2 whatever the lattice size. Fringe period and contrast are unchanged;
   absolute intensities (and anything scaled from them) change by a factor N/(L/d)^2 (10% for the
-  golden biprism column), and `tests/golden/` was regenerated.
+  reference biprism column), and `tests/reference/` was regenerated.
 - The README and the code map no longer describe `KrivanekLensCartesian` and Seidel ray
   support, which do not exist yet; every README example now runs in the test suite.
