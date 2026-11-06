@@ -220,8 +220,53 @@ def prepare_experiment(*, directory, voltages_v, aperture_diameters_um, random_s
     return root
 
 
-def _column_source(spec, settings, model, row, aperture):
-    """Use the recorded voltage, currents and kicks with native components."""
+def setting_column(
+    condenser_parameters,
+    projector_parameters,
+    *,
+    voltage_v,
+    reference_voltage_v,
+    source_index,
+    condenser_controls,
+    projector_controls,
+    specimen_kick,
+    aperture_index,
+    aperture_diameter_um,
+    aperture_edge_width_m,
+    gap_fractions=(0.3, 0.7),
+):
+    """Native source-to-detector column for one physical microscope setting.
+
+    Parameters
+    ----------
+    condenser_parameters, projector_parameters : array_like
+        Physical model parameters (31 and 16 values), as saved in
+        ``scoring_truth.json`` or decoded from a fit.
+    voltage_v, reference_voltage_v : float
+        Beam voltage and the voltage at which the parameters are stated.
+    source_index : int
+        0 for the reference voltage's source, 1 for the second voltage's source.
+    condenser_controls, projector_controls : array_like
+        Relative lens controls: CL1, CL3, mini; and Objective, IL1, IL2, IL3, PL1.
+    specimen_kick : array_like
+        Calibrated specimen displacement and angle ``[x, y, theta_x, theta_y]`` in
+        metres and radians, realised by a post-aperture double deflector.
+    aperture_index : int
+        Which of the two fitted aperture centres to use.
+    aperture_diameter_um, aperture_edge_width_m : float
+        Inserted aperture diameter and its sigmoid edge width.
+    gap_fractions : tuple of float, optional
+        Illustrative deflector positions as fractions of the aperture-to-mini gap.
+
+    Returns
+    -------
+    column : tuple
+        Native components from the condenser to the detector plane.
+    mean, covariance : numpy.ndarray
+        Source ray moments (4 and 4x4).
+    source_z : float
+        Source position relative to the specimen, in metres.
+    """
     from .apertures import aperture_centres, effective_parameters
     from .condenser_model import (
         condenser_with_aperture,
@@ -230,29 +275,50 @@ def _column_source(spec, settings, model, row, aperture):
     )
     from .projector_model import at_voltage, projector_components
 
-    vi = int(settings["voltage_index"][row])
-    voltage, reference = spec["voltages_v"][vi], spec["voltages_v"][0]
-    cp = effective_parameters(model["condenser_parameters"], voltage, reference, vi)
-    pp = at_voltage(model["projector_parameters"], voltage, reference)
+    cp = effective_parameters(
+        condenser_parameters, voltage_v, reference_voltage_v, source_index
+    )
+    pp = at_voltage(projector_parameters, voltage_v, reference_voltage_v)
     column = condenser_with_aperture(
         cp,
-        settings["condenser_controls"][row],
-        radius_m=spec["aperture_diameters_um"][aperture] * 0.5e-6,
-        edge_width_m=spec["aperture_edge_width_m"],
-        centre_m=aperture_centres(cp, 2)[aperture] * 1e-6,
+        condenser_controls,
+        radius_m=aperture_diameter_um * 0.5e-6,
+        edge_width_m=aperture_edge_width_m,
+        centre_m=aperture_centres(cp, 2)[aperture_index] * 1e-6,
     )
     column = condenser_with_steering(
         column,
-        settings["specimen_kick"][row],
-        voltage_v=voltage,
-        gap_fractions=spec.get("deflector_gap_fractions", (0.3, 0.7)),
+        specimen_kick,
+        voltage_v=voltage_v,
+        gap_fractions=gap_fractions,
     )
     column = (
         *column,
-        *projector_components(pp, settings["projector_controls"][row]),
+        *projector_components(pp, projector_controls),
     )
-    mean, covariance = map(np.asarray, source_moments(cp, voltage))
-    return column, mean, covariance, -np.exp(np.asarray(cp[:9])).sum(), voltage
+    mean, covariance = map(np.asarray, source_moments(cp, voltage_v))
+    return column, mean, covariance, -np.exp(np.asarray(cp[:9])).sum()
+
+
+def _column_source(spec, settings, model, row, aperture):
+    """Use the recorded voltage, currents and kicks with native components."""
+    vi = int(settings["voltage_index"][row])
+    voltage, reference = spec["voltages_v"][vi], spec["voltages_v"][0]
+    column, mean, covariance, source_z = setting_column(
+        model["condenser_parameters"],
+        model["projector_parameters"],
+        voltage_v=voltage,
+        reference_voltage_v=reference,
+        source_index=vi,
+        condenser_controls=settings["condenser_controls"][row],
+        projector_controls=settings["projector_controls"][row],
+        specimen_kick=settings["specimen_kick"][row],
+        aperture_index=aperture,
+        aperture_diameter_um=spec["aperture_diameters_um"][aperture],
+        aperture_edge_width_m=spec["aperture_edge_width_m"],
+        gap_fractions=spec.get("deflector_gap_fractions", (0.3, 0.7)),
+    )
+    return column, mean, covariance, source_z, voltage
 
 
 @lru_cache(maxsize=4)
@@ -298,26 +364,84 @@ def _source_samples(power):
 
 def render_ray_image(spec, settings, model, row, aperture):
     """Render detector signal from native rays; no aperture diffraction or noise."""
+    column, mean, covariance, source_z, voltage = _column_source(
+        spec, settings, model, row, aperture
+    )
+    image = render_rays(
+        column,
+        mean,
+        covariance,
+        source_z,
+        voltage,
+        shape_yx=spec["shape_yx"],
+        pixel_pitch_m=spec["pixel_pitch_m"],
+        psf_sigma_pixels=spec["psf_sigma_pixels"],
+        ray_sample_power=spec.get("ray_sample_power", 18),
+        detector_samples_per_pixel=spec.get("detector_samples_per_pixel", 1),
+    )
+    return image * spec["nominal_incident_electrons_per_image"]
+
+
+def render_rays(
+    column,
+    mean,
+    covariance,
+    source_z,
+    voltage_v,
+    *,
+    shape_yx,
+    pixel_pitch_m,
+    psf_sigma_pixels,
+    ray_sample_power=18,
+    detector_samples_per_pixel=1,
+):
+    """Expected detector signal per incident electron from native rays.
+
+    Parameters
+    ----------
+    column : tuple
+        Native components ending at the detector plane, e.g. from
+        :func:`setting_column`.
+    mean, covariance : array_like
+        Source ray moments; the source is sampled with fixed Sobol points.
+    source_z : float
+        Source position in metres.
+    voltage_v : float
+        Beam voltage.
+    shape_yx : tuple of int
+        Detector rows and columns.
+    pixel_pitch_m : float
+        Detector pixel pitch.
+    psf_sigma_pixels : float
+        Gaussian detector point-spread function, applied before pixel integration.
+    ray_sample_power : int, optional
+        Trace ``2**ray_sample_power`` rays.
+    detector_samples_per_pixel : int, optional
+        Internal sub-samples per pixel axis before the PSF and binning.
+
+    Returns
+    -------
+    numpy.ndarray
+        Transmitted fraction per pixel (sums to the transmitted fraction on the
+        detector); no aperture diffraction and no noise.
+    """
     from scipy.signal import fftconvolve
 
     from temgym_core.ray import Ray
 
-    column, mean, covariance, source_z, voltage = _column_source(
-        spec, settings, model, row, aperture
-    )
     samples = (
         mean
-        + _source_samples(spec.get("ray_sample_power", 18))
+        + _source_samples(ray_sample_power)
         @ np.linalg.cholesky(covariance).T
     )
-    rays = Ray(*samples.T, z=source_z, pathlength=0.0, voltage=voltage)
+    rays = Ray(*samples.T, z=source_z, pathlength=0.0, voltage=voltage_v)
     # Apply the detector PSF before integrating detector pixels. A fine internal
     # grid avoids rounding sparse rays to whole pixels before the blur.
-    sampling = spec.get("detector_samples_per_pixel", 1)
-    height, width = spec["shape_yx"]
+    sampling = detector_samples_per_pixel
+    height, width = shape_yx
     image = np.asarray(
         _ray_renderer((height * sampling, width * sampling))(
-            column, rays, spec["pixel_pitch_m"] / sampling
+            column, rays, pixel_pitch_m / sampling
         )
     )
     # Blur only occupied rows/columns plus the complete PSF support. Keeping the
@@ -325,7 +449,7 @@ def render_ray_image(spec, settings, model, row, aperture):
     occupied = [np.flatnonzero(image.any(axis=axis)) for axis in (1, 0)]
     result = np.zeros((height, width))
     if all(len(indices) for indices in occupied):
-        halo = int(np.ceil(8 * spec["psf_sigma_pixels"])) + 1
+        halo = int(np.ceil(8 * psf_sigma_pixels)) + 1
         bounds = [
             (max(0, indices[0] // sampling - halo),
              min(size, indices[-1] // sampling + halo + 1))
@@ -335,7 +459,7 @@ def render_ray_image(spec, settings, model, row, aperture):
         crop = image[y0 * sampling:y1 * sampling, x0 * sampling:x1 * sampling]
         # Separable FFT convolution is fast even on the fine detector grid.
         # Retain eight sigma: four-sigma truncation biases high-dose beam widths.
-        sigma = spec["psf_sigma_pixels"] * sampling
+        sigma = psf_sigma_pixels * sampling
         blurred = crop
         if sigma > 0:
             radius = int(8 * sigma + 0.5)
@@ -347,4 +471,4 @@ def render_ray_image(spec, settings, model, row, aperture):
         result[y0:y1, x0:x1] = blurred.reshape(
             y1 - y0, sampling, x1 - x0, sampling
         ).sum(axis=(1, 3))
-    return result * spec["nominal_incident_electrons_per_image"]
+    return result
