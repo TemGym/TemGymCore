@@ -1,11 +1,12 @@
 """Figures and tables for the projector calibration, in the style of the paper figure: the column
 drawn vertically with lenses as rings and the beam as a coloured band (:func:`column_panels`),
-Okabe-Ito colours, bold panel titles, no grid. Every figure applies that style itself.
+Okabe-Ito colours, bold panel titles, no grid. Every figure applies that style itself. Every
+function takes named arguments only.
 
     import figures
 
-    figures.frames(folder)                          # frames of a session, centres marked
-    figures.prediction_check(analyse.compare(...))  # measured against predicted beam moves
+    figures.frames(folder=recording.folder)               # frames of a recording, centres marked
+    figures.prediction_test(model=model, folder=new.folder)   # the beam at new settings, predicted and measured
 """
 
 import jax.numpy as jnp
@@ -22,7 +23,6 @@ INK, INK2, LIGHT = "#222222", "#595959", "#ececec"
 BLUE, ORANGE, GREEN, YELLOW = "#0072B2", "#D55E00", "#009E73", "#F0E442"
 FILL = {"truth": "#43C78E", "orange": "#F5A35C", "blue": "#6BAED6"}
 COLUMN_LABELS = ("Objective", "IL1", "IL2", "IL3", "PL1", "Camera")
-SET_LABELS = [str(i) for i in range(8)] + ["diff."]
 
 
 #: The paper style, applied by every figure function while it draws (nothing global changes).
@@ -45,7 +45,7 @@ def _styled(draw):
     return wrapper
 
 
-def table(header, rows):
+def table(*, header, rows):
     """Show a Markdown table. ``rows`` are lists of already formatted cells."""
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     lines += ["| " + " | ".join(str(c) for c in row) + " |" for row in rows]
@@ -66,7 +66,7 @@ def _opaque(colour, alpha=0.6):
 
 
 # ------------------------------------------------------------------------- the column
-def column_panel(ax, theta, dac, voltage, reference, *, xmax, bottom, camera_half_width, title,
+def column_panel(*, ax, theta, dac, voltage, reference, xmax, bottom, camera_half_width, title,
                  colour=INK, fill=FILL["truth"], truth_planes=(), beam_half_width=20e-9, sizes=True):
     """One column, specimen at the top: a parallel beam (2 x ``beam_half_width`` wide) through the
     lenses to the camera, traced by TemGym's ``plot_model`` in the frame that rotates with the
@@ -129,7 +129,7 @@ def column_panel(ax, theta, dac, voltage, reference, *, xmax, bottom, camera_hal
 
 
 @_styled
-def column_panels(panels, reference, camera, *, truth=None, height=7.5, sizes=True):
+def column_panels(*, panels, reference, camera, truth=None, height=7.5, sizes=True):
     """Several :func:`column_panel` side by side on one scale. ``panels`` holds
     (title, theta, DAC values, HT, title colour, beam colour); with ``truth`` the true lens and
     camera planes are dashed in every panel that is not the truth itself."""
@@ -140,15 +140,15 @@ def column_panels(panels, reference, camera, *, truth=None, height=7.5, sizes=Tr
     width = 1.0 / len(panels)
     for k, (title, theta, dac, voltage, colour, fill) in enumerate(panels):
         ax = fig.add_axes([0.08 + k * width, 0.04, 0.55 * width, 0.86])
-        column_panel(ax, theta, dac, voltage, reference, xmax=1.06 * half_width, bottom=bottom,
-                     camera_half_width=half_width, title=title, colour=colour, fill=fill,
+        column_panel(ax=ax, theta=theta, dac=dac, voltage=voltage, reference=reference, xmax=1.06 * half_width,
+                     bottom=bottom, camera_half_width=half_width, title=title, colour=colour, fill=fill,
                      truth_planes=planes if theta is not truth else (), sizes=sizes)
     return fig
 
 
 @_styled
-def frames(folder, visits=(0, 4, 9)):
-    """Frames of a saved stage-1 session: no kick, -/+ shift, -/+ tilt at the given visits;
+def frames(*, folder, measurements=(1, 5, 10)):
+    """Frames of a recording: no kick, -/+ shift, -/+ tilt at the given measurements (numbered from 1);
     + marks the measured centre."""
     import json
     from pathlib import Path
@@ -158,9 +158,9 @@ def frames(folder, visits=(0, 4, 9)):
     log = json.loads((folder / "log.json").read_text())
     dark = [e for e in log if e["role"] == "dark"]
     background = float(np.median(np.load(folder / dark[0]["file"]))) if dark else 0.0
-    fig, axes = plt.subplots(len(visits), 5, figsize=(12, 2.5 * len(visits)), squeeze=False)
-    for row, v in enumerate(visits):
-        entries = [e for e in log if e["visit"] == v]
+    fig, axes = plt.subplots(len(measurements), 5, figsize=(12, 2.5 * len(measurements)), squeeze=False)
+    for row, number in enumerate(measurements):
+        entries = [e for e in log if e["measurement"] == number]
         pick = [next(e for e in entries if e["role"] == "base")]
         for kind in ("shift", "tilt"):
             pick += [[e for e in entries if e["kind"] == kind and e["role"] == role][-1] for role in ("minus", "plus")]
@@ -169,45 +169,84 @@ def frames(folder, visits=(0, 4, 9)):
             ax = axes[row, col]
             ax.imshow(np.sqrt(np.clip(img, 0, None)), origin="lower")
             ax.set_xticks([]); ax.set_yticks([])
-            c = measure_spot(img)[0] + (np.array(img.shape[::-1]) - 1) @ np.array([0.5, 0.5j])
+            c = measure_spot(frame=img)[0] + (np.array(img.shape[::-1]) - 1) @ np.array([0.5, 0.5j])
             ax.plot(c.real, c.imag, "+", color=YELLOW, ms=11, mew=1.6)
             if row == 0:
                 ax.set_title(name, loc="center", fontweight="normal")
             if col == 0:
-                ax.set_ylabel(f"visit {v + 1}: setting {entries[0]['setting']}", fontsize=11)
+                ax.set_ylabel(f"{number}. {entries[0]['setting']}", fontsize=9)
     fig.tight_layout()
     return fig
 
 
 @_styled
-def prediction_check(rows):
-    """Measured and predicted beam moves at unseen lens settings (arrows from the origin), and the
-    error of each prediction."""
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.6))
-    for ax, kind, tag in ((axes[0], "shift", "(a)"), (axes[1], "tilt", "(b)")):
-        sel = [r for r in rows if r["kind"] == kind]
-        for r in sel:
-            for z, colour, lw in ((r["measured"], INK, 2.2), (r["predicted"], ORANGE, 1.2)):
-                ax.annotate("", xy=(z.real, z.imag), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color=colour, lw=lw))
-        span = 1.15 * max(max(abs(r["measured"]), abs(r["predicted"])) for r in sel)
-        ax.set(xlim=(-span, span), ylim=(-span, span), aspect="equal", xlabel="x on the camera (px)",
-               ylabel="y on the camera (px)")
-        ax.set_title(f"{tag}  {kind.capitalize()}: measured (black), predicted (orange)")
-    settings = sorted({r["setting"] for r in rows}, key=lambda name: int(name.split()[-1]))
-    x = {name: i for i, name in enumerate(settings)}
-    for kind, colour, offset in (("shift", BLUE, -0.2), ("tilt", ORANGE, 0.2)):
-        sel = [r for r in rows if r["kind"] == kind]
-        axes[2].bar([x[r["setting"]] + offset for r in sel], [r["error"] for r in sel], 0.4, color=colour, label=kind)
-    axes[2].set_xticks(range(len(settings)), [name.split()[-1] for name in settings])
-    axes[2].set_xlabel("unseen lens setting")
-    axes[2].set_ylabel("|measured − predicted| (px)"); axes[2].legend()
-    axes[2].set_title(f"(c)  Prediction error: largest {max(r['error'] for r in rows):.3f} px")
-    fig.tight_layout()
+def prediction_test(*, model, folder):
+    """The beam at new lens settings: for each setting (rows), the frames with the + and - shift
+    and tilt kicks. Orange: the predicted beam (the frame without a kick, moved by the model's
+    predicted beam move, outlined at half its peak, + at its centre); yellow +: the measured centre.
+    Each panel's title is the distance between the two (px). Frames whose beam is cut by the
+    frame edge are not used (as in the analysis)."""
+    import json
+    from pathlib import Path
+
+    from scipy.ndimage import gaussian_filter, shift as move_image
+
+    import analyse
+    from acquire import measure_spot
+    from analyse import EDGE_LIMIT
+    folder = Path(folder)
+    log = json.loads((folder / "log.json").read_text())
+    dark = [e for e in log if e["role"] == "dark"]
+    background = float(np.median(np.load(folder / dark[0]["file"]))) if dark else 0.0
+    numbers = sorted({e["measurement"] for e in log if e["measurement"] >= 1})
+    columns = [("shift", "plus", "+ shift"), ("shift", "minus", "− shift"), ("tilt", "plus", "+ tilt"),
+               ("tilt", "minus", "− tilt")]
+    fig, axes = plt.subplots(len(numbers), 4, figsize=(9.5, 2.45 * len(numbers)), squeeze=False)
+    largest = 0.0
+    for row, number in enumerate(numbers):
+        entries = [e for e in log if e["measurement"] == number]
+        base_entry = next(e for e in entries if e["role"] == "base")
+        base = np.load(folder / base_entry["file"]).astype(float) - background
+        c0 = measure_spot(frame=base)[0]
+        smooth = gaussian_filter(base, 2.0)
+        centre = (np.array(base.shape[::-1]) - 1) @ np.array([0.5, 0.5j])
+        for col, (kind, role, name) in enumerate(columns):
+            ax = axes[row, col]
+            ax.set_xticks([]); ax.set_yticks([])
+            pick = [e for e in entries if e["kind"] == kind and e["role"] == role]
+            if not pick:
+                ax.set_title("cut by the edge, not used", loc="center", fontsize=9, fontweight="normal")
+                ax.axis("off")
+                continue
+            e = pick[-1]
+            img = np.load(folder / e["file"]).astype(float) - background
+            ax.imshow(np.sqrt(np.clip(img, 0, None)), origin="lower")
+            measured, _, edge = measure_spot(frame=img)
+            if edge > EDGE_LIMIT:
+                ax.set_title("cut by the edge, not used", loc="center", fontsize=9, fontweight="normal")
+                continue
+            kick = tuple(e["offset"])
+            predicted = c0 + complex(analyse.predict(model=model, dac=e["dac"],
+                                                     **{kind: kick, ("tilt" if kind == "shift" else "shift"): (0, 0)})[0])
+            outline = move_image(smooth, ((predicted - c0).imag, (predicted - c0).real), order=1)
+            ax.contour(outline, levels=[0.5 * outline.max()], colors=ORANGE, linewidths=1.2)
+            for z, colour, size in ((predicted, ORANGE, 13), (measured, YELLOW, 9)):
+                z = z + centre
+                ax.plot(z.real, z.imag, "+", color=colour, ms=size, mew=1.5)
+            difference = abs(measured - predicted)
+            largest = max(largest, difference)
+            ax.set_title(f"{difference:.3f} px", loc="center", fontsize=10, fontweight="normal")
+            if row == 0:
+                ax.text(0.5, 1.22, name, transform=ax.transAxes, ha="center", fontsize=12, fontweight="bold")
+        axes[row, 0].set_ylabel(base_entry["setting"], fontsize=11)
+    fig.suptitle(f"The beam at new lens settings: predicted (orange) and measured (yellow); "
+                 f"largest difference {largest:.3f} px", x=0.02, ha="left", fontsize=13, fontweight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     return fig
 
 
 @_styled
-def specimen_frames(grating, gold, result):
+def specimen_frames(*, grating, gold, result):
     """The two specimen frames side by side, with the measured magnification and camera length."""
     fig, axes = plt.subplots(1, 2, figsize=(9, 4.4))
     axes[0].imshow(grating, cmap="gray")
@@ -218,67 +257,3 @@ def specimen_frames(grating, gold, result):
         ax.set_xticks([]); ax.set_yticks([])
     fig.tight_layout()
     return fig
-
-
-@_styled
-def model_response(model, folder, units=1000):
-    """The stage-1 model as it is known, unscaled: at each of the session's lens settings, the beam
-    move on the camera (px, camera axes) for ``units`` deflector units of CLA1 (shift, top row) and
-    of CLA2 (tilt, bottom row). Arrows show the direction and the number the size; arrow lengths
-    are on a log scale over three decades within a row, and a dot marks a move below that."""
-    import json
-    from pathlib import Path
-
-    import analyse
-
-    settings = json.loads((Path(folder) / "plan.json").read_text())["settings"]
-    labels = list(settings)
-    moves = {kind: [complex(analyse.predict(model, settings[k], **{kind: (units, 0)})[0]) for k in labels]
-             for kind in ("shift", "tilt")}
-    fig, axes = plt.subplots(2, len(labels), figsize=(1.6 * len(labels), 4.4))
-    for row, (kind, name, colour) in enumerate((("shift", "CLA1 (shift)", BLUE), ("tilt", "CLA2 (tilt)", ORANGE))):
-        largest = max(abs(m) for m in moves[kind])
-        for col, (label, move) in enumerate(zip(labels, moves[kind])):
-            ax = axes[row, col]
-            ax.set(xlim=(-1.15, 1.15), ylim=(-1.15, 1.15), aspect="equal", xticks=[], yticks=[])
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            ax.add_patch(plt.Circle((0, 0), 1.0, fill=False, color=LIGHT, lw=1.0))
-            ratio = abs(move) / largest
-            if ratio > 1e-3:                                     # log length: 1 at the largest, 0 at 1/1000
-                end = (1 + np.log10(ratio) / 3) * move / abs(move)
-                ax.annotate("", xy=(end.real, end.imag), xytext=(0, 0),
-                            arrowprops=dict(arrowstyle="-|>", color=colour, lw=2.0, mutation_scale=12))
-            else:
-                ax.plot(0, 0, "o", color=colour, ms=4)
-            ax.text(0, -1.45, f"{abs(move):.2g} px", ha="center", va="top", fontsize=10, color=INK)
-            if row == 0:
-                ax.set_title("diff." if label == "diffraction" else f"setting {label}", loc="center",
-                             fontsize=11, fontweight="normal")
-        axes[row, 0].text(-1.6, 0, name, rotation=90, ha="center", va="center", fontsize=11, color=colour,
-                          fontweight="bold")
-    fig.suptitle(f"Stage-1 model, unscaled: beam move on the camera per {units} deflector units "
-                 "(arrow length on a log scale)",
-                 x=0.02, ha="left", fontsize=14, fontweight="bold", color=INK)
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
-    return fig
-
-
-@_styled
-def model_family(model, columns):
-    """Equally good stage-1 columns (from :func:`analyse.equivalent_columns`) side by side at the
-    40k row: each assumes different metres per shift unit and radians per tilt unit, and all
-    predict the same beam moves. None is physical; stage 2 picks the physical one."""
-    units = np.asarray(model["units"])
-    dac, ht = np.asarray(model["base_dac"]) * units, model["ht_v"]
-    camera = M.Camera(n=model["frame_width"], pitch=model["pitch_m"])
-    panels = [(f"({chr(97 + k)})  χ²/dof {c['chi2_dof']:.2f}", np.asarray(c["theta"]), dac, ht, INK2, LIGHT)
-              for k, c in enumerate(columns)]
-    fig = column_panels(panels, ht, camera, sizes=False)
-    fig.suptitle("Equally good stage-1 columns: unscaled, not physical", x=0.04, ha="left", y=1.0,
-                 fontsize=14, fontweight="bold", color=INK)
-    fig.text(0.04, -0.03, "Each column assumes different metres per shift unit and radians per tilt unit; all "
-             "predict the same beam\nmoves, so stage 1 cannot tell them apart. Stage 2 (specimen frames and a "
-             "second HT) picks the physical one.", ha="left", va="top", fontsize=11, color=INK2)
-    return fig
-

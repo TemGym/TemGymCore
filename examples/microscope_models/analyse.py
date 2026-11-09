@@ -1,21 +1,24 @@
-"""Turn the saved frames into the projector-calibration model.
+"""Turn the saved frames into the model of the projection system. Every function takes named
+arguments only.
 
     import analyse
 
-    model = analyse.stage1(folder)        # shown in a notebook as its summary table
-    analyse.predict(model, dac=[...], shift=(dx, dy), tilt=(0, 0))     # beam move, px
-    analyse.compare(model, check_folder)  # measured against predicted, at new lens settings
+    model = analyse.fit_projection_response(folder=recording.folder)   # shown in a notebook as its table
+    analyse.predict(model=model, dac=[...], shift=(dx, dy))      # beam move on the camera, px
+    analyse.compare(model=model, folder=new.folder)                     # measured against predicted
 
-**Stage 1** gives a predictor: where the beam moves on the camera for any lens setting (IL1, IL2,
-IL3, PL1 DAC values, within the explored range) and any change of the beam-shift (CLA1) or
-beam-tilt (CLA2) deflector, in deflector units. Steps: dark-subtracted centres of every frame; for
-each +/- pair, half the difference (the beam's starting position cancels); the wobble from the
-three visits to setting 0; then the fit of ``model.py`` at one HT, trying both camera
-handednesses (a camera image can be mirrored relative to the column) and keeping the one at the
-noise level. Its lens positions mean nothing yet; its predictions do.
+**Stage 1** gives a predictor: where the beam moves on the camera for any lens setting of the
+projection system (IL1, IL2, IL3, PL1 DAC values, within the explored range) and any change of the
+beam-shift (CLA1) or beam-tilt (CLA2) deflector, in deflector units. Steps: dark-subtracted
+centres of every frame; for each +/- pair, half the difference (the beam's starting position
+cancels); the wobble from the three measurements of the 40k row; then the fit of ``model.py`` at one HT,
+trying both camera handednesses (a camera image can be mirrored relative to the column) and
+keeping the one at the noise level. Its lens positions mean nothing yet (it is unscaled); its
+predictions do.
 
-**Stage 2** (:func:`stage2`, draft) adds the two specimen frames and a second HT, and fits
-everything together: the lens and camera positions, and the deflectors in metres and radians.
+**Stage 2** (:func:`fit_physical_projection`, draft) adds the two specimen frames and a second HT,
+and fits everything together: the lens and camera positions, and the deflectors in metres and
+radians.
 """
 
 import json
@@ -31,31 +34,31 @@ from acquire import FLC_IDS, measure_spot
 EDGE_LIMIT = 1e-3
 
 
-def load_session(folder):
-    """Read a stage-1 folder. Returns the measured half-differences as fit data (commands in
+def load_session(*, folder):
+    """Read a recording folder. Returns the measured half-differences as fit data (commands in
     deflector units, complex x + iy), the plan, and one row per pair for inspection."""
     folder = Path(folder)
     log = json.loads((folder / "log.json").read_text())
     plan = json.loads((folder / "plan.json").read_text())
     dark = [e for e in log if e["role"] == "dark"]
     background = float(np.median(np.load(folder / dark[0]["file"]))) if dark else 0.0
-    centres = {e["index"]: measure_spot(np.load(folder / e["file"]), background) for e in log}
+    centres = {e["index"]: measure_spot(frame=np.load(folder / e["file"]), background=background) for e in log}
     rows = []
-    for visit in sorted({e["visit"] for e in log if e["visit"] >= 0}):
+    for number in sorted({e["measurement"] for e in log if e["measurement"] >= 1}):
         for kind in ("shift", "tilt"):
-            plus = [e for e in log if e["visit"] == visit and e["kind"] == kind and e["role"] == "plus"]
-            minus = [e for e in log if e["visit"] == visit and e["kind"] == kind and e["role"] == "minus"]
+            plus = [e for e in log if e["measurement"] == number and e["kind"] == kind and e["role"] == "plus"]
+            minus = [e for e in log if e["measurement"] == number and e["kind"] == kind and e["role"] == "minus"]
             if not plus or not minus:
                 continue
             p, m = plus[-1], minus[-1]
             half = (centres[p["index"]][0] - centres[m["index"]][0]) / 2
             command = complex(*p["offset"])
-            rows.append(dict(visit=visit, setting=p["setting"], kind=kind, dac=p["dac"], ht_v=p["ht_v"],
+            rows.append(dict(measurement=number, setting=p["setting"], kind=kind, dac=p["dac"], ht_v=p["ht_v"],
                              command=command, half=half, rms=centres[p["index"]][1],
                              edge=max(centres[p["index"]][2], centres[m["index"]][2])))
     cut = [r for r in rows if r["edge"] > EDGE_LIMIT]
     if cut:
-        print("  dropped (beam cut by the frame edge): " + ", ".join(f"visit {r['visit'] + 1} {r['kind']}" for r in cut),
+        print("  dropped (beam cut by the frame edge): " + ", ".join(f"measurement {r['measurement']} {r['kind']}" for r in cut),
               flush=True)
     rows = [r for r in rows if r["edge"] <= EDGE_LIMIT]
     data = dict(dac=np.array([r["dac"] for r in rows], float), voltage=np.array([r["ht_v"] for r in rows], float),
@@ -75,7 +78,6 @@ def _units(base_dac, ht_v):
 def _setup(data, plan, pitch_m, shape, units):
     v0 = float(np.median(data["voltage"]))
     return M.Setup(v0=v0, v1=v0, base_dac=np.asarray(plan["base_dac"], float) * units,
-                   diffraction_setting=np.asarray(plan["diffraction"], float) * units,
                    camera=M.Camera(n=int(shape), pitch=pitch_m))
 
 
@@ -95,19 +97,22 @@ def _nominal_scales(data, setup):
 
 
 class Model(dict):
-    """The stage-1 model: a dict (as saved in ``model.json``) that a notebook shows as its summary."""
+    """The fitted projection-system response (stage 1, unscaled): a dict (as saved in
+    ``model.json``) that a notebook shows as its summary."""
 
     def _repr_markdown_(self):
-        return "| stage-1 model | |\n|---|---|\n" + "\n".join(f"| {name} | {value} |" for name, value in summary(self))
+        return ("| projection-system response (unscaled) | |\n|---|---|\n"
+                + "\n".join(f"| {name} | {value} |" for name, value in summary(model=self)))
 
 
-def stage1(folder, *, pitch_m=None, save=True, verbose=False):
-    """Fit the stage-1 model to a session folder. Returns the :class:`Model` (a dict, also saved as
+def fit_projection_response(*, folder, pitch_m=None, save=True, verbose=False):
+    """Fit the projection-system response (stage 1, unscaled) to a recording folder from
+    an :class:`acquire.Recording`. Returns the :class:`Model` (a dict, also saved as
     ``model.json``): the fitted parameters, the deflector scales, the camera handedness, the wobble,
     chi2, whether the fit reached the noise level and the three worst-fitting measurements.
     ``verbose`` prints each handedness trial and the mixing test."""
     folder = Path(folder)
-    data, plan, rows = load_session(folder)
+    data, plan, rows = load_session(folder=folder)
     state = json.loads((folder / "state_before.json").read_text())
     info = state["camera"].get("OutputImageInformation", {})
     pitch = pitch_m or (1.0 / info["PixelsPerMeter"] if info.get("PixelsPerMeter") else 110e-6)
@@ -115,10 +120,10 @@ def stage1(folder, *, pitch_m=None, save=True, verbose=False):
     data["dac"] = data["dac"] * units
     setup = _setup(data, plan, pitch, state["camera"]["ImagingArea"]["Width"], units)
 
-    # wobble from the x-kick visits to setting 0 (three of them)
-    at0 = np.array([r["setting"] == "0" for r in rows]) & (np.imag(data["command"]) == 0)    # x kicks at setting 0
+    # wobble from the x-kick measurements of the 40k row (three of them)
+    at0 = np.array([r["setting"] == "40k row" for r in rows]) & (np.imag(data["command"]) == 0)    # x kicks, 40k row
     squares, dof = 0.0, 0
-    for kind in (0, 1):                     # kick sizes differ a little per visit: compare per deflector unit
+    for kind in (0, 1):                     # kick sizes differ a little per measurement: compare per deflector unit
         sel = at0 & (data["kind"] == kind)
         m, c = data["measured"][sel], data["command"][sel]
         squares, dof = squares + np.sum(np.abs(m - c * np.mean(m / c)) ** 2), dof + 2 * (len(m) - 1)
@@ -157,7 +162,7 @@ def stage1(folder, *, pitch_m=None, save=True, verbose=False):
               f"chance level {chi2_dist.ppf(0.99, len(M.MIX)):.1f})", flush=True)
     n = len(rows)
     misfit = np.abs(result["residuals"][:n] + 1j * result["residuals"][n:2 * n]) * wobble / np.sqrt(2)
-    worst = [f"visit {rows[k]['visit'] + 1} ({rows[k]['setting']}) {rows[k]['kind']}: {misfit[k]:.3f} px"
+    worst = [f"measurement {rows[k]['measurement']} ({rows[k]['setting']}) {rows[k]['kind']}: {misfit[k]:.3f} px"
              for k in np.argsort(misfit)[::-1][:3]]
     theta = result["theta"]
     mixing = [complex(theta[M.MIX[0]], theta[M.MIX[1]]), complex(theta[M.MIX[2]], theta[M.MIX[3]])]
@@ -167,14 +172,14 @@ def stage1(folder, *, pitch_m=None, save=True, verbose=False):
                  mixing_tilt_deflector_shift=[mixing[1].real, mixing[1].imag],
                  tilt_axis_angle_rad=float(theta[M.MIX[4]]), wobble_px=wobble,
                  wobble_dof=dof, chi2=result["chi2"], dof=result["dof"], accepted=bool(result["accepted"]),
-                 ht_v=setup.v0, units=units.tolist(), base_dac=list(plan["base_dac"]), diffraction=list(plan["diffraction"]),
+                 ht_v=setup.v0, units=units.tolist(), base_dac=list(plan["base_dac"]),
                  pitch_m=pitch, frame_width=setup.camera.n, residuals=result["residuals"].tolist(), worst=worst)
     if save:
         (folder / "model.json").write_text(json.dumps(model, indent=1))
     return Model(model)
 
 
-def summary(model):
+def summary(*, model):
     """Rows (name, value) describing a fitted model, for a table."""
     return [["camera image mirrored", model["mirrored"]],
             ["deflector y axis flipped", model["y_flipped"]],
@@ -184,31 +189,8 @@ def summary(model):
             ["worst-fitting measurements", "; ".join(model["worst"])]]
 
 
-def equivalent_columns(folder, model, conventions=((0.7, 0.7), (1.0, 1.0), (1.4, 1.4), (1.4, 0.7))):
-    """Stage-1 columns that fit the session equally well. Stage 1 cannot tell the metres per shift
-    unit or the radians per tilt unit; the fit fixes them by a convention, and every convention
-    gives a different column with the same predictions. Each entry of ``conventions`` multiplies
-    the two (shift, tilt) and refits. Returns one dict per convention: the parameters ``theta``,
-    chi2/dof and the convention. For showing that the stage-1 column is not physical."""
-    data, plan, _ = load_session(folder)
-    units, scales = np.asarray(model["units"]), np.asarray(model["deflector_scales"])
-    data["dac"] = data["dac"] * units
-    setup = _setup(data, plan, model["pitch_m"], model["frame_width"], units)
-    setup.wobble_px = data["wobble_px"] = model["wobble_px"]
-    measured = np.conj(data["measured"]) if model["mirrored"] else data["measured"]
-    free = M.ONE_HT_FREE + (M.MIX if model["deflectors"] == "mixed" else [])
-    out = []
-    for shift, tilt in conventions:
-        command = data["command"] * np.where(data["kind"] == 0, scales[0] * shift, scales[1] * tilt)
-        setup.mix_unit = scales[1] * tilt / (scales[0] * shift)
-        fit = M.fit(dict(data, command=np.conj(command) if model["y_flipped"] else command, measured=measured),
-                    setup, free=free)
-        out.append(dict(theta=fit["theta"], chi2_dof=fit["chi2"] / fit["dof"], convention=(shift, tilt)))
-    return out
-
-
-def unseen_settings(folder, n=8, seed=7):
-    """``n`` lens settings the session never visited, each a random blend of three of its
+def new_settings(*, folder, n=8, seed=7):
+    """``n`` lens settings the recording never used, each a random blend of three of its
     settings (so inside the explored range): rows of IL1, IL2, IL3, PL1 DAC values."""
     settings = np.array(list(json.loads((Path(folder) / "plan.json").read_text())["settings"].values()))
     rng = np.random.default_rng(seed)
@@ -216,7 +198,7 @@ def unseen_settings(folder, n=8, seed=7):
                      for _ in range(n)])
 
 
-def magnification_and_camera_length(grating_frame, gold_frame, *, period_m, pitch_m, ht_v, dark=0.0):
+def magnification_and_camera_length(*, grating_frame, gold_frame, period_m, pitch_m, ht_v, dark=0.0):
     """The two specimen measurements from their frames: the magnification |A| at the 40k row (grating image,
     certified ``period_m``) and the camera length |B| (m/rad) at the diffraction setting (gold
     rings). Returns a dict with both and the measured lattice period and ring radii (px)."""
@@ -232,13 +214,12 @@ def magnification_and_camera_length(grating_frame, gold_frame, *, period_m, pitc
                 camera_length_per_ring_m=lengths)
 
 
-def predict(model, dac, shift=(0.0, 0.0), tilt=(0.0, 0.0)):
+def predict(*, model, dac, shift=(0.0, 0.0), tilt=(0.0, 0.0)):
     """Predicted beam displacement on the camera (complex px, x + iy, camera axes) for a change
     of the shift (CLA1) and tilt (CLA2) deflectors from their centre values, in deflector units,
     at lens ``dac`` (IL1, IL2, IL3, PL1) and the model's HT."""
     units = np.asarray(model["units"])
     setup = M.Setup(v0=model["ht_v"], v1=model["ht_v"], base_dac=np.asarray(model["base_dac"]) * units,
-                    diffraction_setting=np.asarray(model["diffraction"]) * units,
                     camera=M.Camera(n=model["frame_width"], pitch=model["pitch_m"]),
                     mix_unit=model["deflector_scales"][1] / model["deflector_scales"][0])
     theta = np.asarray(model["theta"])
@@ -256,32 +237,33 @@ def predict(model, dac, shift=(0.0, 0.0), tilt=(0.0, 0.0)):
     return np.conj(out) if model["mirrored"] else out
 
 
-def compare(model, folder):
-    """Measured vs predicted beam displacements for an :func:`acquire.check` folder.
+def compare(*, model, folder):
+    """Measured vs predicted beam displacements for a recording at new settings
+    (:meth:`acquire.Recording.plan_new_settings`).
     Returns rows of (setting, kind, measured px, predicted px, error px)."""
-    data, _, rows = load_session(folder)
+    data, _, rows = load_session(folder=folder)
     out = []
     for r, dac, kind, command, measured in zip(rows, data["dac"], data["kind"], data["command"], data["measured"]):
         kick = (command.real, command.imag)
-        pred = predict(model, dac, shift=kick if kind == 0 else (0, 0), tilt=kick if kind == 1 else (0, 0))[0]
+        pred = predict(model=model, dac=dac, shift=kick if kind == 0 else (0, 0), tilt=kick if kind == 1 else (0, 0))[0]
         out.append(dict(setting=r["setting"], kind=r["kind"], measured=measured, predicted=pred,
                         error=abs(measured - pred)))
     return out
 
 
 # ---------------------------------------------------------------------------- stage 2 (draft)
-def stage2(stage1_folder, stage2_folder, grating_frame, gold_frame, *, period_m, period_sigma=0.002,
-        ring_sigma=0.001, dark=0.0):
-    """**Draft.** Stage 2: fit everything together -- the stage-1 and stage-2 beam moves (both HTs)
+def fit_physical_projection(*, first_ht_folder, second_ht_folder, grating_frame, gold_frame, period_m,
+                            period_sigma=0.002, ring_sigma=0.001, dark=0.0):
+    """**Draft.** Stage 2: fit everything together -- the recordings at both HTs
     and the two specimen measurements, the magnification |A| from the grating image at the 40k row
     and the camera length |B| from the gold rings at the diffraction setting. ``period_m`` is the grating's certified period and ``period_sigma`` its
     relative uncertainty; ``ring_sigma`` is the relative uncertainty of the camera length from the
     rings. Returns the lens and camera positions (mm, from the specimen) with 1-sigma
-    uncertainties, the beam shift (m) and tilt (rad) per deflector unit at the stage-1 HT, the two
+    uncertainties, the beam shift (m) and tilt (rad) per deflector unit at the first HT, the two
     specimen measurements, chi2 and whether the fit is at the noise level."""
-    model = json.loads((Path(stage1_folder) / "model.json").read_text())
-    plan2 = json.loads((Path(stage2_folder) / "plan.json").read_text())
-    parts = [load_session(folder)[0] for folder in (stage1_folder, stage2_folder)]
+    model = json.loads((Path(first_ht_folder) / "model.json").read_text())
+    plan2 = json.loads((Path(second_ht_folder) / "plan.json").read_text())
+    parts = [load_session(folder=folder)[0] for folder in (first_ht_folder, second_ht_folder)]
     data = {k: np.concatenate([d[k] for d in parts]) for k in ("dac", "voltage", "kind", "command", "measured")}
     units, scales = np.asarray(model["units"]), model["deflector_scales"]
     data["dac"] = data["dac"] * units
@@ -290,11 +272,11 @@ def stage2(stage1_folder, stage2_folder, grating_frame, gold_frame, *, period_m,
     data["measured"] = np.conj(data["measured"]) if model["mirrored"] else data["measured"]
     data["wobble_px"] = model["wobble_px"]
     setup = M.Setup(v0=model["ht_v"], v1=plan2["ht_v1"], base_dac=np.asarray(model["base_dac"]) * units,
-                    diffraction_setting=np.asarray(model["diffraction"]) * units,
+                    diffraction_setting=np.asarray(plan2["diffraction"]) * units,
                     camera=M.Camera(n=model["frame_width"], pitch=model["pitch_m"]),
                     wobble_px=model["wobble_px"], mix_unit=scales[1] / scales[0])
 
-    measured = magnification_and_camera_length(grating_frame, gold_frame, period_m=period_m, pitch_m=model["pitch_m"],
+    measured = magnification_and_camera_length(grating_frame=grating_frame, gold_frame=gold_frame, period_m=period_m, pitch_m=model["pitch_m"],
                          ht_v=model["ht_v"], dark=dark)
     specimen = M.specimen_scales(a_dac=setup.base_dac, magnification=measured["magnification"],
                              magnification_sigma=period_sigma, b_dac=setup.diffraction_setting,
@@ -308,4 +290,4 @@ def stage2(stage1_folder, stage2_folder, grating_frame, gold_frame, *, period_m,
                 tilt_rad_per_unit=scales[1] * float(np.exp(theta[M.LOG_KT])),
                 magnification=measured["magnification"], camera_length_m=measured["camera_length_m"],
                 chi2=result["chi2"], dof=result["dof"], accepted=bool(result["accepted"]),
-                beam_moves=len(data["kind"]), theta=theta, units=units, setup=setup)
+                measurements=len(data["kind"]), theta=theta, units=units, setup=setup)

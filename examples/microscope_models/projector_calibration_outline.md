@@ -2,13 +2,14 @@
 
 Status: 2026-11-06. Two stages:
 
-1. **Stage 1, the predictor** (one HT, no specimen): where the beam lands on the camera for any lens
-   setting and any beam shift or tilt, in deflector units. Session: `acquire.stage1`; analysis:
-   `analyse.stage1`; rehearsal: `stage1_rehearsal.ipynb`; sheet: `stage1_session_sheet.md`.
-2. **Stage 2, the physical calibration**: two specimen frames (a cross grating and gold) and the
-   beam moves at a second HT, fitted together with stage 1. It gives real units and the lens and
-   camera positions. Session: `acquire.stage2`; analysis: `analyse.stage2` (both drafts); rehearsal:
-   to come (`stage2_rehearsal.ipynb`).
+1. **Stage 1, the projection-system response (unscaled)** (one HT, no specimen): where the beam
+   lands on the camera for any lens setting and any beam shift or tilt, in deflector units.
+   Session: `acquire.Recording`, step by step; analysis: `analyse.fit_projection_response`;
+   rehearsal: `stage1_rehearsal.ipynb`; sheet: `stage1_session_sheet.md`.
+2. **Stage 2, the physical projection system**: two specimen frames (a cross grating and gold)
+   and the response at a second HT, fitted together with stage 1. It gives real units and the lens
+   and camera positions. Session: `acquire.record_second_ht` and `acquire.take_frame`; analysis:
+   `analyse.fit_physical_projection` (drafts); rehearsal: to come (`stage2_rehearsal.ipynb`).
 
 The model and fit are in `model.py`, the figures in `figures.py`. The rehearsals run on the virtual NEOARM
 (TemGym rays for the beam and the grating, TemGym Gaussian beamlets for the gold rings) through its
@@ -117,12 +118,12 @@ The two numbers, and with a second HT the lens positions, are what stage 2 suppl
 
 ## 5. Stage 1: the predictor
 
-**Measured** (no specimen, one HT, about 100 frames): 12 visits.
-- The 8 lens settings, as multiples of the 40k row.
-- The diffraction setting (read in DIFF mode; $A = 0$).
-- Setting 0 twice more (the beam-position wobble) and once with y kicks (round deflectors).
+**Measured** (no specimen, one HT, all set in MAG, about 120 frames): 20 measurements.
+- The 40k row and the DIFF row (read in DIFF mode), each alone and times the same 7 sets of
+  factors: image-like and diffraction-like settings evenly.
+- The 40k row twice more (the beam-position wobble) and once with y kicks (round deflectors).
 
-At each visit, a ± shift and a ± tilt, each auto-scaled to about 50 px.
+At each measurement, a ± shift and a ± tilt, each auto-scaled to about 50 px.
 
 **Fit.** Weighted least squares of the half-differences, with $\sigma = \text{wobble}/\sqrt2$ per
 component (maximum likelihood for Gaussian centroid noise), and exact derivatives through the
@@ -133,10 +134,10 @@ camera handedness (mirror) and the deflector y axis are each tried both ways; th
 level is kept.
 
 **Acceptance.** $\chi^2$ inside its 99% range (the discrepancy principle), and a prediction check
-at lens settings the session never visited.
+at lens settings the session never used.
 
-**Rehearsal on the virtual NEOARM at 60 kV:** $\chi^2/\text{dof} = 0.6$; the mirrored camera and the
-pure deflectors found by the fit; predictions at 8 unvisited settings within 0.009 px.
+**Rehearsal on the virtual NEOARM at 60 kV:** $\chi^2/\text{dof} = 0.4$; the mirrored camera and the
+pure deflectors found by the fit; predictions at 8 new settings within 0.04 px.
 
 ## 6. Stage 2: the physical calibration
 
@@ -260,7 +261,7 @@ settings does not reduce them, because the period error is common to all frames.
 
 Specimen out. The lens DAC values stay fixed while the HT changes, so every lens strength changes by
 the known ratio $r(V)$, and the lens positions become identifiable. One block:
-1. at HT $V_1$: the 9 stage-1 settings and a fixed list of 30 more (a Halton sequence over
+1. at HT $V_1$: the stage-1 settings and a fixed list of 30 more (a Halton sequence over
    0.1–2× the 40k row, within the DAC range);
 2. back at $V_0$: the 30 again.
 

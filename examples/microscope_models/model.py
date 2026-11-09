@@ -1,4 +1,4 @@
-"""Projector calibration from beam moves: the model and the fit.
+"""Calibration of the projection system from beam shifts and tilts: the model and the fit.
 
 The model is TemGym's projector (objective, IL1, IL2, IL3, PL1 as finite solenoids,
 :mod:`temgym_core.calibration.projector_model`): for each lens setting its ray map gives A, how
@@ -7,9 +7,11 @@ Deflector commands enter through unknown scales (and optionally a mix of shift a
 camera through an unknown rotation. The fit is weighted least squares to the measured
 half-differences of +/- kicks, at the beam-position wobble.
 
-* **Stage 1** (one HT, no specimen; ``acquire.stage1`` / ``analyse.stage1``) fixes the
-  predictions; lens positions are not unique yet.
-* **Stage 2** (``acquire.stage2`` / ``analyse.stage2``, draft) makes it physical. Two specimen
+* **Stage 1** (one HT, no specimen; ``acquire.Recording`` /
+  ``analyse.fit_projection_response``) fixes the predictions; lens positions are not unique yet
+  (the model is unscaled).
+* **Stage 2** (``acquire.record_second_ht`` / ``analyse.fit_physical_projection``, draft) makes it
+  physical. Two specimen
   frames: a cross-grating image at setting 0 gives |A| (:func:`grating_period_px`) and a gold ring
   pattern at the diffraction setting gives |B| (:func:`ring_radii_px`), so the kick scales are in
   metres and radians (:func:`specimen_scales`); and the beam moves at a second HT fix the lens and
@@ -127,12 +129,12 @@ class Camera:
 # ---------------------------------------------------------------------------- the experiment
 @dataclass
 class Setup:
-    """What the experimenter knows: the HTs, the 40k row and diffraction setting (DAC values read
-    at the console), the camera, the beam-position wobble and the deflector unit ratio."""
+    """What the experimenter knows: the HTs, the 40k row and (stage 2) the diffraction setting (DAC
+    values read at the console), the camera, the beam-position wobble and the deflector unit ratio."""
     v0: float
     v1: float
     base_dac: np.ndarray                      # 40k-row DAC values at v0, read from the console
-    diffraction_setting: np.ndarray             # DAC values read in DIFF mode (A = 0)
+    diffraction_setting: np.ndarray = None      # stage 2: DAC values read in DIFF mode (A = 0)
     camera: Camera = field(default_factory=Camera)
     wobble_px: float = 0.01                     # beam-position wobble, from the stage-1 repeats
     mix_unit: float = 4e4                       # rad of tilt command per m of shift command, per deflector unit

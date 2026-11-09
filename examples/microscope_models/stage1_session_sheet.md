@@ -29,24 +29,21 @@ With the pivot points aligned, CLA1 is a pure beam shift and CLA2 a pure tilt. N
 the analysis checks this from the stage-1 data and uses a mix of shift and tilt only if the data
 need it.
 
-## 1. Read the 40k-row lens values
+## 1. Read the two rows
 
-Switch free-lens control on for **IL1, IL2, IL3 and PL1** and write down their four DAC values
-(0–65535):
+**The 40k row.** Switch free-lens control on for **IL1, IL2, IL3 and PL1** and write down their
+four DAC values (0–65535):
 
 > IL1₀ = ______  IL2₀ = ______  IL3₀ = ______  PL1₀ = ______
 
-Every other setting is a fixed multiple of these.
+**The DIFF row.** Switch free-lens control off, go to **DIFF** at about 40 cm (60 kV), write down the
+same four values, and go back to MAG at the 40k row:
 
-## 2. Read the diffraction setting
+> IL1ᴅ = ______  IL2ᴅ = ______  IL3ᴅ = ______  PL1ᴅ = ______
 
-1. Switch to **DIFF** mode. Choose a camera length that would put gold rings well inside the
-   camera (for stage 2 later). The camera length that matters is at *our* camera, which may differ
-   from the console's number. Roughly: about 0.4 m at 60 kV, about 0.8 m at 200 kV.
-2. **The diffraction setting = the four DIFF-mode values of IL1, IL2, IL3, PL1.** Write them down
-   and go back to MAG. Stage 1 sets these four values with free-lens control **in MAG mode**.
+Everything below is set with free-lens control **in MAG**.
 
-## 3. The 12 visits
+## 2. The 20 measurements
 
 Set the four lens values, wait a few seconds for the lenses to settle, then take **5 frames**:
 
@@ -63,49 +60,46 @@ Set the four lens values, wait a few seconds for the lenses to settle, then take
   fifth of the frame.
 - Use the **same size** for + and −, and go back to the centre value afterwards.
 - If the beam would leave the camera, use a smaller kick.
-- If the beam hardly moves even for a big change, **that is expected** at some settings:
-  - **tilt at setting 0**, where the image is in focus;
-  - **shift at the diffraction setting**.
+- If the beam hardly moves even for a big change, **that is expected**: a tilt where the image is
+  in focus, a shift near the DIFF row. Use a large change and record it anyway.
 
-  Use a large change and record it anyway.
+**The lens settings.** The same factors are applied to each row (rounded to a whole number):
 
-**The lens settings.** Each value is the multiple × the 40k-row value, rounded to a whole
-number:
-
-| setting | IL1 | IL2 | IL3 | PL1 |
+| factors | IL1 | IL2 | IL3 | PL1 |
 |---|---|---|---|---|
-| 0 | 1 × IL1₀ | 1 × IL2₀ | 1 × IL3₀ | 1 × PL1₀ |
-| 1 | **0.598** × IL1₀ | 1 | 1 | 1 |
-| 2 | 1 | 1 | **0.703** × IL3₀ | 1 |
-| 3 | 1 | 1 | 1 | **0.600** × PL1₀ |
-| 4 | 1 | 1 | **1.013** × IL3₀ | **0.500** × PL1₀ |
-| 5 | 1 | **1.609** × IL2₀ | 1 | **0.600** × PL1₀ |
-| 6 | 1 | **1.609** × IL2₀ | **1.013** × IL3₀ | 1 |
-| 7 | 1 | **1.609** × IL2₀ | 1 | **0.500** × PL1₀ |
-| diff. | the four DIFF-mode values from step 2 | | | |
+| a (the row) | 1 | 1 | 1 | 1 |
+| b | **0.598** | 1 | 1 | 1 |
+| c | 1 | 1 | **0.703** | 1 |
+| d | 1 | 1 | 1 | **0.600** |
+| e | 1 | 1 | **1.013** | **0.500** |
+| f | 1 | **1.609** | 1 | **0.600** |
+| g | 1 | **1.609** | **1.013** | 1 |
+| h | 1 | **1.609** | 1 | **0.500** |
 
-("1" means unchanged from the 40k row.) Check that nothing exceeds 65535. At 200 kV the largest is
-IL2 at 1.609 × 24 862 ≈ 40 000, so it fits; at 60 kV every value is about half as large.
+If a value would exceed 65535, use 1/factor for it instead.
 
-**The order of visits:**
+**The order of the measurements:**
 
-| visit | setting | kicks |
+| measurement | setting | kicks |
 |---|---|---|
-| 1 | 0 | x |
-| 2–5 | 1, 2, 3, 4 | x |
-| 6 | **0 again** | x |
-| 7–9 | 5, 6, 7 | x |
-| 10 | diffraction | x |
-| 11 | **0 again** | x |
-| 12 | **0** | **y** instead of x |
+| 1 | 40k row | x |
+| 2–5 | 40k row × b, c, d, e | x |
+| 6 | **40k row again** | x |
+| 7–9 | 40k row × f, g, h | x |
+| 10 | DIFF row | x |
+| 11–14 | DIFF row × b, c, d, e | x |
+| 15 | **DIFF row again** | x |
+| 16–18 | DIFF row × f, g, h | x |
+| 19 | **40k row again** | x |
+| 20 | **40k row** | **y** instead of x |
 
-Repeating setting 0 three times shows how much the beam position wobbles when nothing should have
-changed, including how well the lenses return. Visit 12 checks that a y kick moves the beam exactly
-like an x kick turned by 90°.
+The two rows cover image-like and diffraction-like settings evenly. The 40k row three times shows how
+much the beam position wobbles; measurement 20 checks that a y kick acts like an x kick turned by 90°.
 
-In total: 12 visits × 5 frames = **60 frames**, plus the dark frame. Allow about an hour by hand.
+In total: 20 measurements × 5 frames = **100 frames**, plus the dark frame. Allow about two hours by
+hand.
 
-## 4. What to write down for every frame
+## 3. What to write down for every frame
 
 One row per frame, in a spreadsheet or text file:
 
@@ -117,68 +111,100 @@ One row per frame, in a spreadsheet or text file:
 - Note anything odd: the beam cut by the frame edge, saturation, the spot not returning to the
   same place.
 
-## 5. Checks while you go
+## 4. Checks while you go
 
 - **The whole spot is on the camera** in every frame. Nothing may be cut off by the edge.
 - **Not saturated.**
-- **The spot is several pixels across** at every setting, including the diffraction setting. A spot
+- **The spot is several pixels across** at every setting, also near the DIFF row, where it is
+  smallest. A spot
   of a pixel or two "locks" to pixel centres and its measured position jumps instead of moving
   smoothly. Spread the beam a little if needed.
-- **Setting 0 comes back** to the same place on visits 6 and 11, within about a pixel. If not,
+- **The 40k row comes back** to the same place in measurements 6 and 19, within about a pixel. If not,
   note how far it moved.
 - **The deflectors return** to the same centre values.
 
-Stage 1 is complete on its own: it gives the predictor. Turning it into physical units and lens
-positions (a specimen for the units, a second HT for the positions) comes later.
+Stage 1 is complete on its own: it gives the map from lens DAC values and deflector units to where
+the beam goes on the camera. Physical units and lens positions come in stage 2 (a specimen and a
+second HT).
 
 ---
 
-## With PyJEM: the script does steps 1–5 for you
+## With PyJEM: the script does steps 1–5 for you, one step at a time
 
 Copy **`acquire.py`** to the microscope PC. It needs only numpy and PyJEM. Do step 0 by hand
-(setup, ending in MAG at the 40k row, free-lens control off). Then, in Python on the microscope PC:
+(setup, ending in MAG at the 40k row, free-lens control off). Then, in Python on the microscope PC,
+one line at a time. Each step does one thing, prints what it did and refuses to run before the
+steps it needs; you can stop between any two.
 
 ```python
 from PyJEM import TEM3, detector
 import acquire
 
-folder = acquire.stage1(TEM3, detector, "D:/stage1/2026-11-06",   # a new, empty folder
-                        camera_length_cm=40,              # DIFF row of the diffraction setting (60 kV)
-                        max_units=(5000, 5000))           # start cautious: largest deflector change
+acquire.check_connection(TEM3=TEM3, detector=detector)     # reads, one frame, small kicks; harmless
+
+recording = acquire.Recording(TEM3=TEM3, detector=detector,
+                              folder="D:/projection_response/2026-11-06")   # a new, empty folder
+recording.read_diff_row(camera_length_cm=40)               # DIFF, read IL1–PL1, back to MAG
+recording.take_over_lenses()                               # the 40k row into free-lens control
+recording.plan_settings(beam_move_px=50,                   # each kick sized to move the beam about 50 px,
+                        test_kick_units=300,                # from a test kick of 300 deflector units,
+                        max_kick_units=5000)                # start cautious: at most 5000 units
+recording.dark_frame()
+recording.measure(setting="40k row", kicks_along="x")      # one measurement first, to see that it works
+recording.measure_remaining()                              # the other 19
+recording.restore()                                        # the microscope as it was
 ```
 
-**What the script does:**
-- reads the diffraction setting: switches to DIFF at the camera length, reads IL1–PL1, and goes back
-  to MAG;
-- reads the 40k row from the lenses as they are, writes it into free-lens control for IL1–PL1 and
-  switches that on (a value left in free-lens control from earlier cannot creep in);
-- takes a dark frame;
-- does the 12 visits, auto-scaling each kick to about 50 px and halving any kick that cuts the
-  beam at the frame edge;
-- saves every frame and a log line after each one;
-- puts the lenses, deflectors and blanking back at the end, even after an error.
+**What each step does:**
+- `check_connection`: reads the HT, mode, lenses, free-lens control, deflectors and camera, takes
+  one frame, moves CLA1 and CLA2 a little and puts them back. The lenses are not touched and
+  nothing is saved. Its last line lists any problems. Run it first, and after any change to
+  `acquire.py`.
+- `Recording(...)`: creates the folder and saves the microscope state. Nothing changes.
+- `read_diff_row`: switches to DIFF at the camera length, reads IL1–PL1, and goes back to MAG.
+- `take_over_lenses`: reads the 40k row from the lenses as they are, writes it into free-lens
+  control for IL1–PL1 and switches that on (a value left in free-lens control from earlier cannot
+  creep in).
+- `plan_settings`: prints the 20 measurements with their DAC values and the kick sizes, and saves
+  them. Nothing moves.
+- `dark_frame`: a frame with the beam blanked.
+- `measure(setting=..., kicks_along=...)` / `measure_remaining()`: sets IL1–PL1 through free-lens
+  control, takes a frame without a kick, then for CLA1 (shift) and CLA2 (tilt) a test kick, a
+  +/- pair sized to move the beam about `beam_move_px` (at most `max_kick_units`), and the
+  deflector back to its centre. A kick that takes the beam to the frame edge is halved and taken
+  again. Every frame and a log line are saved as they are taken. After an error the deflectors go
+  back to their centre.
+- `restore`: puts the deflectors, free-lens control, blanking, function mode and HT back as they
+  were at `Recording(...)`. Safe at any point, also after an error.
 
 **What it prints:**
 - the first frame's size and value range: check these look sensible;
-- one line per visit.
+- for every measurement, each action: the lens values written, the beam position without a kick,
+  each test kick and the kick size it led to (in deflector units), how far each kick of the pair
+  moved the beam (px), and the deflector back at its centre.
 
 **Before relying on it, check on the real system:**
 - the free-lens ids (IL1 10, IL2 11, IL3 12, PL1 14);
 - that CLA1 is the beam shift and CLA2 the tilt (the analysis copes with any mix of the two);
-- the camera's pixel type. Pass `dtype="<u2"` if the first-frame values look wrong.
+- the camera's pixel type. Pass `dtype="<u2"` to `Recording` if the first-frame values look wrong.
 
-**Afterwards:** copy the folder back. `model = analyse.stage1(folder)` fits the model;
-`analyse.predict(model, dac, shift=(dx, dy))` predicts beam moves.
+**Afterwards:** copy the folder back. `model = analyse.fit_projection_response(folder=...)` fits the
+model; `analyse.predict(model=model, dac=dac, shift=(dx, dy))` predicts beam moves.
 
-**If there is time, check the model at the microscope.** Pick some new lens settings within the
-range of the 9, and run:
+**If there is time, test the model at the microscope** at new lens settings within the range of the
+9 (for example from `analyse.new_settings`):
 
 ```python
-check = acquire.check(TEM3, detector, "D:/stage1/check", settings, offsets=(2000, 2000))
+new = acquire.Recording(TEM3=TEM3, detector=detector, folder="D:/projection_response/new_settings")
+new.take_over_lenses()
+new.plan_new_settings(settings=settings, beam_move_px=50, test_kick_units=300, max_kick_units=5000)
+new.dark_frame()
+new.measure_remaining()
+new.restore()
 ```
 
-`analyse.compare(model, check)` then shows measured against predicted.
+`analyse.compare(model=model, folder=new.folder)` then shows measured against predicted.
 
-Dry run on the virtual NEOARM at 60 kV (`stage1_rehearsal.ipynb`): χ²/dof 0.6. The fit found
+Dry run on the virtual NEOARM at 60 kV (`stage1_rehearsal.ipynb`): χ²/dof 0.4. The fit found
 the virtual camera's mirror on its own. At 8 lens settings stage 1 never used, predictions matched
-the measurements to within 0.009 px.
+the measurements to within 0.04 px.

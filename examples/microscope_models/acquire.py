@@ -1,35 +1,37 @@
-"""Drive the microscope for the projector calibration, through PyJEM only (numpy + PyJEM;
-nothing from TemGym). This is the one file to copy to the microscope PC.
+"""Drive the microscope for the projection-system calibration, through PyJEM only (numpy + PyJEM;
+nothing from TemGym). This is the one file to copy to the microscope PC. Every function and step
+takes named arguments only.
 
 Start in MAG at the 40k row, free-lens control off, at the HT of the session (60 kV planned).
+A :class:`Recording` is made one step at a time; each step does one thing, prints what it did and
+refuses to run before the steps it needs, so the session can be run cell by cell and stopped
+between any two steps:
 
     from PyJEM import TEM3, detector
     import acquire
 
-    folder = acquire.stage1(TEM3, detector, "D:/stage1/2026-11-06", camera_length_cm=40)
+    acquire.check_connection(TEM3=TEM3, detector=detector)    # reads, one frame, small kicks; harmless
+    recording = acquire.Recording(TEM3=TEM3, detector=detector, folder="D:/projection_response/2026-11-06")
+    recording.read_diff_row(camera_length_cm=40)              # DIFF, read IL1-PL1, back to MAG
+    recording.take_over_lenses()                              # the 40k row into free-lens control
+    recording.plan_settings(beam_move_px=50, test_kick_units=300, max_kick_units=20000)   # nothing moves
+    recording.dark_frame()                                    # beam blanked
+    recording.measure(setting="40k row", kicks_along="x")     # one measurement at a time, or
+    recording.measure_remaining()                             # every planned one not yet made
+    recording.restore()                                       # the microscope as it was
 
-:func:`stage1` (no specimen, one HT):
+The 20 measurements cover image-like and diffraction-like lens settings evenly: the 40k row and
+the DIFF row (IL1-PL1 as the console sets them in DIFF), each alone and times the same 7 sets of
+factors, all set through free-lens control in MAG. The 40k row is measured three times (the
+wobble), once with y kicks. At each: a frame without a kick, a small test kick, then a +/- beam
+shift (CLA1) and a +/- beam tilt (CLA2), each scaled to move the beam about 50 px, kept on the
+camera. Every frame is saved (``frames/NNNN.npy``) with a log line (``log.json``,
+rewritten after every frame).
 
-1. records the full microscope state;
-2. reads the diffraction setting: switches to DIFF at ``camera_length_cm``, reads IL1, IL2, IL3
-   and PL1, and goes back to MAG;
-3. reads the same four lenses at the 40k row, writes them into free-lens control (FLC) and
-   switches it on;
-4. takes a dark frame (beam blanked);
-5. visits 12 lens settings (8 multiples of the 40k row, the diffraction setting, setting 0 three
-   times in all, and setting 0 once with y kicks). At each: a frame without a kick, a small test
-   kick, then a +/- beam shift (CLA1) and a +/- beam tilt (CLA2), each scaled to move the beam
-   about ``target_px``, kept on the camera;
-6. saves every frame (``frames/NNNN.npy``) and a log line per frame (``log.json``, rewritten after
-   every frame), and restores the lenses, deflectors and blanking at the end, even after an error.
-
-:func:`check` measures beam moves at new lens settings, to test the model's predictions.
-:func:`stage2` (draft) is the second-HT part of stage 2; :func:`take_frame` takes the specimen
-frames.
-
-``camera_length_cm`` is the DIFF row of the diffraction setting (about 40 cm at 60 kV, 80 cm at
-200 kV, so the gold rings fit on the camera for stage 2). To use values read by hand instead, pass
-``diffraction=[IL1, IL2, IL3, PL1]``.
+To test the model at new lens settings, open a second recording and use
+``plan_new_settings(settings=...)`` instead of ``plan_settings()``.
+:func:`record_second_ht` (draft) is the second-HT part of stage 2; :func:`take_frame` takes the
+specimen frames.
 
 Check on the real system before relying on it: the free-lens ids (IL1 10, IL2 11, IL3 12, PL1 14,
 CL3 2), that CLA1 is the beam shift and CLA2 the beam tilt, and the camera data type (``dtype``; by
@@ -51,7 +53,7 @@ def _plain(value):
     """JSON fallback for numpy numbers and arrays."""
     return value.tolist() if hasattr(value, "tolist") else str(value)
 
-#: The 8 stage-1 settings as multiples of the 40k-row DAC values (IL1, IL2, IL3, PL1).
+#: The factors applied to a row's DAC values (IL1, IL2, IL3, PL1); the first set is the row itself.
 MULTIPLIERS = np.array([
     [41782, 24862, 35544, 64000],
     [25000, 24862, 35544, 64000],
@@ -63,14 +65,13 @@ MULTIPLIERS = np.array([
     [41782, 40000, 35544, 32000],
 ]) / np.array([41782, 24862, 35544, 64000])
 
-#: Visit order: setting (0-7 or "diffraction") and kick direction. Setting 0 at the start, middle
-#: and end gives the wobble; the last visit repeats setting 0 with y kicks (roundness check).
-PLAN = [(0, "x"), (1, "x"), (2, "x"), (3, "x"), (4, "x"), (0, "x"), (5, "x"), (6, "x"), (7, "x"),
-        ("diffraction", "x"), (0, "x"), (0, "y")]
+#: The measurements in order: row, factor set (0: the row itself) and kick direction. The 40k row
+#: at the start, middle and end gives the wobble; the last has y kicks (roundness check).
+PLAN = [(row, k, "x") for row in ("40k", "DIFF") for k in (0, 1, 2, 3, 4, 0, 5, 6, 7)] + [("40k", 0, "x"), ("40k", 0, "y")]
 
 
 # ------------------------------------------------------------------------- frames
-def measure_spot(frame, background=0.0, window=4.0):
+def measure_spot(*, frame, background=0.0, window=4.0):
     """Beam centre (x, y in px, from the frame centre), rms radius (px) and the fraction of the
     signal within 3 px of the frame edge. The centre is the intensity-weighted mean inside a circle
     of ``window`` x rms around the spot, iterated; the background is subtracted first."""
@@ -93,167 +94,97 @@ def measure_spot(frame, background=0.0, window=4.0):
     return complex(cx, cy), float(rms), float(w[edge].sum() / w.sum())
 
 
-# ------------------------------------------------------------------------- the session
-class Session:
-    """PyJEM handles, the output folder and the log."""
-
-    def __init__(self, TEM3, detector, out, *, camera_name=None, dtype=None, settle_s=2.0):
-        self.lens, self.defl, self.ht, self.eos = TEM3.Lens3(), TEM3.Def3(), TEM3.HT3(), TEM3.EOS3()
-        name = camera_name or detector.get_attached_detector()[0]
-        self.camera = detector.Detector(name)
-        self.out = Path(out)
-        (self.out / "frames").mkdir(parents=True, exist_ok=False)
-        self.dtype, self.settle_s, self.log = dtype, settle_s, []
-        self.background = 0.0
-
-    # -- reading and setting ------------------------------------------------------------
-    def flc(self):
-        return {n: self.lens.GetFLCInfo(i)[1] for n, i in FLC_IDS.items()}
-
-    def set_lenses(self, dac):
-        for (name, i), value in zip(FLC_IDS.items(), dac):
-            value = int(round(value))
-            if not 0 <= value <= DAC_MAX:
-                raise ValueError(f"{name} = {value} is outside 0-{DAC_MAX}")
-            self.lens.SetFLCAbs(i, value)
-        time.sleep(self.settle_s)
-        return self.flc()
-
-    def deflectors(self):
-        return {"CLA1": list(self.defl.GetCLA1()), "CLA2": list(self.defl.GetCLA2())}
-
-    def set_deflector(self, name, xy):
-        x, y = (int(round(v)) for v in xy)
-        getattr(self.defl, f"Set{name}")(x, y)
-
-    def snap(self, **meta):
-        """Take a frame, save it, log it with the read-back state. Returns the frame."""
-        area = self.camera.get_detectorsetting()["ImagingArea"]
-        raw = self.camera.snapshot_rawdata()
-        dtype = self.dtype or {2: "<i2", 4: "<i4"}[len(raw) // (area["Height"] * area["Width"])]
-        frame = np.frombuffer(raw, dtype=dtype).reshape(area["Height"], area["Width"])
-        if not self.log:
-            print(f"first frame: {area['Width']}x{area['Height']}, read as {dtype}, values {frame.min()} to {frame.max()}"
-                  " (if these look wrong, pass dtype='<u2' or similar)", flush=True)
-        k = len(self.log)
-        np.save(self.out / "frames" / f"{k:04d}.npy", frame)
-        self.log.append(dict(index=k, file=f"frames/{k:04d}.npy", time=time.time(), ht_v=self.ht.GetHtValue(),
-                             flc=self.flc(), **self.deflectors(), **meta))
-        (self.out / "log.json").write_text(json.dumps(self.log, indent=1, default=_plain))
-        return frame
-
-    # -- session bookkeeping (shared by stage 1 and stage 2) ---------------------------------------
-    def save_state(self, TEM3):
-        """Record the whole microscope state (``state_before.json``) and return it."""
-        state = dict(time=time.time(), ht_v=self.ht.GetHtValue(), mag=self.eos.GetMagValue(),
-                     function_mode=self.eos.GetFunctionMode(), lenses=read_all_lenses(TEM3),
-                     flc={n: self.lens.GetFLCInfo(i) for n, i in FLC_IDS.items()}, **self.deflectors(),
-                     beam_blank=self.defl.GetBeamBlank(), camera=self.camera.get_detectorsetting())
-        (self.out / "state_before.json").write_text(json.dumps(state, indent=1, default=_plain))
-        return state
-
-    def take_over_lenses(self, state):
-        """Put IL1-PL1 under free-lens control at the values they run at now (the 40k row), and
-        return those values. They are read before free-lens control is touched and written into it
-        before switching on, so a value left over from earlier cannot replace them."""
-        base = np.array([state["lenses"][name] for name in FLC_IDS], float)
-        if any(state["flc"][name][0] for name in FLC_IDS):
-            print("  note: free-lens control was already on; its values are taken as the 40k row", flush=True)
-        for k, (name, i) in enumerate(FLC_IDS.items()):
-            self.lens.SetFLCAbs(i, int(base[k]))
-            self.lens.SetFLCSw(i, 1)
-        readback = np.array([self.lens.GetFLCInfo(i)[1] for i in FLC_IDS.values()], float)
-        if np.any(readback != base):
-            raise RuntimeError(f"free-lens control reads {readback}, expected the 40k row {base}")
-        return base
-
-    def dark_frame(self, dac):
-        """A frame with the beam blanked; its median is the background of every later frame."""
-        self.defl.SetBeamBlank(1)
-        time.sleep(0.5)
-        dark = self.snap(role="dark", kind="none", offset=[0, 0], visit=-1, setting="dark", direction="x",
-                         dac=list(dac))
-        self.defl.SetBeamBlank(0)
-        self.background = float(np.median(dark))
-
-    def restore(self, state, centre):
-        """Put the deflectors, free-lens control, blanking and HT back as they were."""
-        for name in ("CLA1", "CLA2"):
-            self.set_deflector(name, centre[name])
-        for (name, i) in FLC_IDS.items():
-            self.lens.SetFLCAbs(i, state["flc"][name][1])
-            self.lens.SetFLCSw(i, state["flc"][name][0])
-        self.defl.SetBeamBlank(state["beam_blank"])
-        if self.ht.GetHtValue() != state["ht_v"]:
-            self.ht.SetHtValue(state["ht_v"])
-
-    # -- one lens setting --------------------------------------------------------------------
-    def visit(self, visit, label, dac, direction, *, centre, target_px, test_units, max_units, offsets=None,
-              skip_off_camera=False):
-        """Base frame, then for shift (CLA1) and tilt (CLA2): a test kick (unless ``offsets`` are
-        given), and the +/- pair, scaled to move the beam ``target_px``. If either frame of the
-        pair shows the beam cut by the frame edge, the kick is halved and the pair retaken.
-        With ``skip_off_camera``, a setting whose beam is cut by the frame edge (or off the camera)
-        without any kick is skipped. Returns the offsets used, in deflector units, or ``None`` if
-        skipped."""
-        readback = self.set_lenses(dac)
-        meta = dict(visit=visit, setting=label, direction=direction, dac=[readback[n] for n in FLC_IDS])
-        base = self.snap(role="base", kind="none", offset=[0, 0], **meta)
-        c0, rms, edge0 = measure_spot(base, self.background)
-        clipped = 1e-3                              # more signal near the frame edge than this: the beam is cut
-        signal = float(np.sum(base - self.background))
-        self.reference_signal = getattr(self, "reference_signal", None) or signal      # the first visit's
-        if skip_off_camera and signal < 0.05 * self.reference_signal:
-            edge0 = 1.0                                              # (almost) no beam on the camera
-        if edge0 > clipped and skip_off_camera:
-            print(f"  skipped setting {label}: the beam is cut by the frame edge or off the camera", flush=True)
-            return None
-        if edge0 > clipped:
-            print(f"  WARNING visit {visit + 1} (setting {label}): the beam touches the frame edge even without a "
-                  f"kick (spot rms {rms:.0f} px). Condense the beam, or these frames will be dropped.", flush=True)
-        unit = np.array([1, 0]) if direction == "x" else np.array([0, 1])
-        used = {}
-        for kind, name, test, cap in (("shift", "CLA1", test_units[0], max_units[0]),
-                                      ("tilt", "CLA2", test_units[1], max_units[1])):
-            home = np.array(centre[name], float)
-            if offsets is None:
-                self.set_deflector(name, home + test * unit)
-                moved = self.snap(role="test", kind=kind, offset=list(test * unit), **meta)
-                self.set_deflector(name, home)
-                per_unit = abs(measure_spot(moved, self.background)[0] - c0) / test
-                size = min(cap, target_px / max(per_unit, 1e-12))
-            else:
-                size = offsets[kind]
-            size = min(size, *(DAC_MAX - home), *home)               # stay inside the deflector range
-            for _ in range(6):
-                frames = []
-                for sign, role in ((+1, "plus"), (-1, "minus")):
-                    self.set_deflector(name, home + sign * size * unit)
-                    frames.append(self.snap(role=role, kind=kind, offset=list(sign * size * unit), **meta))
-                self.set_deflector(name, home)
-                if offsets is not None or all(measure_spot(f, self.background)[2] < clipped for f in frames):
-                    break
-                size /= 2                                            # the beam reached the edge: halve, retake
-                for entry in self.log[-2:]:
-                    entry["role"] += " (clipped, retaken)"
-            used[kind] = float(size)
-        return used
+def _format(dac):
+    """IL1-PL1 DAC values as text."""
+    return ", ".join(f"{name} {int(round(v))}" for name, v in zip(FLC_IDS, dac))
 
 
-def take_frame(detector, out, name, *, camera_name=None, dtype=None):
-    """One camera frame with the present settings, saved as ``out/name.npy`` and returned (for the
-    specimen frames of stage 2: the grating image and the gold pattern)."""
-    camera = detector.Detector(camera_name or detector.get_attached_detector()[0])
+def _label(row, factors):
+    """A setting's name: its row and the factors that differ from 1, e.g. ``"DIFF row: IL1 x0.60"``."""
+    changed = [f"{name} x{f:.2f}" for name, f in zip(FLC_IDS, factors) if abs(f - 1) > 1e-9]
+    return f"{row} row" + (": " + ", ".join(changed) if changed else "")
+
+
+def _xy(z):
+    """A complex camera position as text, px."""
+    return f"({z.real:+.1f}, {z.imag:+.1f})"
+
+
+def _read_frame(camera, dtype=None):
+    """One raw frame from a PyJEM camera, as integers, and the pixel type used."""
     area = camera.get_detectorsetting()["ImagingArea"]
     raw = camera.snapshot_rawdata()
     dtype = dtype or {2: "<i2", 4: "<i4"}[len(raw) // (area["Height"] * area["Width"])]
-    frame = np.frombuffer(raw, dtype=dtype).reshape(area["Height"], area["Width"]).astype(float)
-    Path(out).mkdir(parents=True, exist_ok=True)
-    np.save(Path(out) / f"{name}.npy", frame)
+    return np.frombuffer(raw, dtype=dtype).reshape(area["Height"], area["Width"]), dtype
+
+
+def take_frame(*, detector, folder, name, camera_name=None, dtype=None):
+    """One camera frame with the present settings, saved as ``folder/name.npy`` and returned (for the
+    specimen frames of stage 2: the grating image and the gold pattern)."""
+    camera = detector.Detector(camera_name or detector.get_attached_detector()[0])
+    frame = _read_frame(camera, dtype)[0].astype(float)
+    Path(folder).mkdir(parents=True, exist_ok=True)
+    np.save(Path(folder) / f"{name}.npy", frame)
     return frame
 
 
-def select_magnification(eos, magnification):
+def check_connection(*, TEM3, detector, camera_name=None, dtype=None, kick_units=300, settle_s=0.5):
+    """A quick, harmless check before a session, and after any change to this file. Reads and
+    prints the HT, function mode and MAG row, IL1-PL1 and their free-lens control, the deflectors
+    and the camera; takes one frame and finds the beam; moves CLA1 and then CLA2 by ``kick_units``
+    in x, a frame each, and puts them back (in MAG with the image in focus, the shift moves the
+    beam and the tilt hardly does). The lenses are not touched and nothing is saved.
+
+    Prints one line per item and a list of problems (none, if all is well). Returns everything as
+    a dict. Raises if a deflector does not read back its starting value afterwards."""
+    lens, defl, ht, eos = TEM3.Lens3(), TEM3.Def3(), TEM3.HT3(), TEM3.EOS3()
+    camera = detector.Detector(camera_name or detector.get_attached_detector()[0])
+    problems = []
+    mode, mag = eos.GetFunctionMode(), eos.GetMagValue()
+    flc = {name: lens.GetFLCInfo(i) for name, i in FLC_IDS.items()}
+    console = np.array([getattr(lens, f"Get{name}")() for name in FLC_IDS], float)
+    centre = {name: list(getattr(defl, f"Get{name}")()) for name in ("CLA1", "CLA2")}
+    print(f"HT {ht.GetHtValue() / 1e3:g} kV; {mode[1]} at {mag[2]}; lenses {_format(console)}", flush=True)
+    print(f"free-lens control (on, value): {flc}; CLA1 {centre['CLA1']}, CLA2 {centre['CLA2']}", flush=True)
+    if mode[0] != 0:
+        problems.append(f"function mode is {mode[1]}, not MAG")
+    if any(on for on, _ in flc.values()):
+        problems.append("free-lens control is on for " + ", ".join(n for n, (on, _) in flc.items() if on))
+    frame, dtype = _read_frame(camera, dtype)
+    background = float(np.median(frame))
+    centre_px, rms, edge = measure_spot(frame=frame, background=background)
+    print(f"camera: {frame.shape[1]}x{frame.shape[0]}, read as {dtype}, values {frame.min()} to {frame.max()}; "
+          f"beam at {centre_px.real:+.1f}, {centre_px.imag:+.1f} px from the centre, rms {rms:.1f} px", flush=True)
+    if frame.max() - background < 10 * max(np.std(frame[frame <= np.percentile(frame, 50)]), 1.0):
+        problems.append("no clear beam on the camera")
+    if edge > 1e-3:
+        problems.append("the beam touches the frame edge: condense it or centre it")
+    moves = {}
+    try:
+        for name, kind in (("CLA1", "shift"), ("CLA2", "tilt")):
+            x, y = centre[name]
+            getattr(defl, f"Set{name}")(int(x + kick_units), int(y))
+            time.sleep(settle_s)
+            moved = measure_spot(frame=_read_frame(camera, dtype)[0], background=background)[0]
+            getattr(defl, f"Set{name}")(int(x), int(y))
+            moves[kind] = abs(moved - centre_px) / kick_units
+            note = " (expected: in focus, a tilt hardly moves the beam)" if kind == "tilt" else ""
+            print(f"{name} ({kind}) +{kick_units} units: the beam moved {abs(moved - centre_px):.1f} px{note}", flush=True)
+            if kind == "shift" and abs(moved - centre_px) < 0.5:
+                problems.append("CLA1 moved the beam less than 0.5 px: a larger kick_units, or check the deflector")
+    finally:
+        for name in ("CLA1", "CLA2"):
+            getattr(defl, f"Set{name}")(*(int(v) for v in centre[name]))
+    after = {name: list(getattr(defl, f"Get{name}")()) for name in ("CLA1", "CLA2")}
+    if after != centre:
+        raise RuntimeError(f"the deflectors read {after} after the check, {centre} before")
+    print("problems: " + ("none" if not problems else "; ".join(problems)), flush=True)
+    return dict(ht_v=ht.GetHtValue(), function_mode=mode, mag=mag, lenses=console.tolist(), flc=flc,
+                deflectors=centre, frame_shape=frame.shape, dtype=dtype, beam_px=centre_px, beam_rms_px=rms,
+                px_per_unit=moves, problems=problems)
+
+
+def select_magnification(*, eos, magnification):
     """Step the TEM MAG selector (``TEM3.EOS3()``) to a nominal magnification; returns its index."""
     previous = None
     while eos.GetCurrentMagSelectorID()[0] != previous:          # to the lowest row
@@ -270,7 +201,7 @@ def select_magnification(eos, magnification):
         eos.UpSelector()
 
 
-def select_camera_length(eos, camera_length_cm):
+def select_camera_length(*, eos, camera_length_cm):
     """Switch to DIFF and step the selector up to the first camera length >= ``camera_length_cm``."""
     eos.SelectFunctionMode(4)
     for _ in range(30):
@@ -279,21 +210,7 @@ def select_camera_length(eos, camera_length_cm):
         eos.UpSelector()
 
 
-def read_diffraction_setting(TEM3, camera_length_cm=40):
-    """Read IL1, IL2, IL3, PL1 at the 40k row (MAG), then in DIFF at ``camera_length_cm`` (the
-    diffraction setting), and go back to MAG. Start in MAG at the 40k row, with free-lens control
-    off, so the console's own values are read. Returns both as arrays of DAC values."""
-    lens, eos = TEM3.Lens3(), TEM3.EOS3()
-    four = lambda: np.array([getattr(lens, f"Get{name}")() for name in FLC_IDS], float)
-    base = four()
-    select_camera_length(eos, camera_length_cm)
-    print(f"DIFF at {eos.GetMagValue()[2]}", flush=True)
-    diffraction = four()
-    eos.SelectFunctionMode(0)                                     # back to MAG
-    return base, diffraction
-
-
-def read_all_lenses(TEM3):
+def read_all_lenses(*, TEM3):
     """Every lens value PyJEM can read (saved with each session). Missing getters are skipped."""
     lens, eos = TEM3.Lens3(), TEM3.EOS3()
     values = {}
@@ -309,76 +226,317 @@ def read_all_lenses(TEM3):
     return values
 
 
-def stage1(TEM3, detector, out, *, camera_length_cm=40, diffraction=None, camera_name=None, dtype=None,
-        settle_s=2.0, target_px=50.0, test_units=(300, 300), max_units=(20000, 20000)):
-    """Stage 1 (see the module docstring). The diffraction setting is read in DIFF at
-    ``camera_length_cm``, unless given as ``diffraction`` (IL1, IL2, IL3, PL1 DAC values).
-    Returns the output folder."""
-    s = Session(TEM3, detector, out, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
-    state = s.save_state(TEM3)
-    centre = s.deflectors()
-    if diffraction is None:
-        _, diffraction = read_diffraction_setting(TEM3, camera_length_cm)
-    try:
-        base = s.take_over_lenses(state)
-        settings, flipped = {}, []
-        for k, m in enumerate(MULTIPLIERS):
-            m = m.copy()
-            over = np.round(base * m) > DAC_MAX
-            if over.any():                                           # too high: use the reciprocal factor
-                m[over] = 1 / m[over]
-                flipped.append(k)
-            settings[k] = base * m
-        settings["diffraction"] = np.asarray(diffraction, float)
+# ------------------------------------------------------------------------- the recording
+class Recording:
+    """A recording of how the beam moves on the camera, made one step at a time (see the module
+    docstring for the order). Opening it creates ``folder`` (new, empty) and saves the microscope
+    state (``state_before.json``); nothing on the microscope changes. :meth:`restore` puts the
+    microscope back as it was then, at any point, also after an error.
+
+    Parameters
+    ----------
+    TEM3, detector
+        PyJEM's (or the virtual microscope's) ``TEM3`` and ``detector``.
+    folder : str or Path
+        Output folder; must not exist yet.
+    camera_name : str, optional
+        Camera to use (default: the first attached).
+    dtype : str, optional
+        Pixel type of the camera's raw data (default: signed integers of the raw size).
+    settle_s : float
+        Wait after every lens change (s).
+    """
+
+    def __init__(self, *, TEM3, detector, folder, camera_name=None, dtype=None, settle_s=2.0):
+        self.lens, self.defl, self.ht, self.eos = TEM3.Lens3(), TEM3.Def3(), TEM3.HT3(), TEM3.EOS3()
+        self.camera = detector.Detector(camera_name or detector.get_attached_detector()[0])
+        self.folder = Path(folder)
+        (self.folder / "frames").mkdir(parents=True, exist_ok=False)
+        self.dtype, self.settle_s, self.log = dtype, settle_s, []
+        self.base = self.diffraction = self.settings = self.background = None
+        self.planned, self.done, self.kicks = [], set(), {}
+        self.centre = self._deflectors()
+        self.state = dict(time=time.time(), ht_v=self.ht.GetHtValue(), mag=self.eos.GetMagValue(),
+                          function_mode=self.eos.GetFunctionMode(), lenses=read_all_lenses(TEM3=TEM3),
+                          flc={n: self.lens.GetFLCInfo(i) for n, i in FLC_IDS.items()}, **self.centre,
+                          beam_blank=self.defl.GetBeamBlank(), camera=self.camera.get_detectorsetting())
+        (self.folder / "state_before.json").write_text(json.dumps(self.state, indent=1, default=_plain))
+        print(f"opened {self.folder}: microscope state saved ({self.state['ht_v'] / 1e3:g} kV, "
+              f"{self.state['mag'][2]}, CLA1 {self.centre['CLA1']}, CLA2 {self.centre['CLA2']}); nothing changed",
+              flush=True)
+
+    # -- the steps ------------------------------------------------------------------------
+    def read_diff_row(self, *, camera_length_cm=40):
+        """Switch to DIFF at the first camera length >= ``camera_length_cm``, read IL1, IL2, IL3
+        and PL1 there (the DIFF row) and go back to MAG. Run it before :meth:`take_over_lenses`,
+        so the console's own values are read. Returns the four values."""
+        self._require(self.base is None, "read_diff_row() before take_over_lenses()")
+        select_camera_length(eos=self.eos, camera_length_cm=camera_length_cm)
+        row = self.eos.GetMagValue()[2]
+        self.diffraction = self._console_lenses()
+        self.eos.SelectFunctionMode(0)
+        if self.eos.GetMagValue() != self.state["mag"]:
+            raise RuntimeError(f"back in MAG at {self.eos.GetMagValue()[2]}, but the recording started at "
+                               f"{self.state['mag'][2]}: select that row by hand, then go on")
+        print(f"DIFF row ({row}): {_format(self.diffraction)}; back in MAG at {self.state['mag'][2]}", flush=True)
+        return self.diffraction
+
+    def take_over_lenses(self):
+        """Put IL1, IL2, IL3 and PL1 under free-lens control at the values they run at now (the
+        40k row) and switch it on. The values are read before free-lens control is touched and
+        written into it before switching on, so a value left over from earlier cannot replace
+        them. Returns the four values."""
+        self._require(self.base is None, "the lenses are already under free-lens control")
+        base = self._console_lenses()
+        if any(self.lens.GetFLCInfo(i)[0] for i in FLC_IDS.values()):
+            print("  note: free-lens control was already on; its values are taken as the 40k row", flush=True)
+        for value, i in zip(base, FLC_IDS.values()):
+            self.lens.SetFLCAbs(i, int(value))
+            self.lens.SetFLCSw(i, 1)
+        readback = self._flc_values()
+        if np.any(readback != base):
+            raise RuntimeError(f"free-lens control reads {readback}, expected the 40k row {base}")
+        self.base = base
+        print(f"free-lens control on at the 40k row: {_format(base)}", flush=True)
+        return base
+
+    def plan_settings(self, *, beam_move_px=50.0, test_kick_units=300, max_kick_units=20000):
+        """Plan the 20 measurements (module docstring) from the 40k row and the DIFF row. A factor
+        that would take a lens above the DAC range is replaced by its reciprocal. Each kick (CLA1
+        and CLA2, in deflector units) will be sized from a test kick of ``test_kick_units`` to move
+        the beam about ``beam_move_px`` on the camera, at most ``max_kick_units``. Writes
+        ``plan.json`` and prints the measurements; nothing on the microscope changes."""
+        self._require(self.diffraction is not None, "read_diff_row() first")
+        self._require(self.base is not None, "take_over_lenses() first")
+        self._require(not self.planned, "the measurements are already planned")
+        rows = {"40k": self.base, "DIFF": self.diffraction}
+        settings, self.planned = {}, []
+        for row, k, direction in PLAN:
+            factors = MULTIPLIERS[k].copy()
+            over = np.round(rows[row] * factors) > DAC_MAX
+            factors[over] = 1 / factors[over]                        # too high: use the reciprocal factor
+            label = _label(row, factors)
+            settings[label] = rows[row] * factors
+            self.planned.append((label, direction))
+        self._check_range(settings)
+        self.settings = settings
+        self._set_kicks(beam_move_px, test_kick_units, max_kick_units)
+
+    def plan_new_settings(self, *, settings, beam_move_px=50.0, test_kick_units=300, max_kick_units=20000):
+        """Plan one measurement at each of ``settings`` (rows of IL1, IL2, IL3, PL1 DAC values, e.g.
+        from ``analyse.new_settings``), kicks sized as in :meth:`plan_settings` -- to compare with
+        the model's predictions. Writes ``plan.json`` and prints the measurements; nothing on the
+        microscope changes."""
+        self._require(self.base is not None, "take_over_lenses() first")
+        self._require(not self.planned, "the measurements are already planned")
+        self.settings = {f"new {k}": row for k, row in enumerate(np.atleast_2d(np.asarray(settings, float)))}
+        self._check_range(self.settings)
+        self.planned = [(label, "x") for label in self.settings]
+        self._set_kicks(beam_move_px, test_kick_units, max_kick_units)
+
+    def dark_frame(self):
+        """A frame with the beam blanked; its median is the background of every later frame."""
+        self._require(self.base is not None, "take_over_lenses() first")
+        self.defl.SetBeamBlank(1)
+        time.sleep(0.5)
+        try:
+            dark = self._snap(role="dark", kind="none", offset=[0, 0], measurement=0, setting="dark", direction="x",
+                              dac=list(self.base))
+        finally:
+            self.defl.SetBeamBlank(0)
+        self.background = float(np.median(dark))
+        print(f"dark frame: background {self.background:.1f}", flush=True)
+
+    def measure(self, *, setting, kicks_along):
+        """Measure at one planned lens ``setting`` (as :meth:`plan_settings` prints it, e.g.
+        "40k row" or "DIFF row: IL1 x0.60"; "new 0", ... after :meth:`plan_new_settings`), with the kicks along
+        ``kicks_along`` ("x" or "y"). Sets IL1-PL1 through free-lens control, takes a frame
+        without a kick, then a +/- kick pair on CLA1 (shift) and on CLA2 (tilt), each deflector back
+        at its centre afterwards; every action is printed. It makes the first planned measurement
+        of that setting and direction not yet made; once all are made, it adds a repeat (the
+        analysis uses the last pair). On an error the deflectors go back to their centre. Returns
+        the kick sizes used (deflector units)."""
+        self._require(self.planned, "plan_settings() or plan_new_settings() first")
+        self._require(setting in self.settings, f"setting {setting!r} is not planned; planned: {list(self.settings)}")
+        self._require(kicks_along in ("x", "y"), 'kicks_along is "x" or "y"')
+        todo = [n for n, entry in enumerate(self.planned, 1) if entry == (setting, kicks_along) and n not in self.done]
+        if todo:
+            return self._measure_planned(todo[0])
+        self.planned.append((setting, kicks_along))
+        print(f"(a repeat: every planned measurement of setting {setting} along {kicks_along} is made)", flush=True)
+        return self._measure_planned(len(self.planned))
+
+    def measure_remaining(self):
+        """Every planned measurement not yet made, in the planned order."""
+        for number in range(1, len(self.planned) + 1):
+            if number not in self.done:
+                self._measure_planned(number)
+
+    def restore(self):
+        """Put the deflectors, free-lens control (IL1-PL1), beam blanking, function mode and HT back
+        as they were when the recording was opened. Safe at any point."""
+        for name in ("CLA1", "CLA2"):
+            self._set_deflector(name, self.centre[name])
+        for name, i in FLC_IDS.items():
+            self.lens.SetFLCAbs(i, self.state["flc"][name][1])
+            self.lens.SetFLCSw(i, self.state["flc"][name][0])
+        self.defl.SetBeamBlank(self.state["beam_blank"])
+        if self.eos.GetFunctionMode()[0] != self.state["function_mode"][0]:
+            self.eos.SelectFunctionMode(self.state["function_mode"][0])
+        if self.ht.GetHtValue() != self.state["ht_v"]:
+            self.ht.SetHtValue(self.state["ht_v"])
+        self.base = None
+        print(f"restored: deflectors, free-lens control, blanking, function mode and HT as at opening; "
+              f"{len(self.done)} of {len(self.planned)} measurements made, in {self.folder}", flush=True)
+
+    # -- helpers ----------------------------------------------------------------------------
+    def _measure_planned(self, number):
+        """Planned measurement ``number`` (from 1), with the checks and the error handling."""
+        self._require(self.base is not None, "take_over_lenses() first")
+        self._require(self.background is not None, "dark_frame() first")
+        label, direction = self.planned[number - 1]
+        print(f"measurement {number} of {len(self.planned)}", flush=True)
+        try:
+            used = self._measure(number, label, self.settings[label], direction, centre=self.centre, **self.kicks)
+        except BaseException:
+            for name in ("CLA1", "CLA2"):
+                self._set_deflector(name, self.centre[name])
+            print(f"measurement {number} stopped; the deflectors are back at their centre. "
+                  "restore() puts the rest back.", flush=True)
+            raise
+        self.done.add(number)
+        return used
+
+    @staticmethod
+    def _require(condition, message):
+        if not condition:
+            raise RuntimeError(message)
+
+    def _console_lenses(self):
+        return np.array([getattr(self.lens, f"Get{name}")() for name in FLC_IDS], float)
+
+    def _flc_values(self):
+        return np.array([self.lens.GetFLCInfo(i)[1] for i in FLC_IDS.values()], float)
+
+    def _check_range(self, settings):
         bad = {k: v for k, v in settings.items() if np.any(np.round(v) > DAC_MAX) or np.any(v < 0)}
         if bad:
             raise ValueError(f"settings outside 0-{DAC_MAX}: {bad}")
-        if flipped:
-            print(f"settings {flipped}: a factor above the DAC range was replaced by its reciprocal", flush=True)
-        (s.out / "plan.json").write_text(json.dumps(dict(base_dac=base.tolist(), diffraction=list(map(float, diffraction)),
-                                                         settings={str(k): v.tolist() for k, v in settings.items()},
-                                                         plan=[[str(a), b] for a, b in PLAN], centre=centre, flipped=flipped,
-                                                         target_px=target_px), indent=1, default=_plain))
-        s.dark_frame(base)
-        for visit, (label, direction) in enumerate(PLAN):
-            s.visit(visit, str(label), settings[label], direction, centre=centre, target_px=target_px,
-                    test_units=test_units, max_units=max_units)
-            print(f"visit {visit + 1}/{len(PLAN)} (setting {label}, {direction} kicks) done", flush=True)
-    finally:                                                         # always put the microscope back
-        s.restore(state, centre)
-    return s.out
 
+    def _set_kicks(self, beam_move_px, test_kick_units, max_kick_units):
+        self.kicks = dict(beam_move_px=beam_move_px, test_kick_units=test_kick_units, max_kick_units=max_kick_units)
+        self._write_plan(plan=self.planned, kicks=self.kicks)
+        print(f"kicks: a test kick of {test_kick_units} units, then each +/- pair sized to move the beam about "
+              f"{beam_move_px:g} px, at most {max_kick_units} units. The deflectors run 0-{DAC_MAX}; centres "
+              f"CLA1 {self.centre['CLA1']}, CLA2 {self.centre['CLA2']}.", flush=True)
 
-def check(TEM3, detector, out, settings, *, offsets=(3000, 3000), camera_name=None, dtype=None, settle_s=2.0):
-    """Measure fixed +/- shift and tilt kicks (``offsets``, deflector units) at lens ``settings``
-    (rows of IL1, IL2, IL3, PL1 DAC values) -- for comparing with the model's predictions."""
-    s = Session(TEM3, detector, out, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
-    state = dict(flc={n: s.lens.GetFLCInfo(i) for n, i in FLC_IDS.items()}, beam_blank=s.defl.GetBeamBlank(),
-                 camera=s.camera.get_detectorsetting(), ht_v=s.ht.GetHtValue())
-    (s.out / "state_before.json").write_text(json.dumps(state, indent=1, default=_plain))
-    centre = s.deflectors()
-    settings = np.atleast_2d(np.asarray(settings, float))
-    (s.out / "plan.json").write_text(json.dumps(dict(settings=settings.tolist(), offsets=list(offsets), centre=centre,
-                                                     base_dac=settings[0].tolist(), diffraction=settings[0].tolist()), default=_plain))
-    try:
-        for i in FLC_IDS.values():
-            s.lens.SetFLCSw(i, 1)
-        s.defl.SetBeamBlank(1)
-        dark = s.snap(role="dark", kind="none", offset=[0, 0], visit=-1, setting="dark", direction="x",
-                      dac=list(settings[0]))
-        s.defl.SetBeamBlank(0)
-        s.background = float(np.median(dark))
-        for k, dac in enumerate(settings):
-            s.visit(k, f"check {k}", dac, "x", centre=centre, target_px=0, test_units=(0, 0), max_units=(0, 0),
-                    offsets={"shift": offsets[0], "tilt": offsets[1]})
-    finally:
-        for name in ("CLA1", "CLA2"):
-            s.set_deflector(name, centre[name])
-        for (name, i) in FLC_IDS.items():
-            s.lens.SetFLCAbs(i, state["flc"][name][1])
-            s.lens.SetFLCSw(i, state["flc"][name][0])
-        s.defl.SetBeamBlank(state["beam_blank"])
-    return s.out
+    def _write_plan(self, **extra):
+        (self.folder / "plan.json").write_text(json.dumps(dict(
+            base_dac=self.base.tolist(), diffraction=None if self.diffraction is None else self.diffraction.tolist(),
+            settings={k: v.tolist() for k, v in self.settings.items()}, centre=self.centre, **extra),
+            indent=1, default=_plain))
+        print("planned measurements:", flush=True)
+        width = max(len(label) for label, _ in self.planned)
+        for number, (label, direction) in enumerate(self.planned, 1):
+            print(f"  {number:2d}  {label:{width}s}  kicks along {direction}   {_format(self.settings[label])}",
+                  flush=True)
+
+    def _flc(self):
+        return {n: self.lens.GetFLCInfo(i)[1] for n, i in FLC_IDS.items()}
+
+    def _set_lenses(self, dac):
+        for (name, i), value in zip(FLC_IDS.items(), dac):
+            value = int(round(value))
+            if not 0 <= value <= DAC_MAX:
+                raise ValueError(f"{name} = {value} is outside 0-{DAC_MAX}")
+            self.lens.SetFLCAbs(i, value)
+        time.sleep(self.settle_s)
+        return self._flc()
+
+    def _deflectors(self):
+        return {"CLA1": list(self.defl.GetCLA1()), "CLA2": list(self.defl.GetCLA2())}
+
+    def _set_deflector(self, name, xy):
+        x, y = (int(round(v)) for v in xy)
+        getattr(self.defl, f"Set{name}")(x, y)
+
+    def _snap(self, **meta):
+        """Take a frame, save it, log it with the read-back state. Returns the frame."""
+        frame, dtype = _read_frame(self.camera, self.dtype)
+        if not self.log:
+            print(f"first frame: {frame.shape[1]}x{frame.shape[0]}, read as {dtype}, values {frame.min()} to {frame.max()}"
+                  " (if these look wrong, pass dtype='<u2' or similar)", flush=True)
+        k = len(self.log)
+        np.save(self.folder / "frames" / f"{k:04d}.npy", frame)
+        self.log.append(dict(index=k, file=f"frames/{k:04d}.npy", time=time.time(), ht_v=self.ht.GetHtValue(),
+                             flc=self._flc(), **self._deflectors(), **meta))
+        (self.folder / "log.json").write_text(json.dumps(self.log, indent=1, default=_plain))
+        return frame
+
+    # -- one lens setting --------------------------------------------------------------------
+    def _measure(self, number, label, dac, direction, *, centre, beam_move_px=50.0, test_kick_units=300,
+                 max_kick_units=20000, skip_off_camera=False):
+        """Set the lenses, take a frame without a kick, then for CLA1 (shift) and CLA2 (tilt) a +/-
+        pair of kicks along ``direction``, each deflector back at its centre afterwards. Every
+        action is printed. A test kick of ``test_kick_units`` measures how far the beam moves per
+        unit, and the pair is sized to move it about ``beam_move_px``, at most ``max_kick_units``. If the beam reaches the frame edge
+        the kick is halved and the pair taken again. With ``skip_off_camera``, a setting whose beam
+        is cut by the frame edge (or off the camera) without any kick is skipped. Returns the kick
+        sizes used (deflector units), or ``None`` if skipped."""
+        readback = self._set_lenses(dac)
+        print(f"{label}: {_format(dac)} through free-lens control; waited {self.settle_s:g} s", flush=True)
+        meta = dict(measurement=number, setting=label, direction=direction, dac=[readback[n] for n in FLC_IDS])
+        base = self._snap(role="base", kind="none", offset=[0, 0], **meta)
+        c0, rms, edge0 = measure_spot(frame=base, background=self.background)
+        print(f"  frame without a kick: beam at {_xy(c0)} px from the centre, rms {rms:.1f} px", flush=True)
+        clipped = 1e-3                              # more signal near the frame edge than this: the beam is cut
+        signal = float(np.sum(base - self.background))
+        self.reference_signal = getattr(self, "reference_signal", None) or signal      # the first measurement's
+        if skip_off_camera and signal < 0.05 * self.reference_signal:
+            edge0 = 1.0                                              # (almost) no beam on the camera
+        if edge0 > clipped and skip_off_camera:
+            print(f"  skipped setting {label}: the beam is cut by the frame edge or off the camera", flush=True)
+            return None
+        if edge0 > clipped:
+            print(f"  WARNING setting {label}: the beam touches the frame edge even without a kick "
+                  f"(rms {rms:.0f} px). Condense the beam, or these frames will be dropped.", flush=True)
+        unit = np.array([1, 0]) if direction == "x" else np.array([0, 1])
+        used = {}
+        for kind, name in (("shift", "CLA1"), ("tilt", "CLA2")):
+            home = np.array(centre[name], float)
+            test = int(test_kick_units)
+            self._set_deflector(name, home + test * unit)
+            moved = self._snap(role="test", kind=kind, offset=list(test * unit), **meta)
+            self._set_deflector(name, home)
+            move = measure_spot(frame=moved, background=self.background)[0] - c0
+            wanted = beam_move_px * test / max(abs(move), 1e-9)
+            size = int(round(min(max_kick_units, wanted)))
+            why = (f"{size} units to move it about {beam_move_px:g} px" if wanted <= max_kick_units else
+                   f"{size} units, the largest allowed ({beam_move_px:g} px would need {wanted:.0f})")
+            print(f"  {name} ({kind}) test kick +{test} along {direction}: beam moved {abs(move):.2f} px "
+                  f"-> {why}", flush=True)
+            limit = int(min(*(DAC_MAX - home), *home))
+            if size > limit:
+                size = limit
+                print(f"  {name}: kick limited to {limit} units by the deflector range (0-{DAC_MAX})", flush=True)
+            for _ in range(6):
+                frames = []
+                for sign, role in ((+1, "plus"), (-1, "minus")):
+                    self._set_deflector(name, home + sign * size * unit)
+                    frames.append(self._snap(role=role, kind=kind, offset=list(sign * size * unit), **meta))
+                self._set_deflector(name, home)
+                spots = [measure_spot(frame=f, background=self.background) for f in frames]
+                if all(spot[2] < clipped for spot in spots):
+                    break
+                print(f"  {name} +/-{size}: the beam reached the frame edge; halving the kick and taking the pair again",
+                      flush=True)
+                size = int(round(size / 2))
+                for entry in self.log[-2:]:
+                    entry["role"] += " (clipped, retaken)"
+            print(f"  {name} ({kind}) kicks +{size} and -{size} along {direction}: beam moved {_xy(spots[0][0] - c0)} "
+                  f"and {_xy(spots[1][0] - c0)} px; {name} back to {[int(v) for v in home]}", flush=True)
+            used[kind] = float(size)
+        return used
 
 
 # ---------------------------------------------------------------------------- stage 2 (draft)
@@ -386,7 +544,7 @@ def check(TEM3, detector, out, settings, *, offsets=(3000, 3000), camera_name=No
 CL3_ID = 2
 
 
-def fixed_settings(base_dac, n=30):
+def fixed_settings(*, base_dac, n=30):
     """The fixed stage-2 list: ``n`` lens settings spread evenly (a Halton sequence) over 0.1-2x
     the 40k-row DAC values, within the DAC range. Known before the session."""
     base = np.asarray(base_dac, float)
@@ -408,70 +566,71 @@ def _halton(n, bases):
     return out
 
 
-def recondense(s, dac, *, span=0.06, steps=25):
+def _recondense(r, dac, *, span=0.06, steps=25):
     """At lens setting ``dac``, step CL3 (free-lens control) over +/- ``span`` of its present value
     and keep the value that gives the smallest spot with the beam fully on the camera. Returns it."""
-    s.set_lenses(dac)
-    start = s.lens.GetFLCInfo(CL3_ID)[1]
-    s.lens.SetFLCAbs(CL3_ID, start)
-    s.lens.SetFLCSw(CL3_ID, 1)
+    r._set_lenses(dac)
+    start = r.lens.GetFLCInfo(CL3_ID)[1]
+    r.lens.SetFLCAbs(CL3_ID, start)
+    r.lens.SetFLCSw(CL3_ID, 1)
     trials = []
     for value in np.round(start * np.linspace(1 - span, 1 + span, steps)).astype(int):
-        s.lens.SetFLCAbs(CL3_ID, int(value))
-        frame = s.snap(role="condense", kind="none", offset=[0, 0], visit=-1, setting="condense", direction="x",
+        r.lens.SetFLCAbs(CL3_ID, int(value))
+        frame = r._snap(role="condense", kind="none", offset=[0, 0], measurement=0, setting="condense", direction="x",
                        dac=list(dac), cl3=int(value))
-        _, rms, edge = measure_spot(frame, s.background)
-        trials.append((int(value), rms, edge, float(np.sum(frame - s.background))))
+        _, rms, edge = measure_spot(frame=frame, background=r.background)
+        trials.append((int(value), rms, edge, float(np.sum(frame - r.background))))
     most = max(t[3] for t in trials)
     whole = [t for t in trials if t[2] < 1e-3 and t[3] > 0.9 * most]     # the whole beam on the camera
     if not whole:
         raise RuntimeError("no CL3 value in the range puts the whole beam on the camera; condense by hand")
     value, rms = min(whole, key=lambda t: t[1])[:2]
-    s.lens.SetFLCAbs(CL3_ID, value)
+    r.lens.SetFLCAbs(CL3_ID, value)
     print(f"  re-condensed: CL3 {start} -> {value} (spot rms {rms:.1f} px)", flush=True)
     return value
 
 
-def stage2(TEM3, detector, out, *, stage1_folder, ht_v1, n_settings=30, ht_settle_s=60.0, camera_name=None, dtype=None,
-        settle_s=2.0, target_px=50.0, test_units=(300, 300), max_units=(20000, 20000)):
-    """**Draft.** The second-HT part of stage 2, specimen out: at HT ``ht_v1`` the 9 stage-1
-    settings and a fixed list of ``n_settings`` more, then the fixed list again back at the stage-1
-    HT. The projector DAC values stay fixed; after each HT change the beam is re-condensed with CL3
-    (:func:`recondense`). Settings whose beam is off the camera are skipped. Everything, including
-    the HT and CL3, is restored at the end. Returns the output folder."""
-    plan1 = json.loads((Path(stage1_folder) / "plan.json").read_text())
-    stage1 = {k: np.asarray(v, float) for k, v in plan1["settings"].items()}
-    s = Session(TEM3, detector, out, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
-    state = s.save_state(TEM3)
-    ht_v0, centre = state["ht_v"], s.deflectors()
-    cl3 = s.lens.GetFLCInfo(CL3_ID)                                  # [switch, value], restored at the end
+def record_second_ht(*, TEM3, detector, folder, first_ht_folder, second_ht_v, n_settings=30, ht_settle_s=60.0,
+                     camera_name=None, dtype=None, settle_s=2.0, beam_move_px=50.0, test_kick_units=300,
+                     max_kick_units=20000):
+    """**Draft** (to be split into steps like :class:`Recording` when stage 2 resumes). The
+    second-HT part of stage 2, specimen out: at ``second_ht_v`` the settings of the first-HT
+    recording (``first_ht_folder``) and a fixed list of ``n_settings`` more; then the fixed list
+    and the DIFF row again back at the first HT. The projection-system DAC values stay fixed; after each HT change
+    the beam is re-condensed with CL3 (:func:`_recondense`). Settings whose beam is off the camera
+    are skipped. Everything, including the HT and CL3, is restored at the end. Returns the folder."""
+    plan1 = json.loads((Path(first_ht_folder) / "plan.json").read_text())
+    first = {k: np.asarray(v, float) for k, v in plan1["settings"].items()}
+    r = Recording(TEM3=TEM3, detector=detector, folder=folder, camera_name=camera_name, dtype=dtype, settle_s=settle_s)
+    ht_v0 = r.state["ht_v"]
+    cl3 = r.lens.GetFLCInfo(CL3_ID)                                  # [switch, value], restored at the end
     try:
-        base = s.take_over_lenses(state)
+        base = r.take_over_lenses()
         if np.any(base != np.asarray(plan1["base_dac"])):
-            print(f"  note: the 40k row reads {base}, stage 1 had {plan1['base_dac']}", flush=True)
-        fixed = {f"f{k}": dac for k, dac in enumerate(fixed_settings(base, n_settings))}
-        visits = [(label, ht_v1) for label in [*stage1, *fixed]] + [(label, ht_v0) for label in fixed]
-        settings = {**stage1, **fixed}
-        (s.out / "plan.json").write_text(json.dumps(dict(
-            base_dac=base.tolist(), diffraction=plan1["diffraction"], ht_v0=ht_v0, ht_v1=ht_v1,
-            settings={k: v.tolist() for k, v in settings.items()}, visits=visits, centre=centre,
-            stage1_folder=str(stage1_folder), target_px=target_px), indent=1, default=_plain))
-        s.dark_frame(base)
+            print(f"  note: the 40k row reads {base}, the first HT had {plan1['base_dac']}", flush=True)
+        fixed = {f"f{k}": dac for k, dac in enumerate(fixed_settings(base_dac=base, n=n_settings))}
+        planned = [(label, second_ht_v) for label in [*first, *fixed]] + [(label, ht_v0) for label in [*fixed, "DIFF row"]]
+        settings = {**first, **fixed}
+        (r.folder / "plan.json").write_text(json.dumps(dict(
+            base_dac=base.tolist(), diffraction=plan1["diffraction"], ht_v0=ht_v0, ht_v1=second_ht_v,
+            settings={k: v.tolist() for k, v in settings.items()}, plan=planned, centre=r.centre,
+            first_ht_folder=str(first_ht_folder), beam_move_px=beam_move_px), indent=1, default=_plain))
+        r.dark_frame()
         skipped = []
-        for visit, (label, ht) in enumerate(visits):
-            if s.ht.GetHtValue() != ht:
+        for number, (label, ht) in enumerate(planned, 1):
+            if r.ht.GetHtValue() != ht:
                 print(f"HT -> {ht / 1e3:g} kV, waiting {ht_settle_s:g} s", flush=True)
-                s.ht.SetHtValue(ht)
+                r.ht.SetHtValue(ht)
                 time.sleep(ht_settle_s)
-                recondense(s, base)
-            used = s.visit(visit, label, settings[label], "x", centre=centre, target_px=target_px,
-                           test_units=test_units, max_units=max_units, skip_off_camera=True)
+                _recondense(r, base)
+            used = r._measure(number, label, settings[label], "x", centre=r.centre, beam_move_px=beam_move_px,
+                             test_kick_units=test_kick_units, max_kick_units=max_kick_units, skip_off_camera=True)
             if used is None:
                 skipped.append(f"{label} at {ht / 1e3:g} kV")
-        print(f"{len(visits) - len(skipped)} of {len(visits)} visits measured"
+        print(f"{len(planned) - len(skipped)} of {len(planned)} measurements made"
               + (f"; skipped (beam off the camera): {', '.join(skipped)}" if skipped else ""), flush=True)
     finally:                                                         # always put the microscope back
-        s.lens.SetFLCAbs(CL3_ID, cl3[1])
-        s.lens.SetFLCSw(CL3_ID, cl3[0])
-        s.restore(state, centre)
-    return s.out
+        r.lens.SetFLCAbs(CL3_ID, cl3[1])
+        r.lens.SetFLCSw(CL3_ID, cl3[0])
+        r.restore()
+    return r.folder

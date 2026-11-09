@@ -63,7 +63,7 @@ def load_plan():
                         45000.0: baseline45[1:]}, np.asarray(spec["condenser_reference_controls"])
 
 
-def design_diffraction_table(truth, drives, mag_words, camera_lengths_m=CAMERA_LENGTHS_M, *, max_word=63000):
+def design_diffraction_table(*, truth, drives, mag_words, camera_lengths_m=CAMERA_LENGTHS_M, max_word=63000):
     """TEM DIFF rows for the hidden optics: words that put the back focal plane on the camera.
 
     For each camera length L: PL1 stays at its MAG value; IL1, IL2 and IL3 are chosen so that
@@ -162,7 +162,7 @@ def build_virtual_neoarm(*, ht_v=200e3, second_ht_v=None, headroom_word=60000, r
     aligned = {m: {n: drives[n].word(c) for n, c in zip(PROJECTOR, controls)} for m, controls in baselines.items()}
     if diffraction_table is None:
         diffraction_table = {length: {n: round(w * scale) for n, w in row.items()} for length, row in
-                             design_diffraction_table(truth, drives, aligned[40000.0]).items()}
+                             design_diffraction_table(truth=truth, drives=drives, mag_words=aligned[40000.0]).items()}
     magnification_table = {m: {n: round(w * scale) for n, w in row.items()} for m, row in aligned.items()}
     spot_table = {REFERENCE_SPOT: {n: drives[n].word(c * scale) for n, c in zip(CONDENSER, condenser_reference)}}
     scope = VirtualMicroscope(
@@ -176,7 +176,7 @@ def build_virtual_neoarm(*, ht_v=200e3, second_ht_v=None, headroom_word=60000, r
     return scope, plan, gauge
 
 
-def true_magnification_and_camera_length(scope):
+def true_magnification_and_camera_length(*, scope):
     """The hidden |A| and |B| (m/rad) at the scope's present lens setting -- for scoring a
     rehearsal only; nothing the session sees."""
     s, t = scope.physical_setting(), scope.truth
@@ -185,7 +185,7 @@ def true_magnification_and_camera_length(scope):
     return float(np.hypot(m[0, 0], m[0, 1])), float(np.hypot(m[0, 2], m[0, 3]))
 
 
-def true_projector(scope, units):
+def true_projector(*, scope, units):
     """The hidden projector as the 16 fit parameters, in the fit's DAC-unit convention
     (``analyse`` maps DAC values by ``units`` and ``model.controls``) --
     for scoring and drawing a rehearsal only."""
@@ -196,7 +196,7 @@ def true_projector(scope, units):
     return p
 
 
-def true_deflector_calibration(scope):
+def true_deflector_calibration(*, scope):
     """The hidden beam shift (m) and tilt (rad) per deflector unit at the reference HT -- for
     scoring a rehearsal only."""
     k = np.asarray(scope.electronics.deflector.kick_per_word)
@@ -231,12 +231,13 @@ class VirtualNEOARM:
         self.scope.specimen = value
 
 
-def build(ht_v=60e3, *, magnification=40000.0, binning=8, exposure_s=0.01, ray_sample_power=17,
+def build(*, ht_v=60e3, magnification=40000.0, binning=8, exposure_s=0.01, ray_sample_power=22,
           detector_samples_per_pixel=8, **options):
     """The virtual NEOARM aligned at ``ht_v`` and set up as left at the console for a session: MAG at
     the ``magnification`` row, spot 3, condenser-aperture hole 1, the camera at ``binning`` and
     ``exposure_s``, specimen out. 8 x 8 detector sub-samples keep sub-pixel spot positions (with 1,
-    a spot of about a pixel locks to pixel centres). ``options`` go to :func:`build_virtual_neoarm`."""
+    a spot of about a pixel locks to pixel centres); 2**22 rays per frame keep the beam smooth (2**17
+    leaves about 10 % grain). ``options`` go to :func:`build_virtual_neoarm`."""
     from acquire import select_magnification
 
     scope, _, _ = build_virtual_neoarm(ht_v=ht_v, ray_sample_power=ray_sample_power,
@@ -246,7 +247,7 @@ def build(ht_v=60e3, *, magnification=40000.0, binning=8, exposure_s=0.01, ray_s
     TEM3.HT3().SetHtValue(ht_v)
     eos = TEM3.EOS3()
     eos.SelectFunctionMode(0)
-    select_magnification(eos, magnification)
+    select_magnification(eos=eos, magnification=magnification)
     eos.SelectSpotSize(REFERENCE_SPOT)
     aperture = TEM3.Apt3()
     aperture.SelectKind(1)
