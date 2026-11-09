@@ -2,10 +2,11 @@
 
 import jax
 import jax.numpy as jnp
-from scipy.constants import c, electron_mass, elementary_charge
 
 from temgym_core.components import solenoid_column
 from temgym_core.run import column_matrix
+
+from .high_tension import magnetic_strength_ratio
 
 
 def condenser_components(parameters, controls):
@@ -120,22 +121,6 @@ def source_moments(parameters, voltage_v=200000.0):
         jnp.r_[jnp.repeat(jnp.exp(2 * p[17]), 2), jnp.repeat(angular_variance, 2)]
     )
     return mean, covariance
-
-
-def magnetic_strength_ratio(voltage_v, reference_voltage_v=200000.0):
-    """p(reference)/p(voltage); fixed magnetic fields have q proportional to 1/p.
-
-    Relativistic kinetic energy gives (pc)^2 = eV(eV + 2mc^2).
-    Voltages are positive kinetic energies per electron charge, in volts.
-    """
-    rest_voltage = electron_mass * c**2 / elementary_charge
-    voltage = jnp.asarray(voltage_v)
-    reference = jnp.asarray(reference_voltage_v)
-    return jnp.sqrt(
-        reference
-        * (reference + 2 * rest_voltage)
-        / (voltage * (voltage + 2 * rest_voltage))
-    )
 
 
 def condenser_at_voltage(

@@ -29,7 +29,7 @@ runs the stage-1 projector calibration on it through PyJEM calls only.
 
 | Part | Model | Code |
 |---|---|---|
-| Optics (hidden) | TemGym finite solenoid lenses (objective, IL1–IL3, PL1), one Gaussian source per high tension, sigmoid condenser aperture, post-aperture double deflector. Frames come from native ray tracing. | `scope.OpticalTruth`, `calibration.acquisition.setting_column` / `render_rays` |
+| Optics (hidden) | TemGym finite solenoid lenses (objective, IL1–IL3, PL1), one Gaussian source per high tension, sigmoid condenser aperture, post-aperture double deflector. Frames come from native ray tracing. | `scope.OpticalTruth`, `tem_column.render.setting_column` / `render_rays` |
 | Electronics (hidden) | Linear 16-bit DAC laws for each lens (DAC value → relative control) and CLA1/CLA2 (DAC values → specimen shift and tilt, scaled as 1/p with HT). | `electronics.py` |
 | Modes | TEM MAG (selector rows) and TEM DIFF (camera-length rows; in the virtual NEOARM designed so that A = 0 and \|B\| = camera length, with IL1 weakened). | `scope.VirtualMicroscope`, `virtual_neoarm.design_diffraction_table` |
 | Specimens | None (vacuum) by default. `scope.specimen = CrossGrating(...)`: bars that absorb; rays are weighted by the transmission (in-focus bright-field image). `scope.specimen = PolycrystallineGold(...)`: the direct beam by rays plus one TemGym Gaussian beamlet per lit grain at its Bragg angle (111, 200, 220 rings). Set by hand: PyJEM has no call for it. | `specimens.py` |

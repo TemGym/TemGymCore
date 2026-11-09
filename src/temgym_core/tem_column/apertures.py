@@ -2,7 +2,7 @@
 
 import jax.numpy as jnp
 
-from .condenser_model import condenser_at_voltage
+from .condenser import condenser_at_voltage
 
 
 def aperture_centres(parameters, number_of_apertures):

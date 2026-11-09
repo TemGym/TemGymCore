@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..calibration.condenser_model import magnetic_strength_ratio
+from ..tem_column.high_tension import magnetic_strength_ratio
 
 WORD_MIN, WORD_MAX = 0, 65535
 NEUTRAL_WORD = 32768

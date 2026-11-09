@@ -57,12 +57,12 @@ def setting_column(
         Source position relative to the specimen, in metres.
     """
     from .apertures import aperture_centres, effective_parameters
-    from .condenser_model import (
+    from .condenser import (
         condenser_with_aperture,
         condenser_with_steering,
         source_moments,
     )
-    from .projector_model import at_voltage, projector_components
+    from .projector import at_voltage, projector_components
 
     cp = effective_parameters(
         condenser_parameters, voltage_v, reference_voltage_v, source_index

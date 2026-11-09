@@ -37,8 +37,9 @@ Rules that tie them together:
 | Gaussian beamlets | `gaussian`, `source`, `evaluate` (public dispatcher), `render/` (GPU renderer), `grid` |
 | Sampled wavefronts (experimental) | `wave/`: `lattice` (affine sample lattices, backward lattice chain), `lct` (plan and apply the Collins transform), `planner` (sampling rules), `masks` (thin elements as multipliers), `column` (`propagate`, `column_transform`), `resample_field`, `reference` (analytic Gaussians, chief phase) |
 | Microscope | `microscope` (named components, current tables, imaging condition) |
-| Measurements and fitting | `moments`, `optimization`, `calibration/`, `reflection_calibration` |
-| Virtual PyJEM-driven microscope | `virtual/` (may import `calibration/`; never the reverse) |
+| TEM column models | `tem_column/` (projector, condenser, apertures, HT scaling, ray-traced camera image) |
+| Measurements and fitting | `moments`, `optimization`, `reflection_calibration` |
+| Virtual PyJEM-driven microscope | `virtual/` (may import `tem_column/`; never the reverse) |
 | Plots | `plotting` (to be replaced by one `plot()` entry point) |
 | Constants and aberrations | `constants`, `aberrations` |
 | Experimental | `experimental/` |

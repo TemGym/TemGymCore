@@ -1,7 +1,7 @@
 """Build the virtual NEOARM: a PyJEM-driven microscope with hidden TemGym optics.
 
-The hidden optics are a synthetic truth
-(``calibration_results/tilt_y_30_ray_acquisition/scoring_truth.json``). The hidden
+The hidden optics are a synthetic truth (``hidden_optics/``: ``optics.json`` holds the lens
+parameters, ``experiment.json`` the operating points and the 40k setting). The hidden
 electronics map 16-bit DAC values to lens controls and deflector kicks, and the camera
 is ideal by default. TEM MAG has the recorded NEOARM 40k row; TEM DIFF has camera lengths
 0.15-1 m designed on the hidden optics (:func:`design_diffraction_table`). It is aligned at
@@ -29,7 +29,7 @@ import numpy as np  # noqa: E402
 from scipy.constants import elementary_charge  # noqa: E402
 from scipy.optimize import least_squares  # noqa: E402
 
-from temgym_core.calibration.projector_model import at_voltage, matrix5  # noqa: E402
+from temgym_core.tem_column.projector import at_voltage, matrix5  # noqa: E402
 from temgym_core.virtual import (  # noqa: E402
     CameraModel,
     DeflectorDrive,
@@ -41,8 +41,7 @@ from temgym_core.virtual import (  # noqa: E402
 from temgym_core.virtual.pyjem import pyjem_interface  # noqa: E402
 
 HERE = Path(__file__).parent
-ACQUISITION = HERE / "calibration_results" / "tilt_y_30_ray_acquisition"
-PRESETS = HERE.parents[1] / "src" / "temgym_core" / "calibration" / "presets"
+HIDDEN_OPTICS = HERE / "hidden_optics"
 PROJECTOR = ("IL1", "IL2", "IL3", "PL1")
 CONDENSER = ("CL1", "CL3", "CM")
 REFERENCE_SPOT = 2                        # PyJEM index of "spot 3"
@@ -134,16 +133,16 @@ def build_virtual_neoarm(*, ht_v=200e3, second_ht_v=None, ray_sample_power=18, d
     200 kV, 80 kV with 60 kV) is the other HT it can run at, with the DAC values held.
     """
     from neoarm_flc import read_flc_table
-    from temgym_core.calibration.condenser_model import magnetic_strength_ratio
+    from temgym_core.tem_column.high_tension import magnetic_strength_ratio
 
     second_ht_v = second_ht_v or SECOND_HT[float(ht_v)]
-    truth = OpticalTruth.from_files(ACQUISITION / "experiment.json", ACQUISITION / "scoring_truth.json",
+    truth = OpticalTruth.from_files(HIDDEN_OPTICS / "experiment.json", HIDDEN_OPTICS / "optics.json",
                                     voltages_v=(float(ht_v), float(second_ht_v)))
     scale = 1 / float(magnetic_strength_ratio(ht_v, truth.reference_voltage_v))      # p(ht_v) / p(200 kV)
     recorded = read_flc_table(minimum_mag=40_000, maximum_mag=40_000)
     row_40k = {name: int(recorded[name][0]) for name in PROJECTOR}
-    reference = json.loads((PRESETS / "beam_measurement_protocol.json").read_text())["projector_reference_controls"]
-    condenser_reference = json.loads((ACQUISITION / "experiment.json").read_text())["condenser_reference_controls"]
+    experiment = json.loads((HIDDEN_OPTICS / "experiment.json").read_text())
+    reference, condenser_reference = experiment["projector_controls_40k"], experiment["condenser_reference_controls"]
     drives = {name: LensDrive(row_40k[name] / control) for name, control in zip(PROJECTOR, reference[1:])}
     drives.update({name: LensDrive(30000.0 / control) for name, control in zip(CONDENSER, condenser_reference)})
     # 0.01 nm and 0.2 µrad per CLA word: 20 nm and 3 mrad are 2000 and 15000 words.
@@ -170,24 +169,6 @@ def true_magnification_and_camera_length(*, scope):
     m = np.asarray(matrix5(at_voltage(np.asarray(t.projector_parameters), s.voltage_v, t.reference_voltage_v),
                            np.asarray(s.projector_controls)))
     return float(np.hypot(m[0, 0], m[0, 1])), float(np.hypot(m[0, 2], m[0, 3]))
-
-
-def true_projector(*, scope, units):
-    """The hidden projector as the 16 fit parameters, in the fit's DAC-unit convention
-    (``analyse`` maps DAC values by ``units`` and ``model.controls``) --
-    for scoring and drawing a rehearsal only."""
-    from model import CONTROL_PER_DAC
-    p = np.array(scope.truth.projector_parameters, float)
-    per_unit = np.array([scope.electronics.lenses[n].words_per_unit for n in PROJECTOR])
-    p[12:16] += np.log((1 / per_unit) / (np.asarray(units) * CONTROL_PER_DAC))
-    return p
-
-
-def true_deflector_calibration(*, scope):
-    """The hidden beam shift (m) and tilt (rad) per deflector unit at the reference HT -- for
-    scoring a rehearsal only."""
-    k = np.asarray(scope.electronics.deflector.kick_per_word)
-    return float(k[0, 0]), float(k[2, 2])
 
 
 class VirtualNEOARM:
@@ -230,7 +211,6 @@ def build(*, ht_v=60e3, magnification=40000.0, binning=8, exposure_s=0.01, ray_s
     8 x 8 detector sub-samples keep sub-pixel spot positions (with 1, a spot of about a pixel
     locks to pixel centres); 2**22 rays per frame keep the beam smooth (2**17 leaves about 10 %
     grain). ``options`` go to :func:`build_virtual_neoarm`."""
-    from acquire import select_magnification
     from temgym_core.virtual import SpecimenBeam
 
     scope = build_virtual_neoarm(ht_v=ht_v, ray_sample_power=ray_sample_power,
@@ -240,7 +220,7 @@ def build(*, ht_v=60e3, magnification=40000.0, binning=8, exposure_s=0.01, ray_s
     TEM3.HT3().SetHtValue(ht_v)
     eos = TEM3.EOS3()
     eos.SelectFunctionMode(0)
-    select_magnification(eos=eos, magnification=magnification)
+    eos.SetSelector([m for m, _ in scope.magnification_table].index(magnification))
     eos.SelectSpotSize(REFERENCE_SPOT)
     aperture = TEM3.Apt3()
     aperture.SelectKind(1)

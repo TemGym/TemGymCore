@@ -11,8 +11,8 @@ image the model cannot produce.
 The optical truth is the calibration model itself (finite solenoid lenses, a
 Gaussian source per high tension, a sigmoid condenser aperture, a post-aperture
 double deflector); images come from native ray tracing through
-:func:`temgym_core.calibration.acquisition.setting_column` and
-:func:`~temgym_core.calibration.acquisition.render_rays`. With a
+:func:`temgym_core.tem_column.render.setting_column` and
+:func:`~temgym_core.tem_column.render.render_rays`. With a
 :class:`SpecimenBeam` the condenser is left out: the beam starts at the specimen
 plane and only the projector is traced.
 """
@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 from scipy.constants import elementary_charge
 
-from ..calibration.acquisition import render_rays, setting_column
+from ..tem_column.render import render_rays, setting_column
 from ..config import require_x64
 from .camera import CameraModel
 from .electronics import NEUTRAL_WORD, Electronics
@@ -415,7 +415,7 @@ class VirtualMicroscope:
         if key in self._images:
             self._images.move_to_end(key)
             return self._images[key]
-        from ..calibration.projector_model import at_voltage, projector_components
+        from ..tem_column.projector import at_voltage, projector_components
         from .specimens import PolycrystallineGold, render_beamlets
 
         t = self.truth

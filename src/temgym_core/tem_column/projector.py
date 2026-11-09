@@ -12,6 +12,11 @@ LENSES = ("Objective", "IL1", "IL2", "IL3", "PL1")
 
 SIGNS = jnp.array([1.0, 1.0, 1.0, -1.0])
 
+#: Objective, IL1, IL2, IL3 and PL1 strengths at the 40k row that :func:`initial_guess` was made
+#: for (a fit maps a microscope's 40k-row DAC values onto these to start near its solution).
+REFERENCE_40K_CONTROLS = np.array([1.0, 0.6156826056827933, 0.5675232215801136, 1.7562259961484548,
+                                   0.8387606122572018])
+
 
 def initial_guess():
     """Literal engineering guesses, independently specified from the generator."""
@@ -53,7 +58,7 @@ def matrix5(p, controls):
 
 
 def at_voltage(parameters, voltage, reference=200000.0):
-    from .condenser_model import magnetic_strength_ratio
+    from .high_tension import magnetic_strength_ratio
 
     ratio = magnetic_strength_ratio(voltage, reference)
     return jnp.asarray(parameters).at[11].multiply(ratio).at[12:16].add(jnp.log(ratio))

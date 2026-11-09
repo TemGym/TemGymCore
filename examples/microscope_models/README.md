@@ -39,15 +39,16 @@ figures.prediction_test(model=model, folder=new.folder)
 |---|---|
 | [stage1_session_sheet.md](stage1_session_sheet.md) | What to do at the microscope, by hand or with PyJEM. |
 | [stage1_rehearsal.ipynb](stage1_rehearsal.ipynb) | The stage-1 session rehearsed on the virtual NEOARM at 60 kV. |
-| [acquire.py](acquire.py) | Drives the microscope: `check_connection`, `Recording` (one step at a time), `take_frame`, and the draft `record_second_ht`. numpy + PyJEM only; the one file to copy to the microscope PC. |
-| [analyse.py](analyse.py) | Saved frames → the model: `fit_projection_response`, `predict`, `compare`, `new_settings`, and the draft `fit_physical_projection`. |
-| [model.py](model.py) | The TemGym projector model and the least-squares fit; the specimen measurements (grating lattice, gold rings). |
-| [figures.py](figures.py) | Tables and figures in the paper style: recorded frames, the prediction test, the column with ring lenses. |
+| [acquire.py](acquire.py) | Drives the microscope: `check_connection` and `Recording` (one step at a time). numpy + PyJEM only; the one file to copy to the microscope PC. |
+| [analyse.py](analyse.py) | Saved frames → the model: `fit_projection_response`, `predict`, `compare`, `new_settings`. |
+| [model.py](model.py) | The TemGym projector model and the least-squares fit. |
+| [figures.py](figures.py) | Figures in the paper style: recorded frames, the prediction test. |
 | [virtual_neoarm.py](virtual_neoarm.py) | The virtual NEOARM, aligned at 60 or 200 kV (MAG: the recorded NEOARM 40k row; DIFF 15 cm – 1 m designed), behind PyJEM's names. |
+| [stage2/](stage2/) | Stage 2 (drafts, on hold): specimen frames, the second-HT recording, the joint fit, the column figure. |
 | [projector_calibration_outline.md](projector_calibration_outline.md) | The mathematics: ray maps, gauges, the two stages. |
 | [neoarm_flc_table.json](neoarm_flc_table.json), [neoarm_flc.py](neoarm_flc.py) | The recorded NEOARM free-lens table (MAG rows) and its reader. |
 | [microscope.toml](microscope.toml) | The example microscope used by the core tests and the holography notebook. |
-| `calibration_results/tilt_y_30_ray_acquisition/` | The virtual NEOARM's hidden truth and reference settings. |
+| [hidden_optics/](hidden_optics/) | The virtual NEOARM's hidden optics (lens parameters, operating points, the 40k setting). |
 
 Run the rehearsal on CPU in about a minute:
 

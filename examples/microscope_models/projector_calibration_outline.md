@@ -8,8 +8,7 @@ Status: 2026-11-06. Two stages:
    rehearsal: `stage1_rehearsal.ipynb`; sheet: `stage1_session_sheet.md`.
 2. **Stage 2, the physical projection system**: two specimen frames (a cross grating and gold)
    and the response at a second HT, fitted together with stage 1. It gives real units and the lens
-   and camera positions. Session: `acquire.record_second_ht` and `acquire.take_frame`; analysis:
-   `analyse.fit_physical_projection` (drafts); rehearsal: to come (`stage2_rehearsal.ipynb`).
+   and camera positions. Drafts in `stage2/` (`record`, `specimen_frames`, `fit`, `figures`); rehearsal: to come.
 
 The model and fit are in `model.py`, the figures in `figures.py`. The rehearsals run on the virtual NEOARM
 (TemGym rays for the beam and the grating, TemGym Gaussian beamlets for the gold rings) through its

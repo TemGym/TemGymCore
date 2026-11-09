@@ -95,7 +95,7 @@ def test_the_40k_row_is_the_recorded_neoarm_row_and_the_hidden_40k_setting(scope
     from neoarm_flc import read_flc_table
     recorded = read_flc_table(minimum_mag=40_000, maximum_mag=40_000)
     assert scope.magnification_table == ((40000.0, {n: int(recorded[n][0]) for n in neoarm.PROJECTOR}),)
-    reference = json.loads((neoarm.PRESETS / "beam_measurement_protocol.json").read_text())["projector_reference_controls"]
+    reference = json.loads((neoarm.HIDDEN_OPTICS / "experiment.json").read_text())["projector_controls_40k"]
     setting = scope.physical_setting()          # power-on: 40k row, spot 3, 50 um hole, 200 kV
     np.testing.assert_allclose(setting.projector_controls, reference, rtol=3e-5)
     assert setting.specimen_kick == (0.0, 0.0, 0.0, 0.0)
@@ -145,7 +145,7 @@ def test_diff_mode_loads_its_own_rows_and_puts_the_back_focal_plane_on_the_camer
 
 
 def test_truth_is_available_for_scoring_only(scope):
-    truth = json.loads((neoarm.ACQUISITION / "scoring_truth.json").read_text())
+    truth = json.loads((neoarm.HIDDEN_OPTICS / "optics.json").read_text())
     assert scope.truth.scoring_truth() == truth
 
 
@@ -171,21 +171,22 @@ def _frame(camera):
 
 def test_cross_grating_image_gives_the_true_magnification():
     """Rays weighted by the grating's transmission; the whole-image lattice fit gives |A|."""
-    calibration = load("model", ROOT / "examples/microscope_models/model.py")
+    from stage2.specimen_frames import grating_period_px
     from temgym_core.virtual import CrossGrating
     scope, tem3, camera = _anchor_scope()
     lens = tem3.Lens3()
     lens.SetFLCSw(2, 1)
     lens.SetFLCAbs(2, int(0.7 * lens.GetCL3()))          # spread the beam over the frame
     scope.specimen = CrossGrating(period=230e-9)
-    period_px, _, info = calibration.grating_period_px(_frame(camera))
+    period_px, _, info = grating_period_px(_frame(camera))
     assert info["explained"] > 0.9
     assert period_px * 110e-6 / 230e-9 == pytest.approx(_true_ab(scope)[0], rel=2e-3)
 
 
 def test_gold_rings_give_the_true_camera_length():
     """Gaussian beamlets, one per lit grain, through the projector; the ring radius gives |B|."""
-    calibration = load("model", ROOT / "examples/microscope_models/model.py")
+    from model import Camera
+    from stage2.specimen_frames import AU_RINGS, ring_radii_px
     from temgym_core.constants import energy2wavelength
     from temgym_core.virtual import PolycrystallineGold
     scope, tem3, camera = _anchor_scope()
@@ -193,8 +194,8 @@ def test_gold_rings_give_the_true_camera_length():
     eos.SelectFunctionMode(4)
     eos.SetSelector(7)                                   # 80 cm
     scope.specimen = PolycrystallineGold()
-    radii, _ = calibration.ring_radii_px(_frame(camera), calibration.Camera(n=256, pitch=110e-6))
-    b = radii["111"] * 110e-6 / (energy2wavelength(200e3) / calibration.AU_RINGS["111"])
+    radii, _ = ring_radii_px(_frame(camera), Camera(n=256, pitch=110e-6))
+    b = radii["111"] * 110e-6 / (energy2wavelength(200e3) / AU_RINGS["111"])
     assert b == pytest.approx(_true_ab(scope)[1], rel=1e-3)
 
 
