@@ -3,7 +3,7 @@
 The hidden optics are a synthetic truth
 (``calibration_results/tilt_y_30_ray_acquisition/scoring_truth.json``). The hidden
 electronics map 16-bit DAC values to lens controls and deflector kicks, and the camera
-is ideal by default. TEM MAG has the 40k and 45k rows; TEM DIFF has camera lengths
+is ideal by default. TEM MAG has the recorded NEOARM 40k row; TEM DIFF has camera lengths
 0.15-1 m designed on the hidden optics (:func:`design_diffraction_table`). It is aligned at
 200 kV or 60 kV (``ht_v``): the console tables scale with p(HT), so the optics are the same.
 :func:`build` starts the beam at the specimen plane (the condenser is not modelled).
@@ -51,17 +51,6 @@ DOSE_PER_IMAGE = 1e8                      # incident electrons, as in the synthe
 EXPOSURE_S = 0.01
 #: DIFF selector rows: camera length (m) at this camera, as JEOL's nominal steps.
 CAMERA_LENGTHS_M = (0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0)
-
-
-def load_plan():
-    """The selected acquisition's settings and its reference (gauge) controls."""
-    plan = {k: np.asarray(v) for k, v in np.load(ACQUISITION / "settings.npz").items()}
-    spec = json.loads((ACQUISITION / "experiment.json").read_text())
-    protocol = json.loads((PRESETS / "beam_measurement_protocol.json").read_text())
-    baseline45 = plan["projector_controls"][(plan["purpose"] == "check") & (plan["voltage_index"] == 0)
-                                            & (plan["nominal_magnification"] == 45000.0)][0]
-    return plan, spec, {40000.0: np.asarray(protocol["projector_reference_controls"])[1:],
-                        45000.0: baseline45[1:]}, np.asarray(spec["condenser_reference_controls"])
 
 
 def design_diffraction_table(*, truth, drives, mag_words, camera_lengths_m=CAMERA_LENGTHS_M, max_word=63000):
@@ -126,55 +115,52 @@ def design_diffraction_table(*, truth, drives, mag_words, camera_lengths_m=CAMER
 SECOND_HT = {200e3: 195e3, 60e3: 80e3}
 
 
-def build_virtual_neoarm(*, ht_v=200e3, second_ht_v=None, headroom_word=60000, ray_sample_power=18,
-                         detector_samples_per_pixel=1, camera=None, seed=0, diffraction_table=None):
-    """Virtual NEOARM, aligned at ``ht_v`` (200 or 60 kV), whose relaxed lens ranges fit the selected plan.
+def build_virtual_neoarm(*, ht_v=200e3, second_ht_v=None, ray_sample_power=18, detector_samples_per_pixel=1,
+                         camera=None, seed=0, diffraction_table=None):
+    """Virtual NEOARM aligned at ``ht_v`` (200 or 60 kV), at its power-on state.
 
-    The console tables (MAG rows, DIFF rows, spot, objective) are the 200 kV alignment with every DAC
-    value scaled by p(ht_v) / p(200 kV): a magnetic lens acts through B / p, so the optics at ``ht_v``
-    are the same as at 200 kV. The microscope starts at ``ht_v``; ``second_ht_v`` (default 195 kV
-    with 200 kV, 80 kV with 60 kV) is the other HT it can run at, with the DAC values held.
+    DAC tables, from the recorded NEOARM table (:mod:`neoarm_flc`):
 
-    ``diffraction_table`` (camera length in m -> IL1, IL2, IL3, PL1 DAC values) replaces the
-    designed TEM DIFF rows, e.g. with recorded DIFF values mapped onto this lens table.
+    * MAG: the recorded 40k row. Each lens's DAC values per unit of strength are set so that this
+      row gives the hidden optics' 40k setting (in focus at 40 000x). The other recorded rows are
+      left out: these hidden optics are not the NEOARM's, and they do not image there.
+    * Objective: the recorded OLc and OLf.
+    * DIFF: designed on the hidden optics (:func:`design_diffraction_table`), in the same DAC units;
+      or ``diffraction_table`` (camera length in m -> IL1, IL2, IL3, PL1 DAC values at 200 kV).
+    * Condenser (spot 3, only used when the condenser is traced): arbitrary DAC units.
 
-    Returns
-    -------
-    scope : VirtualMicroscope
-    plan : dict
-        The selected acquisition's settings.
-    gauge : dict
-        Reference magnification/spot and the relative controls assigned to them.
+    Every DAC value is the 200 kV value times p(ht_v) / p(200 kV): a magnetic lens acts through
+    B / p, so the optics at ``ht_v`` are the same as at 200 kV. ``second_ht_v`` (default 195 kV with
+    200 kV, 80 kV with 60 kV) is the other HT it can run at, with the DAC values held.
     """
-    plan, spec, baselines, condenser_reference = load_plan()
+    from neoarm_flc import read_flc_table
     from temgym_core.calibration.condenser_model import magnetic_strength_ratio
 
     second_ht_v = second_ht_v or SECOND_HT[float(ht_v)]
     truth = OpticalTruth.from_files(ACQUISITION / "experiment.json", ACQUISITION / "scoring_truth.json",
                                     voltages_v=(float(ht_v), float(second_ht_v)))
     scale = 1 / float(magnetic_strength_ratio(ht_v, truth.reference_voltage_v))      # p(ht_v) / p(200 kV)
-    largest = np.r_[plan["projector_controls"][:, 1:].max(axis=0), plan["condenser_controls"].max(axis=0)]
-    drives = {name: LensDrive(headroom_word / top) for name, top in zip(PROJECTOR + CONDENSER, largest)}
+    recorded = read_flc_table(minimum_mag=40_000, maximum_mag=40_000)
+    row_40k = {name: int(recorded[name][0]) for name in PROJECTOR}
+    reference = json.loads((PRESETS / "beam_measurement_protocol.json").read_text())["projector_reference_controls"]
+    condenser_reference = json.loads((ACQUISITION / "experiment.json").read_text())["condenser_reference_controls"]
+    drives = {name: LensDrive(row_40k[name] / control) for name, control in zip(PROJECTOR, reference[1:])}
+    drives.update({name: LensDrive(30000.0 / control) for name, control in zip(CONDENSER, condenser_reference)})
     # 0.01 nm and 0.2 µrad per CLA word: 20 nm and 3 mrad are 2000 and 15000 words.
     deflector = DeflectorDrive(np.diag([1e-11, 1e-11, 2e-7, 2e-7]))
-    objective = Electronics(drives, deflector).objective_words              # the 200 kV objective
+    objective = (int(recorded["OLc"][0]), int(recorded["OLf"][0]))
     electronics = Electronics(drives, deflector, objective_words=tuple(round(w * scale) for w in objective),
                               objective_control=scale)
-    aligned = {m: {n: drives[n].word(c) for n, c in zip(PROJECTOR, controls)} for m, controls in baselines.items()}
     if diffraction_table is None:
-        diffraction_table = {length: {n: round(w * scale) for n, w in row.items()} for length, row in
-                             design_diffraction_table(truth=truth, drives=drives, mag_words=aligned[40000.0]).items()}
-    magnification_table = {m: {n: round(w * scale) for n, w in row.items()} for m, row in aligned.items()}
-    spot_table = {REFERENCE_SPOT: {n: drives[n].word(c * scale) for n, c in zip(CONDENSER, condenser_reference)}}
-    scope = VirtualMicroscope(
-        truth, electronics, magnification_table=magnification_table, spot_table=spot_table,
-        diffraction_table=diffraction_table,
+        diffraction_table = design_diffraction_table(truth=truth, drives=drives, mag_words=row_40k)
+    at_ht = lambda row: {name: round(word * scale) for name, word in row.items()}
+    return VirtualMicroscope(
+        truth, electronics, magnification_table={40000.0: at_ht(row_40k)},
+        spot_table={REFERENCE_SPOT: at_ht({name: 30000 for name in CONDENSER})},
+        diffraction_table={length: at_ht(row) for length, row in diffraction_table.items()},
         camera=camera or CameraModel(), aperture_holes={hole: d for d, hole in APERTURE_HOLES.items()},
         beam_current_a=DOSE_PER_IMAGE * elementary_charge / EXPOSURE_S, ray_sample_power=ray_sample_power,
         detector_samples_per_pixel=detector_samples_per_pixel, seed=seed)
-    gauge = dict(reference_magnification=40000.0, reference_spot=REFERENCE_SPOT,
-                 projector_reference_ratios=baselines[40000.0], condenser_reference_ratios=condenser_reference)
-    return scope, plan, gauge
 
 
 def true_magnification_and_camera_length(*, scope):
@@ -247,7 +233,7 @@ def build(*, ht_v=60e3, magnification=40000.0, binning=8, exposure_s=0.01, ray_s
     from acquire import select_magnification
     from temgym_core.virtual import SpecimenBeam
 
-    scope, _, _ = build_virtual_neoarm(ht_v=ht_v, ray_sample_power=ray_sample_power,
+    scope = build_virtual_neoarm(ht_v=ht_v, ray_sample_power=ray_sample_power,
                                        detector_samples_per_pixel=detector_samples_per_pixel, **options)
     microscope = VirtualNEOARM(scope)
     TEM3, detector = microscope.pyjem()

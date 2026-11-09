@@ -205,6 +205,6 @@ new.restore()
 
 `analyse.compare(model=model, folder=new.folder)` then shows measured against predicted.
 
-Dry run on the virtual NEOARM at 60 kV (`stage1_rehearsal.ipynb`): χ²/dof 0.4. The fit found
+Dry run on the virtual NEOARM at 60 kV (`stage1_rehearsal.ipynb`): χ²/dof 0.7. The fit found
 the virtual camera's mirror on its own. At 8 lens settings stage 1 never used, predictions matched
 the measurements to within 0.002 px.

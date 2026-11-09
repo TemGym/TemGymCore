@@ -43,7 +43,7 @@ figures.prediction_test(model=model, folder=new.folder)
 | [analyse.py](analyse.py) | Saved frames → the model: `fit_projection_response`, `predict`, `compare`, `new_settings`, and the draft `fit_physical_projection`. |
 | [model.py](model.py) | The TemGym projector model and the least-squares fit; the specimen measurements (grating lattice, gold rings). |
 | [figures.py](figures.py) | Tables and figures in the paper style: recorded frames, the prediction test, the column with ring lenses. |
-| [virtual_neoarm.py](virtual_neoarm.py) | The virtual NEOARM, aligned at 60 or 200 kV (MAG 40k/45k rows, DIFF 15 cm – 1 m), behind PyJEM's names. |
+| [virtual_neoarm.py](virtual_neoarm.py) | The virtual NEOARM, aligned at 60 or 200 kV (MAG: the recorded NEOARM 40k row; DIFF 15 cm – 1 m designed), behind PyJEM's names. |
 | [projector_calibration_outline.md](projector_calibration_outline.md) | The mathematics: ray maps, gauges, the two stages. |
 | [neoarm_flc_table.json](neoarm_flc_table.json), [neoarm_flc.py](neoarm_flc.py) | The recorded NEOARM free-lens table (MAG rows) and its reader. |
 | [microscope.toml](microscope.toml) | The example microscope used by the core tests and the holography notebook. |

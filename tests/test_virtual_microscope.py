@@ -28,6 +28,7 @@ def load(name, path):
     return module
 
 
+sys.path.insert(0, str(ROOT / "examples/microscope_models"))
 neoarm = load("virtual_neoarm_example", ROOT / "examples/microscope_models/virtual_neoarm.py")
 ray_images = load("make_ray_images", REFERENCE / "make_ray_images.py")
 
@@ -38,9 +39,7 @@ SMALL_CAMERA = CameraModel(sensor_shape=(512, 512), sensor_pixel_m=55e-6, psf_si
 
 @pytest.fixture
 def scope():
-    built, _, _ = neoarm.build_virtual_neoarm(ray_sample_power=10, detector_samples_per_pixel=2,
-                                              camera=SMALL_CAMERA)
-    return built
+    return neoarm.build_virtual_neoarm(ray_sample_power=10, detector_samples_per_pixel=2, camera=SMALL_CAMERA)
 
 
 def test_lens_drive_round_trip_and_range():
@@ -92,12 +91,13 @@ def test_virtual_microscope_renders_exactly_like_the_ray_pipeline(scope):
             assert np.array_equal(expected, ray_images.render_row(spec, settings, truth, row, aperture))
 
 
-def test_words_map_to_the_planned_controls(scope):
-    plan, _, _, _ = neoarm.load_plan()
+def test_the_40k_row_is_the_recorded_neoarm_row_and_the_hidden_40k_setting(scope):
+    from neoarm_flc import read_flc_table
+    recorded = read_flc_table(minimum_mag=40_000, maximum_mag=40_000)
+    assert scope.magnification_table == ((40000.0, {n: int(recorded[n][0]) for n in neoarm.PROJECTOR}),)
+    reference = json.loads((neoarm.PRESETS / "beam_measurement_protocol.json").read_text())["projector_reference_controls"]
     setting = scope.physical_setting()          # power-on: 40k row, spot 3, 50 um hole, 200 kV
-    np.testing.assert_allclose(setting.projector_controls, plan["projector_controls"][0] * [1, 1, 1, 1, 1]
-                               / plan["projector_controls"][0] * neoarm.load_plan()[2][40000.0].tolist()[0:1]
-                               * 0 + np.r_[1.0, neoarm.load_plan()[2][40000.0]], rtol=3e-5)
+    np.testing.assert_allclose(setting.projector_controls, reference, rtol=3e-5)
     assert setting.specimen_kick == (0.0, 0.0, 0.0, 0.0)
     assert setting.aperture_index == 1 and setting.voltage_v == 200e3
 
@@ -151,7 +151,7 @@ def test_truth_is_available_for_scoring_only(scope):
 
 def _anchor_scope():
     from temgym_core.virtual.pyjem import pyjem_interface
-    built, _, _ = neoarm.build_virtual_neoarm(ray_sample_power=17, detector_samples_per_pixel=4)   # 256 x 256, 110 um
+    built = neoarm.build_virtual_neoarm(ray_sample_power=17, detector_samples_per_pixel=4)   # 256 x 256, 110 um
     tem3, detector = pyjem_interface(built)
     camera = detector.Detector(detector.get_attached_detector()[0])
     camera.set_detectorsetting({"BinningSize": 8, "ExposureTimeValue": 0.01e6})
@@ -198,11 +198,10 @@ def test_gold_rings_give_the_true_camera_length():
     assert b == pytest.approx(_true_ab(scope)[1], rel=1e-3)
 
 
-def test_the_beam_starts_at_the_specimen_plane(monkeypatch):
+def test_the_beam_starts_at_the_specimen_plane():
     """``build`` leaves the condenser out: the spot on the camera is the beam's width times |A|
     at the 40k row and its spread of angles times |B| at the DIFF row, and a condenser change
     does not move or resize it."""
-    monkeypatch.syspath_prepend(str(ROOT / "examples/microscope_models"))
     from acquire import measure_spot, select_camera_length
     microscope = neoarm.build(ht_v=60e3, ray_sample_power=15, detector_samples_per_pixel=4,
                               beam_width_nm=40.0, convergence_mrad=1.1)

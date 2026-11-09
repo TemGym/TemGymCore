@@ -136,7 +136,7 @@ level is kept.
 **Acceptance.** $\chi^2$ inside its 99% range (the discrepancy principle), and a prediction check
 at lens settings the session never used.
 
-**Rehearsal on the virtual NEOARM at 60 kV:** $\chi^2/\text{dof} = 0.4$; the mirrored camera and the
+**Rehearsal on the virtual NEOARM at 60 kV:** $\chi^2/\text{dof} = 0.7$; the mirrored camera and the
 pure deflectors found by the fit; predictions at 8 new settings within 0.002 px.
 
 ## 6. Stage 2: the physical calibration
