@@ -226,6 +226,37 @@ def read_all_lenses(*, TEM3):
 
 
 # ------------------------------------------------------------------------------ a session
+#: The PyJEM calls a session uses, per part of TEM3.
+PYJEM_CALLS = {
+    "Lens3": ["GetIL1", "GetIL2", "GetIL3", "GetPL1", "GetFLCInfo", "SetFLCAbs", "SetFLCSw"],
+    "Def3": ["GetCLA1", "GetCLA2", "SetCLA1", "SetCLA2", "GetBeamBlank", "SetBeamBlank"],
+    "EOS3": ["GetFunctionMode", "SelectFunctionMode", "GetMagValue", "UpSelector"],
+    "HT3": ["GetHtValue"],
+}
+
+
+def check_pyjem(*, TEM3, detector=None):
+    """Print which of the PyJEM calls a session uses this PyJEM has, and return the missing ones.
+    Changes nothing. Run it first on an unfamiliar (for example older) PyJEM."""
+    missing = []
+    for part in PYJEM_CALLS:
+        try:
+            available = dir(getattr(TEM3, part)())
+        except Exception as error:                                   # noqa: BLE001 -- report and continue
+            print(f"TEM3.{part}: cannot be opened ({type(error).__name__}: {error})")
+            missing += [f"{part}.{call}" for call in PYJEM_CALLS[part]]
+            continue
+        absent = [call for call in PYJEM_CALLS[part] if call not in available]
+        missing += [f"{part}.{call}" for call in absent]
+        print(f"TEM3.{part}: " + ("all there" if not absent else "missing " + ", ".join(absent)))
+    if detector is not None:
+        absent = [call for call in ["get_attached_detector", "Detector"] if not hasattr(detector, call)]
+        missing += [f"detector.{call}" for call in absent]
+        print("detector: " + ("all there" if not absent else "missing " + ", ".join(absent)
+                              + " (use take_frame = newest_file_in(...) instead)"))
+    return missing
+
+
 def newest_file_in(folder, *, pattern="*", timeout_s=30.0):
     """A ``take_frame`` for a camera whose own software saves every frame into ``folder``: each call
     waits for a file newer than the call (up to ``timeout_s``) and returns it as an array.
@@ -369,9 +400,9 @@ class Session:
         if not self.dry:
             k = len(self.log)
             np.save(self.folder / "frames" / f"{k:04d}.npy", frame)
-            self.log.append(dict(index=k, file=f"frames/{k:04d}.npy", time=time.time(), ht_v=self.ht.GetHtValue(),
-                                 flc=[self.lens.GetFLCInfo(i)[1] for i in self.ids],
-                                 **{n: list(getattr(self.defl, f"Get{n}")()) for n in ("CLA1", "CLA2")}, **info))
+            self.log.append(dict(index=k, file=f"frames/{k:04d}.npy", time=time.time(), ht_v=_read(self.ht.GetHtValue),
+                                 flc=[_read(self.lens.GetFLCInfo, i) for i in self.ids],
+                                 CLA1=_read(self.defl.GetCLA1), CLA2=_read(self.defl.GetCLA2), **info))
             (self.folder / "log.json").write_text(json.dumps(self.log, indent=1, default=json_value))
         return frame
 
@@ -447,17 +478,25 @@ class Session:
         self.eos.SelectFunctionMode(0)
 
     def restore(self):
-        """Put the deflectors, free-lens control, blanking, function mode and HT back as at opening."""
+        """Put the deflectors, free-lens control, blanking and function mode back as at opening. (The HT
+        is never changed.) Anything that could not be read at opening is left alone, except free-lens
+        control, which is then switched off: the console's own lens values come back."""
         if self.dry:
             return self._would("put everything back as at opening")
         for name in ("CLA1", "CLA2"):
             getattr(self.defl, f"Set{name}")(*self.centre[name])
         for name, i in zip(self.lenses, self.ids):
-            self.lens.SetFLCAbs(i, self.state["flc"][name][1])
-            self.lens.SetFLCSw(i, self.state["flc"][name][0])
-        self.defl.SetBeamBlank(self.state["beam_blank"])
-        if self.eos.GetFunctionMode()[0] != self.state["function_mode"][0]:
-            self.eos.SelectFunctionMode(self.state["function_mode"][0])
-        if self.ht.GetHtValue() != self.state["ht_v"]:
-            self.ht.SetHtValue(self.state["ht_v"])
+            switch_and_value = self.state["flc"][name]
+            if isinstance(switch_and_value, str):            # not read at opening
+                self.lens.SetFLCSw(i, 0)
+            else:
+                self.lens.SetFLCAbs(i, switch_and_value[1])
+                self.lens.SetFLCSw(i, switch_and_value[0])
+        if not isinstance(self.state["beam_blank"], str):
+            self.defl.SetBeamBlank(self.state["beam_blank"])
+        else:
+            self.defl.SetBeamBlank(0)
+        function_mode = self.state["function_mode"]
+        if not isinstance(function_mode, str) and self.eos.GetFunctionMode()[0] != function_mode[0]:
+            self.eos.SelectFunctionMode(function_mode[0])
         print(f"restored; {len(self.log)} frames in {self.folder}", flush=True)
