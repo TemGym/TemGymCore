@@ -1,9 +1,8 @@
 # temgym-core
 
 **Differentiable electron optics in JAX.** Describe a microscope column once and compute with
-it in three ways: as **rays** (geometry, ABCD transfer matrices), as **Gaussian beamlets**
-(coherent images from $10^5$–$10^6$ beamlets, on the GPU), and, planned, as **sampled
-wavefronts**. Every result is a JAX array, so gradients with respect to lens strengths,
+it in two ways: as **rays** (geometry, ABCD transfer matrices) and as **Gaussian beamlets**
+(coherent images from summed beamlets). Every result is a JAX array, so gradients with respect to lens strengths,
 positions or sample parameters are one `jax.grad` away.
 
 [Documentation](https://temgym-core.readthedocs.io) ·
@@ -102,17 +101,10 @@ width = float(jnp.sum(row > row.max() / 2)) * 1e-6  # full width at half maximum
 print(width)  # about 3.9e-05 m: the 40 um square, imaged 1:1
 ```
 
-On a supported NVIDIA GPU `evaluate_gaussians` uses custom kernels; elsewhere it falls back to
-a portable implementation with the same result.
-
 ## Going further
 
-- [`examples/microscope_models/`](https://github.com/TemGym/TemGymCore/tree/main/examples/microscope_models):
+- [`examples/microscope_inversion/`](https://github.com/TemGym/TemGymCore/tree/main/examples/microscope_inversion):
   calibrate a TEM projection system from beam shifts and tilts, rehearsed on a virtual PyJEM-driven microscope.
-- [`examples/sem_reflection/`](https://github.com/TemGym/TemGymCore/tree/main/examples/sem_reflection):
-  a scanning-electron column with reflection diffraction.
-- [`examples/holography/gaussian_biprism_hologram.ipynb`](https://github.com/TemGym/TemGymCore/blob/main/examples/holography/gaussian_biprism_hologram.ipynb):
-  an off-axis hologram from summed Gaussian beamlets.
 - [Contributing](https://github.com/TemGym/TemGymCore/blob/main/CONTRIBUTING.md).
 
 ## Citing

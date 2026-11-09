@@ -100,7 +100,6 @@ print(f"jax.grad: {float(automatic):.4f}   finite difference: {float(finite):.4f
 ```
 
 ```{note}
-Gradients here use the portable `method="scan"` renderer, which is fast enough for small
-problems. On a GPU, `method="sparse"` (10^5 to 10^6 beamlets) is differentiable too, to first
-order: see *Gradients through the renderer* in the concepts page.
+Gradients go through `evaluate_gaussians`, which is plain JAX: see *Gradients through the
+images* in the concepts page.
 ```

@@ -652,7 +652,6 @@ _REMOVED_SYMBOL_TO_PATH = {
     "RandomPhaseSample": "temgym_core.components.RandomPhaseSample",
     "InterpolatedSample2D": "temgym_core.components.InterpolatedSample2D",
     "InterpolatedFields3D": "temgym_core.components.InterpolatedFields3D",
-    "AtomicPotential": "temgym_core.experimental.potential.AtomicPotential",
     "FourierTransform": "temgym_core.components.FourierTransform",
     "Detector": "temgym_core.components.Detector",
     "run_iter": "temgym_core.run.run_iter",

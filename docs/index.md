@@ -8,13 +8,12 @@ kernelspec:
 # temgym-core
 
 Differentiable electron optics in [JAX](https://docs.jax.dev): one description of a
-microscope column, three ways to compute with it.
+microscope column, two ways to compute with it.
 
 | Representation | Object | Use it for |
 |---|---|---|
 | **Rays** | `Ray` | geometry, ABCD transfer matrices, Taylor maps of nonlinear optics |
-| **Gaussian beamlets** | `GaussianBeam` | coherent images from $10^5$ to $10^6$ beamlets on the GPU, with gradients |
-| **Sampled wavefronts** | `Wavefront` (available, experimental) | Collins-integral propagation between planes, imported arrays, independent checks |
+| **Gaussian beamlets** | `GaussianBeam` | coherent images from summed beamlets, with gradients |
 
 Every representation runs through the same components, so a lens, an aperture or a
 biprism is defined once.
@@ -48,7 +47,6 @@ column_matrix(model)
 install
 concepts
 tutorials/gaussian_imaging
-tutorials/skip_planes
 api
 changelog
 ```

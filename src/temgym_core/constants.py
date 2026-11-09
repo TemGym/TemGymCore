@@ -143,6 +143,15 @@ def voltage_scaling_ratio(voltage: float, reference_voltage: float) -> float:
     )
 
 
+def magnetic_strength_ratio(voltage, reference_voltage=200e3):
+    """Return p(reference) / p(voltage): how a magnetic lens's strength scales with the high
+    tension at a fixed field (strength proportional to 1/p). The square root of
+    :func:`voltage_scaling_ratio`."""
+    import jax.numpy as jnp
+
+    return jnp.sqrt(voltage_scaling_ratio(voltage, reference_voltage))
+
+
 def relativistic_voltage_correction(voltage: float) -> float:
     """
     Backward-compatible alias of :func:`relativistic_voltage_factor`.

@@ -97,7 +97,6 @@ _EXPORTS = {
     **dict.fromkeys(
         (
             "plot_model",
-            "plot_reflection_column",
             "plot_model_plotly",
             "plot_abcd_profile",
             "PlotParams",
@@ -105,13 +104,8 @@ _EXPORTS = {
         ),
         "plotting",
     ),
-    **dict.fromkeys(
-        ("Microscope", "CurrentTable", "find_imaging_condition"),
-        "microscope",
-    ),
     "InterpolatedSample2D": "components",
     "BraggSample": "components",
-    "PotentialStepResponse": "scattering",
     "enable_x64": "config",
     "require_x64": "config",
     "x64_enabled": "config",

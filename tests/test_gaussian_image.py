@@ -1,11 +1,9 @@
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 from temgym_core.components import Detector
 from temgym_core.evaluate import gaussian_image
-from temgym_core.gaussian import FreeSpacePropagator, make_gaussian
-from temgym_core.optimization import least_squares
+from temgym_core.gaussian import make_gaussian
 
 
 def test_native_detector_pose_and_rectangular_pixels_match_analytic_integrals():
@@ -43,39 +41,6 @@ def test_opposite_gaussian_fields_cancel_before_pixel_integration():
     )
     detector = Detector(z=0.0, shape=(12, 12), pixel_size=(2e-9, 2e-9))
     np.testing.assert_allclose(gaussian_image(source, detector), 0.0, atol=1e-40)
-
-
-def test_wave_image_gradient_and_jax_fit_unknown_propagation_distance():
-    source = make_gaussian(
-        x=jnp.array([-3e-9, 3e-9]),
-        y=jnp.zeros(2),
-        amp=jnp.array([1.0, 1j]),
-        waist_x=2e-9,
-        waist_y=3e-9,
-        voltage=200e3,
-    )
-
-    detector = Detector(z=0.0, shape=(16, 16), pixel_size=(2e-9, 2e-9))
-
-    def image(p):
-        beam = FreeSpacePropagator()(source, p[0] * 1e-6)
-        return gaussian_image(beam, detector) / 1e-18
-
-    truth = jnp.array([18.0])
-    target = image(truth)
-    derivative = jax.jacfwd(image)(truth)[..., 0]
-    finite = (image(truth + 1e-3) - image(truth - 1e-3)) / 0.002
-    np.testing.assert_allclose(derivative, finite, rtol=2e-4, atol=2e-7)
-    result = least_squares(
-        lambda p: (image(p) - target).ravel(),
-        [13.0],
-        bounds=([5.0], [30.0]),
-        max_nfev=100,
-        gtol=1e-8,
-        ftol=1e-10,
-    )
-    assert result.success, result.message
-    np.testing.assert_allclose(result.x, truth, atol=1e-5)
 
 
 def test_pixel_quadrature_conserves_gaussian_flux():

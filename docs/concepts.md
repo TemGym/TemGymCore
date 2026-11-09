@@ -1,15 +1,14 @@
 # Concepts and conventions
 
-## One column, three representations
+## One column, two representations
 
-A **column** is a sequence of components ordered along $z$. The same components serve three
+A **column** is a sequence of components ordered along $z$. The same components serve two
 representations of a beam:
 
 | Representation | Object | Use it for | Status |
 |---|---|---|---|
 | Ray | `Ray` | geometry, ABCD matrices, checking a column quickly | available |
-| Gaussian beamlets | `GaussianBeam` | coherent images from $10^5$ to $10^6$ beamlets | available, with first-order gradients through the GPU renderers |
-| Sampled wavefront | `Wavefront`: complex array on a `Lattice` | Collins-integral propagation between planes, imported arrays, independent checks | available; experimental |
+| Gaussian beamlets | `GaussianBeam` | coherent images from summed beamlets | available; plain JAX, every derivative |
 
 `run_to_end` carries a ray or a bundle of beamlets from its current plane to each component in
 turn. Between components it applies free-space propagation, and a finite component such as a
@@ -40,29 +39,6 @@ as functions of position, expanded to second order around each beamlet's centre.
 `evaluate_gaussians` adds the beamlets' complex fields on a detector. Sum fields, never
 intensities, unless the beamlets are mutually incoherent.
 
-## Sampled wavefronts
-
-A `Wavefront` (`temgym_core.wave`, experimental) is a complex field sampled on a `Lattice`: sample
-positions $\mathbf r = \mathbf c + P\,\boldsymbol\mu$ with a full 2 x 2 pitch matrix $P$, so a lattice can be
-rotated, scaled or sheared. `wave.propagate` runs it through the same column. Every linear stretch of
-the column is one linear canonical (Collins) transform built from its $5\times5$ ray matrix, so the planes in
-between are skipped. Two implementations of one operator cover the regimes: a matrix Fourier transform
-away from an image plane, and a drift, lattice map and chirp near one (the lattice is only rescaled or
-rotated, never interpolated). A thin element that is not linear, such as an aperture or a biprism,
-is a multiplicative mask: exactly the action its Gaussian branch applies, without the second-order
-expansion. Elements whose action depends on the ray slope (`SeidelLens`) are refused.
-
-Three things follow from sampling. The engine **owns the lattices**: rotation and astigmatism change the
-output lattice, so a source is generated on `wave.input_lattice(...)`, the lattice adapted backwards from
-the detector grid, and an array that arrives on a Cartesian grid goes through `wave.resample_field`. A
-**sampling planner** checks each span against the field's support and bandwidth (a span that would alias
-raises `SamplingError` naming the inequality that failed; `check="off"` is the expert override). And the
-**phase** of a span, which its matrix fixes only up to a sign, comes from a chief Gaussian propagated
-through the same components, so the Gouy phase is continuous across a whole column. The field excludes
-the axial carrier, like a beamlet's. The sampled wave is the reference for the beamlet sum, which
-approximates thin elements to second order about each beamlet's centre. See the
-[tutorial](tutorials/skip_planes.md).
-
 ## Units and signs
 
 - SI units: metres, radians, volts. Gaussian bundles can be expressed in another length unit
@@ -78,66 +54,22 @@ approximates thin elements to second order about each beamlet's centre. See the
 - Images use (row, column) = (y, x) order. On a `Detector`, positive $x$ points right and
   positive $y$ points up.
 
-## Gradients through the renderer
+## Gradients through the images
 
-`evaluate_gaussians` has three renderers. `method="scan"` is plain JAX and supports every JAX
-transformation. `method="sparse"` (the default on a GPU; alias `"spatial"`) and `method="dense"`
-(alias `"gpu_kernel"`) are Pallas kernels with hand-written derivative rules. They are
-differentiable to **first order** with `jit`, `grad`, `jvp`, `jacfwd`, `jacrev`, `vmap` and
-`checkpoint`, with respect to every field of the beamlets (centre, slope, amplitude, path
-length, `Q_inv`, voltage) and, by default, the detector's rotation, flip, pixel size and centre.
-Second derivatives raise `NotImplementedError`; use `scan` for Hessians.
-
-```python
-from temgym_core.evaluate import evaluate_gaussians
-from temgym_core.gaussian import make_gaussian
-
-def loss(waist):                          # one waist per beamlet
-    beam = make_gaussian(x=x, y=y, waist_x=waist, waist_y=waist, voltage=200e3)
-    image = jnp.abs(evaluate_gaussians(beam, detector, method="sparse")) ** 2
-    return jnp.sum((image - target) ** 2)
-
-gradient = jax.grad(loss)(waist)          # d loss / d waist for every beamlet
-```
-
-**The gradient is that of the truncated sum.** `sparse` adds, for each beamlet, only the pixels
-where its envelope $e^{-\delta}$ is at least the `cutoff` (default $10^{-12}$, set with
-`RenderConfig(cutoff=...)`; $\delta$ is the quadratic form of $\mathrm{Im}\,Q^{-1}$), so the image
-differs from the exact sum by at most $\text{cutoff}\times\sum|A|$. One test decides which pairs
-are kept, and the forward, tangent and adjoint kernels all use it: the derivative is exactly that
-of the truncated image, with the set of kept pixels held fixed, and it differs from the exact
-sum's derivative by terms of the order of the cutoff. `dense` sums every pair and has no cutoff.
-
-**Two coordinate modes.** The default `coordinates="index"` maps the beamlets into the
-detector's pixel-index frame before rendering, so derivatives with respect to the detector pose
-are ordinary automatic differentiation. The map re-rounds each packed parameter, which matters
-only for extreme phases: for $10^{10}$ rad it moves the image by about $10^{-7}$ of the peak.
-`RenderConfig(coordinates="metre")` renders with the metre-space parameters and pixel
-coordinates exactly as the historical dense kernel did, accurate to the inputs; differentiating
-with respect to the detector pose then raises `NotImplementedError` and points back to the
-index mode.
-
-**Beamlets that are not well behaved.** A beamlet with any non-finite field contributes zero and
-receives a zero gradient, and never disturbs the others. A beamlet whose footprint contains no
-pixel centre is never visited. Beamlets are binned on the device by the radius of their cutoff
-footprint, so a few very broad beamlets among many narrow ones do not slow the rest; those
-wider than the detector, or whose `Im Q_inv` is not positive definite, are summed in full by every
-pixel. `describe_plan(beam, detector)` reports how a bundle is classified.
-
-`RenderConfig` collects the options (cutoff, coordinate mode, radius classes, launch shapes) and
-documents every field; pass it as `evaluate_gaussians(..., config=RenderConfig(...))`.
+`evaluate_gaussians` is plain JAX (a `lax.scan` over beamlets), so `jit`, `grad`, `jvp`, `jacfwd`,
+`jacrev` and `vmap` all work, to any order, with respect to every field of the beamlets and every
+component parameter upstream. It runs on CPU or GPU. `method="gpu"` is a dense Pallas kernel, faster on a
+GPU for large bundles but without gradients. The full GPU renderer for $10^5$–$10^6$
+beamlets is parked on branch `park/gpu-gaussian-renderer`.
 
 ## Numerical precision
 
 Electron wavelengths are picometres, so even the excess optical path of a column gives
-$k\cdot\text{path}$ of order $10^{9}$ rad, and the phases inside the renderer's beamlet sums reach
-$10^{10}$ rad. Everything therefore runs in 64-bit arithmetic (`temgym_core.enable_x64()`), which
-resolves such phases to about $10^{-7}$ rad: on the reference hologram the CPU `scan` renderer and
-the GPU kernels agree to about $10^{-8}$ of the peak field. Compare fields after removing the
-global phase, or compare intensities.
+$k\cdot\text{path}$ of order $10^{9}$ rad. Everything therefore runs in 64-bit arithmetic
+(`temgym_core.enable_x64()`), which resolves such phases to about $10^{-7}$ rad. Compare fields
+after removing the global phase, or compare intensities.
 
 ## Known limitations
 
 These are tracked in the changelog and will change in a future release.
 
-- The GPU renderers are differentiable to first order only; Hessians need `method="scan"`.

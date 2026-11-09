@@ -38,12 +38,6 @@ jobs:
         run: uv pip install --system -e ".[dev,gpu]"
       - name: Device
         run: python -c "import jax; print(jax.devices())"
-      - name: GPU tests
-        run: pytest -m gpu -q
-      - name: Wave benchmark (waits for an idle GPU; fails above 3x the stored minimum)
-        run: |
-          python benchmarks/wave.py --wait-idle --repeats 30 --out wave_now.json
-          python benchmarks/compare_wave.py wave_now.json
       - name: Slow CPU tests (nightly and manual runs only)
         if: github.event_name != 'push'
         run: JAX_PLATFORMS=cpu pytest -m slow -q

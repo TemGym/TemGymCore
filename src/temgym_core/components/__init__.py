@@ -13,7 +13,6 @@ for finite-body propagation and any ray/Gaussian support limitations.
 from ._base import (
     Component,
     GaussianActionComponent,
-    _call_single_or_batched_gaussian,  # noqa: F401 (used by experimental/potential.py)
     _regularize_L2k,  # noqa: F401 (used by tests)
 )
 from .planes import (
@@ -31,7 +30,6 @@ from .lenses import (
     ABCDTransfer,
     ThickLens,
     HardEdgeSolenoid,
-    solenoid_column,
     RotatingLens,
     ElectromagneticLens,
     FourierTransform,
@@ -61,6 +59,8 @@ from .specimens import (
     MagneticPhaseSample,
     RandomPhaseSample,
     BraggSample,
+    CrossGrating,
+    PolycrystallineFilm,
 )
 from .interpolated import (
     InterpolatedSample2D,
@@ -85,7 +85,6 @@ __all__ = [
     "Detector",
     "ThickLens",
     "HardEdgeSolenoid",
-    "solenoid_column",
     "Deflector",
     "DoubleDeflector",
     "Rotator",
@@ -106,6 +105,8 @@ __all__ = [
     "MagneticPhaseSample",
     "RandomPhaseSample",
     "BraggSample",
+    "CrossGrating",
+    "PolycrystallineFilm",
     "InterpolatedSample2D",
     "sample_interpolant",
     "InterpolatedFields3D",

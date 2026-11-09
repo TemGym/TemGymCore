@@ -3,8 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from temgym_core.gaussian import FreeSpacePropagator, make_gaussian
-from temgym_core.components import HardEdgeSolenoid
-from temgym_core.run import solenoid_column_matrix
+from temgym_core.components import HardEdgeSolenoid, Plane
+from temgym_core.run import column_matrix
 
 
 def reference_column(gaps, lengths, strengths):
@@ -25,7 +25,10 @@ def test_component_column_matches_independent_matrix_and_derivatives():
     lengths = jnp.array([.001, .005, .003])
     q = jnp.array([-.48, .7, -.62])
     expected = lambda q: reference_column(gaps, lengths, q)
-    actual = lambda q: solenoid_column_matrix(gaps, lengths, q)
+    entrances = jnp.cumsum(gaps[:-1]) + jnp.r_[0.0, jnp.cumsum(lengths[:-1])]
+    actual = lambda q: column_matrix([*(HardEdgeSolenoid(z=z, length=length, q=qi)
+                                        for z, length, qi in zip(entrances, lengths, q)),
+                                      Plane(z=gaps.sum() + lengths.sum())])
     np.testing.assert_allclose(actual(q), expected(q), rtol=3e-13, atol=1e-10)
     np.testing.assert_allclose(jax.jacfwd(actual)(q), jax.jacfwd(expected)(q),
                                rtol=3e-12, atol=1e-9)

@@ -30,7 +30,6 @@ data
 junit.xml
 .vscode-server
 *.sif
-examples/generated/
 dist/
 *.lprof
 *.png
@@ -46,11 +45,7 @@ docs/_build/
 docs/generated/
 .jupyter_cache/
 
-# Large generated SEM outputs (>5 MB): regenerate locally; each SVG has a tracked PDF twin
-examples/sem_reflection/output/calibration_gaussian/images.npz
-examples/sem_reflection/output/calibration_gaussian/initial_and_fitted_column.svg
-examples/sem_reflection/output/copper/microscope_detector.svg
-examples/sem_reflection/output/publication/microscope_model_to_ptychography.svg
-examples/sem_reflection/output/publication/microscope_model_to_ptychography_poster_b1.svg
-examples/sem_reflection/output/publication/reflection_calibration_erc_b1.svg
-examples/sem_reflection/output/publication/reflection_calibration_workflow.svg
+# Old example outputs, kept locally only (their code is on branch park/before-cleanup-2026-11-09)
+archive/
+# Rehearsal recordings and fits (rerun the notebook to make them)
+examples/microscope_inversion/output/

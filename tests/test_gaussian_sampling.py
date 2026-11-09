@@ -12,7 +12,6 @@ from temgym_core.components import (
     SigmoidAperture,
 )
 from temgym_core.gaussian import make_gaussian
-from temgym_core.experimental.potential import AtomicPotential, Si
 
 
 VOLTAGE = 200e3
@@ -88,17 +87,3 @@ def test_electromagnetic_lens_with_explicit_voltage_is_resolved():
     lens = ElectromagneticLens(z=0., turns=1., current=1., Gc=1.)
     error = sampling_error(beam, pathlength=lambda xy, b: lens.phase_shift(xy, b.voltage))
     np.testing.assert_allclose(error.phase_max_abs, 0., atol=1e-8)
-
-
-def test_atomic_potential_with_explicit_beam_arguments_has_finite_error():
-    beam = make_gaussian(
-        x=2e-10, y=1e-10, z=3e-10, voltage=VOLTAGE, waist_x=2e-11, waist_y=2e-11,
-    )
-    atom = AtomicPotential(
-        z=3e-10, atom_xyz=jnp.zeros(3), element_params=Si, cutoff_radius=1e-11,
-    )
-    error = sampling_error(
-        beam, pathlength=lambda xy, b: atom.phase_shift(xy, b.z, b.sigma, b.k),
-    )
-    assert error.phase_max_abs.shape == (1,)
-    assert np.isfinite(np.asarray(error.phase_max_abs)).all()

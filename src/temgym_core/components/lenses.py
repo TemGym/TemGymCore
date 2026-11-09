@@ -43,7 +43,6 @@ from ._base import (
     _rotate_quadratic_form,
     _uses_default_log_transmission,
 )
-from .planes import Plane
 from .deflection import Rotator
 
 
@@ -517,20 +516,6 @@ class HardEdgeSolenoid(Component):
             pathlength=ray.pathlength + self._action(ray, out),
             amplitude=jnp.where(valid, ray.amplitude / root, jnp.nan + 0j),
         )
-
-
-def solenoid_column(gaps, lengths, strengths, *, source_z=0.):
-    """Build lenses and a final plane; gaps run before/between/after bodies."""
-    if len(gaps) != len(lengths) + 1 or len(strengths) != len(lengths):
-        raise ValueError("Supply N lengths/strengths and N+1 free-space gaps.")
-    entrance = source_z
-    components = []
-    for i in range(len(lengths)):
-        entrance = entrance + gaps[i]
-        components.append(HardEdgeSolenoid(z=entrance, length=lengths[i], q=strengths[i]))
-        entrance = entrance + lengths[i]
-    components.append(Plane(z=entrance + gaps[-1]))
-    return tuple(components)
 
 
 @jdc.pytree_dataclass

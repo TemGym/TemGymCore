@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import jax
@@ -1206,3 +1207,40 @@ def _snap_to_spacing(coords: np.ndarray, spacing: float, radius: float, tol: flo
 def uniform_amp_from_area(num_gaussians: int, waist: float, area: float) -> float:
     # area = (2*extent)^2 if you tile a square [-extent, extent]^2
     return area / (num_gaussians * jnp.pi * waist**2)
+
+
+@lru_cache(maxsize=1)
+def _standard_normal_sobol(power):
+    """``2**power`` evenly spread 4-D standard-normal points (scrambled Sobol, fixed seed)."""
+    from scipy.special import ndtri
+    from scipy.stats import qmc
+
+    return ndtri(qmc.Sobol(d=4, scramble=True, seed=24003).random_base2(power))
+
+
+def sample_rays(mean, covariance, *, z, voltage, sample_power=18):
+    """Rays sampled from a beam's mean and covariance in ``[x, y, theta_x, theta_y]``.
+
+    The ``2**sample_power`` samples are fixed, evenly spread quasi-random points (scrambled
+    Sobol), so images of different settings share their sampling and differ smoothly.
+
+    Parameters
+    ----------
+    mean : array_like, shape (4,)
+        Mean position (m) and angle (rad).
+    covariance : array_like, shape (4, 4)
+        Covariance of position and angle.
+    z : float
+        Plane of the rays (m).
+    voltage : float
+        Beam voltage (V).
+    sample_power : int, optional
+        log2 of the number of rays.
+
+    Returns
+    -------
+    Ray
+        One ray per sample.
+    """
+    samples = np.asarray(mean) + _standard_normal_sobol(sample_power) @ np.linalg.cholesky(np.asarray(covariance)).T
+    return Ray(*samples.T, z=z, pathlength=0.0, voltage=voltage)

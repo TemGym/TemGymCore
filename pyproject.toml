@@ -17,7 +17,6 @@ include = [
   "/tests",
   "/docs",
   "/tools",
-  "/examples/microscope_models/microscope.toml",
   "/README.md",
   "/LICENSE.md",
   "/CHANGELOG.md",

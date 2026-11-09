@@ -296,3 +296,116 @@ class BraggSample(Component):
             dx=slopes[..., 0].ravel(), dy=slopes[..., 1].ravel(),
             amplitude=amplitude.ravel(),
         )
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class CrossGrating(GaussianActionComponent):
+    """Square holes in an absorbing film, on a square lattice (no optical path).
+
+    Rays pass straight through and an image weights each by the intensity transmission
+    (:func:`temgym_core.evaluate.ray_image`), which gives the in-focus bright-field image.
+
+    Parameters
+    ----------
+    period : float
+        Lattice period (m).
+    hole_fraction : float
+        Side of a hole as a fraction of the period.
+    bar_transmission : float
+        Intensity transmission of the bars (holes transmit 1).
+    edge_width : float
+        Width of the soft bar edges (m).
+    rotation : float
+        Angle of the lattice in the specimen plane (rad).
+    x0, y0 : float
+        A hole centre (m).
+    z : float
+        Axial position.
+    """
+
+    period: float = 230e-9
+    hole_fraction: float = 0.6
+    bar_transmission: float = 0.2
+    edge_width: float = 5e-9
+    rotation: float = 0.3
+    x0: float = 0.0
+    y0: float = 0.0
+    z: float = 0.0
+
+    def log_transmission(self, xy):
+        """Log of the amplitude transmission: 0 in a hole, ``log(sqrt(bar_transmission))`` on a bar."""
+        c, s = jnp.cos(self.rotation), jnp.sin(self.rotation)
+        x, y = xy[..., 0] - self.x0, xy[..., 1] - self.y0
+        u, v = c * x + s * y, -s * x + c * y
+        half = 0.5 * self.hole_fraction * self.period
+
+        def inside(t):                          # 1 inside a hole's extent along one axis, smooth edges
+            distance = jnp.abs(t - self.period * jnp.round(t / self.period))
+            return jax.nn.sigmoid((half - distance) / self.edge_width)
+
+        intensity = self.bar_transmission + (1 - self.bar_transmission) * inside(u) * inside(v)
+        return 0.5 * jnp.log(intensity)         # amplitude: the square root of the intensity
+
+
+#: Gold: lattice constant (m), the first three ring spacings d (m) and their relative strengths
+#: (multiplicity times a falling structure factor).
+AU_LATTICE = 0.40782e-9
+AU_RINGS = {"111": AU_LATTICE / np.sqrt(3), "200": AU_LATTICE / 2, "220": AU_LATTICE / np.sqrt(8)}
+AU_WEIGHTS = {"111": 8 * 1.0, "200": 6 * 0.8, "220": 12 * 0.5}
+
+
+@jdc.pytree_dataclass(kw_only=True)
+class PolycrystallineFilm(Component):
+    """A film of small, randomly oriented grains that diffract into rings (rays only).
+
+    The film is a square grid of grains ``grain_size`` wide. A ``diffracting_fraction`` of the
+    grains are in a Bragg condition: each of those has one reflection, picked from ``spacings``
+    with probability proportional to ``weights``, at a random azimuth, and kicks every ray through
+    it by the Bragg angle wavelength / d in that direction. The other grains pass rays straight.
+    Downstream optics then put the rings at radius |B| * wavelength / d. Grain choices are a fixed
+    hash of the grain's place and ``seed``, so the film is the same for every beam.
+
+    Parameters
+    ----------
+    spacings : array_like
+        Lattice-plane spacings d of the rings (m).
+    weights : array_like
+        Relative strengths of the rings.
+    grain_size : float
+        Side of a grain (m).
+    diffracting_fraction : float
+        Fraction of the grains that diffract (so of the electrons, on average).
+    seed : float
+        Changes the grain choices.
+    z : float
+        Axial position.
+    """
+
+    spacings: Any
+    weights: Any
+    grain_size: float = 5e-9
+    diffracting_fraction: float = 0.3
+    seed: float = 0.0
+    z: float = 0.0
+
+    @classmethod
+    def gold(cls, **options):
+        """A gold film (111, 200 and 220 rings); ``options`` as for the class."""
+        names = list(AU_RINGS)
+        return cls(spacings=jnp.array([AU_RINGS[k] for k in names]),
+                   weights=jnp.array([AU_WEIGHTS[k] for k in names]), **options)
+
+    def _grain_random(self, i, j, n):
+        """The n-th of a grain's fixed pseudo-random numbers in [0, 1)."""
+        return jnp.mod(jnp.sin(127.1 * i + 311.7 * j + 74.7 * n + 19.19 * self.seed) * 43758.5453, 1.0)
+
+    def _call_ray(self, ray):
+        from ..constants import energy2wavelength
+
+        i, j = jnp.floor(ray.x / self.grain_size), jnp.floor(ray.y / self.grain_size)
+        diffracts = self._grain_random(i, j, 1) < self.diffracting_fraction
+        cumulative = jnp.cumsum(self.weights) / jnp.sum(self.weights)
+        ring = jnp.minimum(jnp.searchsorted(cumulative, self._grain_random(i, j, 2)), len(cumulative) - 1)
+        angle = jnp.where(diffracts, energy2wavelength(ray.voltage) / jnp.asarray(self.spacings)[ring], 0.0)
+        azimuth = 2 * jnp.pi * self._grain_random(i, j, 3)
+        return ray.derive(dx=ray.dx + angle * jnp.cos(azimuth), dy=ray.dy + angle * jnp.sin(azimuth))

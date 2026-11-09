@@ -477,10 +477,28 @@ def column_matrix(components, *, source_z=0., voltage=200e3,
     return jnp.eye(5).at[:4, :4].set(linear).at[:4, 4].set(offset)
 
 
-def solenoid_column_matrix(gaps, lengths, strengths):
-    from .components import solenoid_column
+def position_and_angle_response(components, *, source_z=0., voltage=200e3):
+    """How far a ray moves at the last plane per unit shift (A) and per unit tilt (B) at the first.
 
-    return column_matrix(solenoid_column(gaps, lengths, strengths))
+    Both are complex numbers ``x + iy``: where a ray ends up for a shift (or tilt) along x at the
+    start. For round optics -- lenses and solenoids, which only scale and rotate -- that complex
+    number describes a shift or tilt in any direction: |A| is the magnification, |B| the
+    "camera length" (m/rad), and their angles the image rotation. Read off :func:`column_matrix`.
+
+    Parameters
+    ----------
+    components : sequence of Component
+        The column, from the start plane to the last.
+    source_z, voltage : float
+        As for :func:`column_matrix`.
+
+    Returns
+    -------
+    A, B : complex
+        Position per unit position (m/m) and position per unit angle (m/rad).
+    """
+    m = column_matrix(components, source_z=source_z, voltage=voltage)
+    return m[0, 0] + 1j * m[1, 0], m[0, 2] + 1j * m[1, 2]
 
 
 def custom_jacobian_matrix(ray_jac):
