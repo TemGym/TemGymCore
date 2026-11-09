@@ -196,3 +196,28 @@ def test_gold_rings_give_the_true_camera_length():
     radii, _ = calibration.ring_radii_px(_frame(camera), calibration.Camera(n=256, pitch=110e-6))
     b = radii["111"] * 110e-6 / (energy2wavelength(200e3) / calibration.AU_RINGS["111"])
     assert b == pytest.approx(_true_ab(scope)[1], rel=1e-3)
+
+
+def test_the_beam_starts_at_the_specimen_plane(monkeypatch):
+    """``build`` leaves the condenser out: the spot on the camera is the beam's width times |A|
+    at the 40k row and its spread of angles times |B| at the DIFF row, and a condenser change
+    does not move or resize it."""
+    monkeypatch.syspath_prepend(str(ROOT / "examples/microscope_models"))
+    from acquire import measure_spot, select_camera_length
+    microscope = neoarm.build(ht_v=60e3, ray_sample_power=15, detector_samples_per_pixel=4,
+                              beam_width_nm=40.0, convergence_mrad=1.1)
+    tem3, detector = microscope.pyjem()
+    camera = detector.Detector(detector.get_attached_detector()[0])
+    centre, rms_40k, _ = measure_spot(frame=_frame(camera), background=3.0)
+    a = neoarm.true_magnification_and_camera_length(scope=microscope.scope)[0]
+    lens = tem3.Lens3()
+    lens.SetFLCAbs(2, int(0.9 * lens.GetCL3()))
+    lens.SetFLCSw(2, 1)
+    moved, rms_cl3, _ = measure_spot(frame=_frame(camera), background=3.0)
+    assert abs(moved - centre) < 0.05 and rms_cl3 == pytest.approx(rms_40k, rel=0.02)
+    select_camera_length(eos=tem3.EOS3(), camera_length_cm=40)
+    rms_diff = measure_spot(frame=_frame(camera), background=3.0)[1]
+    b = neoarm.true_magnification_and_camera_length(scope=microscope.scope)[1]
+    fwhm = 2.3548 * 110e-6                                       # px rms -> m full width on the camera
+    assert rms_40k * fwhm == pytest.approx(40e-9 * a, rel=0.1)
+    assert rms_diff * fwhm == pytest.approx(1.1e-3 * b, rel=0.2)

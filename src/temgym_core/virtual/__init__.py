@@ -13,6 +13,7 @@ from .specimens import CrossGrating, PolycrystallineGold
 from .scope import (
     OpticalTruth,
     PhysicalSetting,
+    SpecimenBeam,
     UnmodelledStateError,
     VirtualMicroscope,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "OpticalTruth",
     "PolycrystallineGold",
     "PhysicalSetting",
+    "SpecimenBeam",
     "TEMError",
     "UnmodelledStateError",
     "VirtualMicroscope",

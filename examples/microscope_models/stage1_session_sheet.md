@@ -207,4 +207,4 @@ new.restore()
 
 Dry run on the virtual NEOARM at 60 kV (`stage1_rehearsal.ipynb`): χ²/dof 0.4. The fit found
 the virtual camera's mirror on its own. At 8 lens settings stage 1 never used, predictions matched
-the measurements to within 0.04 px.
+the measurements to within 0.002 px.

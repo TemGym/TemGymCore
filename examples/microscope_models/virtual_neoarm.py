@@ -6,6 +6,7 @@ electronics map 16-bit DAC values to lens controls and deflector kicks, and the 
 is ideal by default. TEM MAG has the 40k and 45k rows; TEM DIFF has camera lengths
 0.15-1 m designed on the hidden optics (:func:`design_diffraction_table`). It is aligned at
 200 kV or 60 kV (``ht_v``): the console tables scale with p(HT), so the optics are the same.
+:func:`build` starts the beam at the specimen plane (the condenser is not modelled).
 
 Use it as you would the real microscope::
 
@@ -232,13 +233,19 @@ class VirtualNEOARM:
 
 
 def build(*, ht_v=60e3, magnification=40000.0, binning=8, exposure_s=0.01, ray_sample_power=22,
-          detector_samples_per_pixel=8, **options):
+          detector_samples_per_pixel=8, beam_width_nm=40.0, convergence_mrad=1.1, **options):
     """The virtual NEOARM aligned at ``ht_v`` and set up as left at the console for a session: MAG at
-    the ``magnification`` row, spot 3, condenser-aperture hole 1, the camera at ``binning`` and
-    ``exposure_s``, specimen out. 8 x 8 detector sub-samples keep sub-pixel spot positions (with 1,
-    a spot of about a pixel locks to pixel centres); 2**22 rays per frame keep the beam smooth (2**17
-    leaves about 10 % grain). ``options`` go to :func:`build_virtual_neoarm`."""
+    the ``magnification`` row, the camera at ``binning`` and ``exposure_s``, specimen out.
+
+    The condenser is not modelled: the beam starts at the specimen plane, a round Gaussian beam
+    ``beam_width_nm`` wide with a spread of angles ``convergence_mrad`` (full widths at half
+    maximum). The fit never sees these. Condenser controls are accepted but change nothing.
+
+    8 x 8 detector sub-samples keep sub-pixel spot positions (with 1, a spot of about a pixel
+    locks to pixel centres); 2**22 rays per frame keep the beam smooth (2**17 leaves about 10 %
+    grain). ``options`` go to :func:`build_virtual_neoarm`."""
     from acquire import select_magnification
+    from temgym_core.virtual import SpecimenBeam
 
     scope, _, _ = build_virtual_neoarm(ht_v=ht_v, ray_sample_power=ray_sample_power,
                                        detector_samples_per_pixel=detector_samples_per_pixel, **options)
@@ -254,4 +261,6 @@ def build(*, ht_v=60e3, magnification=40000.0, binning=8, exposure_s=0.01, ray_s
     aperture.SetSize(APERTURE_HOLES[50.0])
     detector.Detector(detector.get_attached_detector()[0]).set_detectorsetting(
         {"BinningSize": binning, "ExposureTimeValue": exposure_s * 1e6})
+    fwhm = 2 * np.sqrt(2 * np.log(2))                                          # full width / rms
+    scope.incident_beam = SpecimenBeam(rms_size_m=beam_width_nm * 1e-9 / fwhm, rms_angle_rad=convergence_mrad * 1e-3 / fwhm)
     return microscope

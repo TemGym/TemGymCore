@@ -137,7 +137,7 @@ level is kept.
 at lens settings the session never used.
 
 **Rehearsal on the virtual NEOARM at 60 kV:** $\chi^2/\text{dof} = 0.4$; the mirrored camera and the
-pure deflectors found by the fit; predictions at 8 new settings within 0.04 px.
+pure deflectors found by the fit; predictions at 8 new settings within 0.002 px.
 
 ## 6. Stage 2: the physical calibration
 

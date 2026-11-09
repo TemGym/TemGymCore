@@ -12,7 +12,9 @@ The optical truth is the calibration model itself (finite solenoid lenses, a
 Gaussian source per high tension, a sigmoid condenser aperture, a post-aperture
 double deflector); images come from native ray tracing through
 :func:`temgym_core.calibration.acquisition.setting_column` and
-:func:`~temgym_core.calibration.acquisition.render_rays`.
+:func:`~temgym_core.calibration.acquisition.render_rays`. With a
+:class:`SpecimenBeam` the condenser is left out: the beam starts at the specimen
+plane and only the projector is traced.
 """
 
 import json
@@ -162,6 +164,17 @@ class PhysicalSetting:
     aperture_index: int
 
 
+@dataclass(frozen=True)
+class SpecimenBeam:
+    """The incident beam given at the specimen plane, in place of the condenser: round and
+    Gaussian, of rms size ``rms_size_m`` and rms angle spread ``rms_angle_rad``, centred where
+    the beam-shift and beam-tilt deflectors put it. With it, the condenser lenses, spot size and
+    condenser aperture are accepted but do not change the beam."""
+
+    rms_size_m: float
+    rms_angle_rad: float
+
+
 class VirtualMicroscope:
     """A JEOL-like TEM column driven by control words, with hidden optics.
 
@@ -193,11 +206,14 @@ class VirtualMicroscope:
         Internal detector sub-samples per output pixel axis.
     seed : int, optional
         Seed of the camera noise.
+    incident_beam : SpecimenBeam, optional
+        The beam at the specimen plane; without it the condenser is traced. Can be set later
+        as the attribute of the same name.
     """
 
     def __init__(self, truth, electronics, *, magnification_table, spot_table, diffraction_table=None,
                  camera=None, aperture_holes=None, beam_current_a=1.602176634e-9, ray_sample_power=18,
-                 detector_samples_per_pixel=1, seed=0):
+                 detector_samples_per_pixel=1, seed=0, incident_beam=None):
         require_x64("the virtual microscope")
         if not isinstance(electronics, Electronics):
             raise TypeError("electronics must be an Electronics instance.")
@@ -218,6 +234,7 @@ class VirtualMicroscope:
         self.ray_sample_power = int(ray_sample_power)
         self.detector_samples_per_pixel = int(detector_samples_per_pixel)
         self.rng = np.random.default_rng(seed)
+        self.incident_beam = incident_beam
         self._images = OrderedDict()
         self.reset()
 
@@ -346,17 +363,18 @@ class VirtualMicroscope:
         if objective != self.electronics.objective_words:
             reasons.append(f"objective (OLc, OLf) = {objective} differs from the modelled "
                            f"{self.electronics.objective_words}")
-        for name in CONDENSER_LENSES + PROJECTOR_LENSES:
-            if self.lens_word(name) is None and name in CONDENSER_LENSES:     # (DIFF without a table: above)
+        condenser_traced = self.incident_beam is None
+        for name in CONDENSER_LENSES if condenser_traced else ():
+            if self.lens_word(name) is None:
                 reasons.append(f"{name} has no word: spot {self.spot} is not tabulated and free lens control is off")
         for name in DEFLECTORS:
             if name not in ("CLA1", "CLA2") and self.deflectors[name] != [NEUTRAL_WORD, NEUTRAL_WORD]:
                 reasons.append(f"deflector {name} is not modelled and must stay neutral")
         condenser = self.apertures[CONDENSER_APERTURE]
-        if condenser["size"] not in self.aperture_holes:
+        if condenser_traced and condenser["size"] not in self.aperture_holes:
             reasons.append(f"condenser aperture hole {condenser['size']} is not modelled "
                            f"(modelled holes: {sorted(self.aperture_holes)})")
-        if condenser["position"] != list(APERTURE_HOME):
+        if condenser_traced and condenser["position"] != list(APERTURE_HOME):
             reasons.append("a moved condenser aperture is not modelled")
         for kind, state in self.apertures.items():
             if kind != CONDENSER_APERTURE and state["size"] != 0:
@@ -364,15 +382,17 @@ class VirtualMicroscope:
         if reasons:
             raise UnmodelledStateError(reasons)
         drives = self.electronics.lenses
-        condenser_controls = tuple(drives[n].control(self.lens_word(n)) for n in CONDENSER_LENSES)
+        condenser_controls = (tuple(drives[n].control(self.lens_word(n)) for n in CONDENSER_LENSES)
+                              if condenser_traced else ())
         projector_controls = (self.electronics.objective_control,) + tuple(drives[n].control(self.lens_word(n)) for n in PROJECTOR_LENSES)
         words = (*self.deflectors["CLA1"], *self.deflectors["CLA2"])
         kick = tuple(float(k) for k in self.electronics.deflector.kick(words, self.ht_v))
-        diameter = self.aperture_holes[condenser["size"]]
+        aperture_index = (self.truth.aperture_diameters_um.index(self.aperture_holes[condenser["size"]])
+                          if condenser_traced else -1)
         return PhysicalSetting(
             voltage_v=float(self.ht_v), source_index=self.truth.voltages_v.index(self.ht_v),
             condenser_controls=condenser_controls, projector_controls=projector_controls,
-            specimen_kick=kick, aperture_index=self.truth.aperture_diameters_um.index(diameter))
+            specimen_kick=kick, aperture_index=aperture_index)
 
     def expected_image(self, setting, binning):
         """Mean transmitted fraction per output pixel for a setting (cached).
@@ -390,39 +410,50 @@ class VirtualMicroscope:
             Read-only image per incident electron, full binned frame.
         """
         specimen = self.specimen
-        key = (setting, binning, self.ray_sample_power, self.detector_samples_per_pixel, id(specimen))
+        key = (setting, binning, self.ray_sample_power, self.detector_samples_per_pixel, id(specimen),
+               self.incident_beam)
         if key in self._images:
             self._images.move_to_end(key)
             return self._images[key]
+        from ..calibration.projector_model import at_voltage, projector_components
         from .specimens import PolycrystallineGold, render_beamlets
 
         t = self.truth
         gold = isinstance(specimen, PolycrystallineGold)
-        column, mean, covariance, source_z = setting_column(
-            np.asarray(t.condenser_parameters), np.asarray(t.projector_parameters),
-            voltage_v=setting.voltage_v, reference_voltage_v=t.reference_voltage_v,
-            source_index=setting.source_index, condenser_controls=np.asarray(setting.condenser_controls),
-            projector_controls=np.asarray(setting.projector_controls),
-            specimen_kick=np.asarray(setting.specimen_kick), aperture_index=setting.aperture_index,
-            aperture_diameter_um=t.aperture_diameters_um[setting.aperture_index],
-            aperture_edge_width_m=t.aperture_edge_width_m, gap_fractions=t.gap_fractions,
-            specimen=None if (specimen is None or gold) else specimen)
+        thin = None if (specimen is None or gold) else specimen          # a specimen traced by rays
+        projector = projector_components(at_voltage(np.asarray(t.projector_parameters), setting.voltage_v,
+                                                    t.reference_voltage_v), np.asarray(setting.projector_controls))
+        if self.incident_beam is not None:      # the beam starts at the specimen plane
+            b = self.incident_beam
+            mean = np.asarray(setting.specimen_kick, float)
+            covariance = np.diag([b.rms_size_m ** 2] * 2 + [b.rms_angle_rad ** 2] * 2)
+            column, source_z = (tuple(projector) if thin is None else (thin, *projector)), 0.0
+        else:
+            column, mean, covariance, source_z = setting_column(
+                np.asarray(t.condenser_parameters), np.asarray(t.projector_parameters),
+                voltage_v=setting.voltage_v, reference_voltage_v=t.reference_voltage_v,
+                source_index=setting.source_index, condenser_controls=np.asarray(setting.condenser_controls),
+                projector_controls=np.asarray(setting.projector_controls),
+                specimen_kick=np.asarray(setting.specimen_kick), aperture_index=setting.aperture_index,
+                aperture_diameter_um=t.aperture_diameters_um[setting.aperture_index],
+                aperture_edge_width_m=t.aperture_edge_width_m, gap_fractions=t.gap_fractions,
+                specimen=thin)
         shape, pitch, psf = self.camera.geometry(binning)
         image = render_rays(column, mean, covariance, source_z, setting.voltage_v, shape_yx=shape,
                             pixel_pitch_m=pitch, psf_sigma_pixels=psf,
                             ray_sample_power=self.ray_sample_power,
                             detector_samples_per_pixel=self.detector_samples_per_pixel)
         if gold:                                 # the direct beam by rays, the grains by Gaussian beamlets
-            from ..calibration.projector_model import at_voltage, projector_components
-            from ..components import Plane
-            from ..run import column_matrix
+            if self.incident_beam is not None:
+                incident_mean, incident_covariance = mean, covariance
+            else:
+                from ..components import Plane
+                from ..run import column_matrix
 
-            projector = projector_components(at_voltage(np.asarray(t.projector_parameters), setting.voltage_v,
-                                                        t.reference_voltage_v), np.asarray(setting.projector_controls))
-            condenser = (*column[:len(column) - len(projector)], Plane(z=0.0))
-            m = np.asarray(column_matrix(condenser, source_z=source_z, voltage=setting.voltage_v))
-            incident_mean = m[:4, :4] @ np.asarray(mean) + m[:4, 4]
-            incident_covariance = m[:4, :4] @ np.asarray(covariance) @ m[:4, :4].T
+                condenser = (*column[:len(column) - len(projector)], Plane(z=0.0))
+                m = np.asarray(column_matrix(condenser, source_z=source_z, voltage=setting.voltage_v))
+                incident_mean = m[:4, :4] @ np.asarray(mean) + m[:4, 4]
+                incident_covariance = m[:4, :4] @ np.asarray(covariance) @ m[:4, :4].T
             beams, weights = specimen.beamlets(incident_mean, incident_covariance, setting.voltage_v)
             image = (1 - specimen.scattered_fraction) * image + render_beamlets(
                 beams, weights, projector, shape_yx=shape, pixel_pitch_m=pitch, psf_sigma_pixels=psf)
