@@ -59,27 +59,46 @@ def camera_among(attached):
     return cameras[0]
 
 
-def read_frame(camera, dtype=None):
-    """One raw frame from a PyJEM camera, as integers, and the pixel type used.
+def read_frame(camera, dtype=None, frame_shape=None):
+    """One raw frame from a PyJEM camera (``detector.Detector`` or ``sightx.Detector``), as integers,
+    and the pixel type used.
 
-    The frame's size is the camera's imaging area (``ImagingArea`` Width x Height); 2 or 4 bytes per
-    pixel are read as signed integers unless ``dtype`` says otherwise. (PyJEM's documentation is not
-    consistent about these between versions, so anything unexpected stops with the numbers found.)"""
-    setting = camera.get_detectorsetting()
-    if isinstance(setting, str):                         # some versions may give the settings as JSON text
-        setting = json.loads(setting)
-    area = setting["ImagingArea"]
-    width, height = int(area["Width"]), int(area["Height"])
+    The frame's shape (height, width) is ``frame_shape`` if given, else the camera's imaging area
+    (``get_detectorsetting()["ImagingArea"]`` Width x Height), else a guess: a square frame of 2-byte
+    pixels (or of ``dtype``), which the session's first-frame line shows. 2 or 4 bytes per pixel are read
+    as signed integers unless ``dtype`` says otherwise. (PyJEM's documentation is not consistent about these between versions and does not say
+    whether pixels are signed, so anything unexpected stops with the numbers found.)"""
     raw = camera.snapshot_rawdata()
     if not isinstance(raw, (bytes, bytearray, memoryview)):
         raise TypeError(f"snapshot_rawdata() gave {type(raw).__name__}, not bytes: use take_frame = newest_file_in(...)")
+    if frame_shape is None:
+        frame_shape = _shape_from_settings(camera)
+    if frame_shape is None:                              # no imaging area in the settings: guess a square frame
+        bytes_per_pixel = 2 if dtype is None else np.dtype(dtype).itemsize
+        side = int(round(np.sqrt(len(raw) / bytes_per_pixel)))
+        if side * side * bytes_per_pixel != len(raw):
+            raise ValueError(f"{len(raw)} bytes, no imaging area in the camera's settings and not a square frame "
+                             f"of {bytes_per_pixel}-byte pixels: give frame_shape=(height, width)")
+        frame_shape = (side, side)
+    height, width = int(frame_shape[0]), int(frame_shape[1])
     if dtype is None:
         bytes_per_pixel = len(raw) / (width * height)
         if bytes_per_pixel not in (2, 4):
-            raise ValueError(f"{len(raw)} bytes for a {width} x {height} imaging area ({bytes_per_pixel:g} per pixel); "
-                             f"output image: {setting.get('OutputImageInformation')}")
+            raise ValueError(f"{len(raw)} bytes for a {width} x {height} frame ({bytes_per_pixel:g} per pixel)")
         dtype = {2: "<i2", 4: "<i4"}[int(bytes_per_pixel)]
     return np.frombuffer(raw, dtype=dtype).reshape(height, width), dtype
+
+
+def _shape_from_settings(camera):
+    """(height, width) of the camera's imaging area from its settings, or None if they do not give it."""
+    try:
+        setting = camera.get_detectorsetting()
+        if isinstance(setting, str):                     # some versions may give the settings as JSON text
+            setting = json.loads(setting)
+        area = setting["ImagingArea"]
+        return int(area["Height"]), int(area["Width"])
+    except Exception:                                    # noqa: BLE001 -- no such call or key: the caller falls back
+        return None
 
 
 @dataclass
@@ -146,9 +165,9 @@ def _label(mask):
 
 
 def show_frame(frame, *, beams=(), title=""):
-    """Draw one frame (square root of the signal above its median, to show faint parts) and mark the
-    beam centres in ``beams``, a list of (label, Beam from :func:`find_beam`). If any beam was found, the view is
-    zoomed onto the beams. Needs matplotlib (imported only here)."""
+    """Draw one whole frame (square root of the signal above its median, to show faint parts) and mark
+    the beam centres in ``beams``, a list of (label, Beam from :func:`find_beam`). Needs matplotlib
+    (imported only here)."""
     import matplotlib.pyplot as plt
 
     if frame is None:
@@ -163,11 +182,8 @@ def show_frame(frame, *, beams=(), title=""):
         if beam.found:
             position = beam.centre + centre_of_frame
             ax.plot(position.real, position.imag, "+", color=colour, ms=14, mew=2, label=label)
-            found.append((position, beam.rms))
+            found.append(label)
     if found:
-        middle = np.mean([position for position, _ in found])
-        half = max(30.0, max(abs(position - middle) + 6 * rms for position, rms in found))
-        ax.set(xlim=(middle.real - half, middle.real + half), ylim=(middle.imag - half, middle.imag + half))
         ax.legend(loc="upper right", fontsize=8)
     ax.set_title(title, fontsize=10, fontweight="normal")
     ax.set(xlabel="x (px)", ylabel="y (px)")
@@ -307,7 +323,7 @@ PYJEM_CALLS = {
 }
 
 
-def check_pyjem(*, TEM3, detector=None):
+def check_pyjem(*, TEM3, detector=None, camera_name=None):
     """Print which of the PyJEM calls a session uses this PyJEM has, and return the missing ones.
     Changes nothing. Run it first on an unfamiliar (for example older) PyJEM."""
     missing = []
@@ -330,7 +346,9 @@ def check_pyjem(*, TEM3, detector=None):
         if not absent:
             attached = _read(detector.get_attached_detector)
             print(f"attached detectors: {attached}")
-            if isinstance(attached, (list, tuple)):
+            if camera_name is not None:
+                print(f"the camera: {camera_name!r} (given)")
+            elif isinstance(attached, (list, tuple)):
                 try:
                     print(f"the camera among them: {camera_among(attached)}")
                 except ValueError as error:
@@ -394,7 +412,7 @@ class Session:
     TEM3 : PyJEM's (or the simulated microscope's) ``TEM3``.
     lenses : sequence of str
         The lenses driven through free-lens control (keys of :data:`LENS_IDS`).
-    detector : PyJEM's ``detector``, for frames from PyJEM's camera.
+    detector : PyJEM's ``detector`` or ``sightx`` package (the same calls), for frames from that camera.
     take_frame : callable, optional
         For any other camera: a function returning the current frame as an array, e.g.
         :func:`newest_file_in`. Used instead of ``detector``.
@@ -402,15 +420,21 @@ class Session:
         Where frames and the log go (a new folder).
     settle_s : float
         Wait after every lens change (s).
+    camera_name : str, optional
+        The camera's name for ``detector.Detector``; by default the attached detector that is not a
+        STEM detector (:func:`camera_among`).
+    dtype, frame_shape : optional
+        The frame's pixel type and (height, width), when the camera's settings do not give them
+        (:func:`read_frame`).
     """
 
     def __init__(self, *, TEM3, lenses, folder, detector=None, take_frame=None, settle_s=2.0, dtype=None,
-                 camera_name=None):
+                 camera_name=None, frame_shape=None):
         self.lens, self.defl, self.ht, self.eos = TEM3.Lens3(), TEM3.Def3(), TEM3.HT3(), TEM3.EOS3()
         if take_frame is None:                    # PyJEM's camera
             camera_name = camera_name or camera_among(detector.get_attached_detector())
             self.camera = detector.Detector(camera_name)
-            take_frame = lambda: read_frame(self.camera, self.dtype)       # noqa: E731
+            take_frame = lambda: read_frame(self.camera, self.dtype, frame_shape)       # noqa: E731
         else:                                     # any other camera: a function returning the frame
             self.camera = None
         self.take_frame = take_frame
