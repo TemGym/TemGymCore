@@ -12,15 +12,19 @@ simulated microscope (:mod:`temgym_core.pyjem_simulator`).
     with session.dry_run(False):              # only inside such a block does the microscope change
         session.take_over_lenses()            # those lenses under free-lens control, at their present values
         session.set_lenses([30000, 64000])
-        beam = session.beam(note="first")     # frame saved as frames/0000.npy, logged; the beam found in it
+        frame = session.frame(note="first")   # saved as frames/0000.npy and logged
+        beam = find_beam(frame=frame, background=session.dark_level)
         session.restore()                     # everything as it was when the session was opened
 
-Check on the real system before relying on it: the free-lens ids and the camera data type
-(``dtype``; by default 2 or 4 bytes per pixel are read as signed integers).
+Check on the real system before relying on it: the camera data type (``dtype``; by default 2 or 4
+bytes per pixel are read as signed integers) and which attached detector is the camera
+(``camera_name``; by default the one that is not a STEM detector). The free-lens ids are PyJEM 1.4's.
+Needs Python 3.7 or newer (PyJEM's vjem37, vjem38, ... environments; not vjem35).
 """
 
 import contextlib
 import json
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,12 +45,41 @@ def json_value(value):
 
 
 # ------------------------------------------------------------------------------ frames
+#: Names PyJEM gives STEM detectors in ``detector.get_attached_detector()``; anything else is taken as a camera.
+STEM_DETECTORS = ("HAADF", "LAADF", "MAADF", "ADF", "ABF", "BF", "DF", "SAAF", "NONE")
+
+
+def camera_among(attached):
+    """The one camera among PyJEM's attached detectors (``detector.get_attached_detector()``), or an
+    error listing them: the list also holds STEM detectors (HAADF, BF, ...), and the first is not
+    necessarily the camera."""
+    cameras = [name for name in attached if not str(name).strip().upper().startswith(STEM_DETECTORS)]
+    if len(cameras) != 1:
+        raise ValueError(f"attached detectors {list(attached)}: give the camera's name as camera_name=...")
+    return cameras[0]
+
+
 def read_frame(camera, dtype=None):
-    """One raw frame from a PyJEM camera, as integers, and the pixel type used."""
-    area = camera.get_detectorsetting()["ImagingArea"]
+    """One raw frame from a PyJEM camera, as integers, and the pixel type used.
+
+    The frame's size is the camera's imaging area (``ImagingArea`` Width x Height); 2 or 4 bytes per
+    pixel are read as signed integers unless ``dtype`` says otherwise. (PyJEM's documentation is not
+    consistent about these between versions, so anything unexpected stops with the numbers found.)"""
+    setting = camera.get_detectorsetting()
+    if isinstance(setting, str):                         # some versions may give the settings as JSON text
+        setting = json.loads(setting)
+    area = setting["ImagingArea"]
+    width, height = int(area["Width"]), int(area["Height"])
     raw = camera.snapshot_rawdata()
-    dtype = dtype or {2: "<i2", 4: "<i4"}[len(raw) // (area["Height"] * area["Width"])]
-    return np.frombuffer(raw, dtype=dtype).reshape(area["Height"], area["Width"]), dtype
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        raise TypeError(f"snapshot_rawdata() gave {type(raw).__name__}, not bytes: use take_frame = newest_file_in(...)")
+    if dtype is None:
+        bytes_per_pixel = len(raw) / (width * height)
+        if bytes_per_pixel not in (2, 4):
+            raise ValueError(f"{len(raw)} bytes for a {width} x {height} imaging area ({bytes_per_pixel:g} per pixel); "
+                             f"output image: {setting.get('OutputImageInformation')}")
+        dtype = {2: "<i2", 4: "<i4"}[int(bytes_per_pixel)]
+    return np.frombuffer(raw, dtype=dtype).reshape(height, width), dtype
 
 
 @dataclass
@@ -110,6 +143,35 @@ def _label(mask):
             labels = spread
         values, labels = np.unique(labels, return_inverse=True)
         return labels.reshape(mask.shape), len(values) - 1
+
+
+def show_frame(frame, *, beams=(), title=""):
+    """Draw one frame (square root of the signal above its median, to show faint parts) and mark the
+    beam centres in ``beams``, a list of (label, Beam from :func:`find_beam`). If any beam was found, the view is
+    zoomed onto the beams. Needs matplotlib (imported only here)."""
+    import matplotlib.pyplot as plt
+
+    if frame is None:
+        return print(f"{title}: no frame (dry run)")
+    frame = np.asarray(frame, dtype=float)
+    centre_of_frame = (frame.shape[1] - 1) / 2 + 1j * (frame.shape[0] - 1) / 2
+    fig, ax = plt.subplots(figsize=(4.5, 4.5))
+    ax.imshow(np.sqrt(np.clip(frame - np.median(frame), 0, None)), origin="lower", cmap="gray")
+    found = []
+    colours = ["#F0E442", "#D55E00", "#56B4E9", "#009E73"]
+    for (label, beam), colour in zip(beams, colours):
+        if beam.found:
+            position = beam.centre + centre_of_frame
+            ax.plot(position.real, position.imag, "+", color=colour, ms=14, mew=2, label=label)
+            found.append((position, beam.rms))
+    if found:
+        middle = np.mean([position for position, _ in found])
+        half = max(30.0, max(abs(position - middle) + 6 * rms for position, rms in found))
+        ax.set(xlim=(middle.real - half, middle.real + half), ylim=(middle.imag - half, middle.imag + half))
+        ax.legend(loc="upper right", fontsize=8)
+    ax.set_title(title, fontsize=10, fontweight="normal")
+    ax.set(xlabel="x (px)", ylabel="y (px)")
+    plt.show()
 
 
 def find_beam(*, frame, background=None, saturation=None):
@@ -183,15 +245,25 @@ def find_beam(*, frame, background=None, saturation=None):
 
 
 # ------------------------------------------------------------------------------ the console
+def selector_row(eos):
+    """The selector's row: its index and magnification. PyJEM 1.4 gives both from
+    ``GetCurrentMagSelectorID()``; older versions give only the index, and the magnification comes from
+    ``GetMagValue()``."""
+    row = eos.GetCurrentMagSelectorID()
+    if isinstance(row, (list, tuple)):
+        return row[0], row[1]
+    return row, eos.GetMagValue()[0]
+
+
 def select_magnification(*, eos, magnification):
     """Step the TEM MAG selector (``TEM3.EOS3()``) to a nominal magnification; returns its index."""
     previous = None
-    while eos.GetCurrentMagSelectorID()[0] != previous:          # to the lowest row
-        previous = eos.GetCurrentMagSelectorID()[0]
+    while selector_row(eos)[0] != previous:                      # to the lowest row
+        previous = selector_row(eos)[0]
         eos.DownSelector()
     previous = None
     while True:
-        index, value = eos.GetCurrentMagSelectorID()
+        index, value = selector_row(eos)
         if value == magnification:
             return index
         if index == previous:
@@ -239,6 +311,7 @@ def check_pyjem(*, TEM3, detector=None):
     """Print which of the PyJEM calls a session uses this PyJEM has, and return the missing ones.
     Changes nothing. Run it first on an unfamiliar (for example older) PyJEM."""
     missing = []
+    print(f"Python {sys.version.split()[0]}")
     for part in PYJEM_CALLS:
         try:
             available = dir(getattr(TEM3, part)())
@@ -254,6 +327,14 @@ def check_pyjem(*, TEM3, detector=None):
         missing += [f"detector.{call}" for call in absent]
         print("detector: " + ("all there" if not absent else "missing " + ", ".join(absent)
                               + " (use take_frame = newest_file_in(...) instead)"))
+        if not absent:
+            attached = _read(detector.get_attached_detector)
+            print(f"attached detectors: {attached}")
+            if isinstance(attached, (list, tuple)):
+                try:
+                    print(f"the camera among them: {camera_among(attached)}")
+                except ValueError as error:
+                    print(error)
     return missing
 
 
@@ -323,10 +404,12 @@ class Session:
         Wait after every lens change (s).
     """
 
-    def __init__(self, *, TEM3, lenses, folder, detector=None, take_frame=None, settle_s=2.0, dtype=None):
+    def __init__(self, *, TEM3, lenses, folder, detector=None, take_frame=None, settle_s=2.0, dtype=None,
+                 camera_name=None):
         self.lens, self.defl, self.ht, self.eos = TEM3.Lens3(), TEM3.Def3(), TEM3.HT3(), TEM3.EOS3()
         if take_frame is None:                    # PyJEM's camera
-            self.camera = detector.Detector(detector.get_attached_detector()[0])
+            camera_name = camera_name or camera_among(detector.get_attached_detector())
+            self.camera = detector.Detector(camera_name)
             take_frame = lambda: read_frame(self.camera, self.dtype)       # noqa: E731
         else:                                     # any other camera: a function returning the frame
             self.camera = None
@@ -334,7 +417,7 @@ class Session:
         self.lenses = tuple(lenses)
         self.ids = [LENS_IDS[name] for name in self.lenses]
         self.dry, self.settle_s, self.dtype = True, settle_s, dtype     # a dry run until told otherwise
-        self.dark = None                          # until dark_frame(): find_beam estimates it from each frame
+        self.dark_level = None                    # until dark_frame(): find_beam estimates it from each frame
         self.log = []
 
         # the microscope as found: what restore() puts back
@@ -406,10 +489,6 @@ class Session:
             (self.folder / "log.json").write_text(json.dumps(self.log, indent=1, default=json_value))
         return frame
 
-    def beam(self, **info):
-        """Take a frame (as :meth:`frame`) and find the beam in it (:func:`find_beam`, above the dark level)."""
-        return find_beam(frame=self.frame(**info), background=self.dark)
-
     # -- changing things ------------------------------------------------------------------------
     def take_over_lenses(self):
         """Put the driven lenses under free-lens control at the values they run at now, and switch it on."""
@@ -453,15 +532,19 @@ class Session:
         self.now[deflector] = [x, y]
 
     def dark_frame(self):
-        """Blank the beam, take a frame, unblank; its median is the dark level from then on."""
+        """Blank the beam, take a frame, unblank; its median is the dark level from then on. Returns the
+        frame (None in a dry run)."""
         if self.dry:
-            return self._would("blank the beam, take a dark frame, unblank")
+            self._would("blank the beam, take a dark frame, unblank")
+            return None
         self.defl.SetBeamBlank(1)
         time.sleep(0.5)
         try:
-            self.dark = float(np.median(self.frame(role="dark")))
+            frame = self.frame(role="dark")
+            self.dark_level = float(np.median(frame))
         finally:
             self.defl.SetBeamBlank(0)
+        return frame
 
     def diffraction(self, *, camera_length_cm):
         """Switch to DIFF at the first camera length of at least ``camera_length_cm``."""

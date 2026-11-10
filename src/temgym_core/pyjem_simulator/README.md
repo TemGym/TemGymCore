@@ -29,7 +29,7 @@ with install(microscope):
 
 The virtual NEOARM's file, [`examples/virtual_neoarm/virtual_neoarm.json`](../../../examples/virtual_neoarm/virtual_neoarm.json),
 is worked out in [`design.ipynb`](../../../examples/virtual_neoarm/design.ipynb) and used by
-[`examples/microscope_inversion/stage1_rehearsal.ipynb`](../../../examples/microscope_inversion/stage1_rehearsal.ipynb).
+[`examples/microscope_inversion/stage1_projection_response.ipynb`](../../../examples/microscope_inversion/stage1_projection_response.ipynb).
 
 ## What is modelled
 
