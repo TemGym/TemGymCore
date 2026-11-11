@@ -1,0 +1,103 @@
+{
+ "description": "The virtual NEOARM's TEM-mode condenser, designed by design_condenser.py (not fitted). Planes in m from the specimen; lenses are TemGym ElectromagneticLens.",
+ "reference_voltage_v": 200000.0,
+ "source": {
+  "z_m": -0.8,
+  "rms_size_m": 1e-08,
+  "rms_angle_rad": 0.0001930115642181656,
+  "current_a": 7.353539029596658e-10
+ },
+ "lenses": {
+  "CL1": {
+   "z_m": -0.7,
+   "ampere_turns_per_dac": 0.08,
+   "Gc": 1.1491908015229437,
+   "Tc": 0.0
+  },
+  "CL3": {
+   "z_m": -0.53,
+   "ampere_turns_per_dac": 0.08,
+   "Gc": 0.431518348185217,
+   "Tc": 0.0
+  },
+  "CM": {
+   "z_m": -0.04,
+   "ampere_turns_per_dac": 0.08,
+   "Gc": 1.7571248243207072,
+   "Tc": 0.0
+  }
+ },
+ "aperture": {
+  "z_m": -0.5,
+  "hole_diameters_m": [
+   0.00015,
+   7e-05,
+   4e-05,
+   1e-05
+  ],
+  "m_per_dac": 1e-07,
+  "edge_m": 5e-07
+ },
+ "deflectors_z_m": [
+  -0.42000000000000004,
+  -0.39
+ ],
+ "corrector": {
+  "entrance_z_m": -0.35,
+  "exit_z_m": -0.1
+ },
+ "spot_table": {
+  "0": {
+   "CL1": 25501,
+   "CL3": 40772
+  },
+  "1": {
+   "CL1": 28017,
+   "CL3": 36020
+  },
+  "2": {
+   "CL1": 31232,
+   "CL3": 33866
+  },
+  "3": {
+   "CL1": 35282,
+   "CL3": 32687
+  },
+  "4": {
+   "CL1": 40320,
+   "CL3": 31976
+  },
+  "5": {
+   "CL1": 46524,
+   "CL3": 31524
+  },
+  "6": {
+   "CL1": 54095,
+   "CL3": 31227
+  },
+  "7": {
+   "CL1": 63275,
+   "CL3": 31026
+  }
+ },
+ "cm_dac": 26624,
+ "design": {
+  "as_if_no_corrector": "planes below are as if there were no corrector",
+  "first_crossover_z_m": {
+   "0": -0.35,
+   "1": -0.37928932188134523,
+   "2": -0.4,
+   "3": -0.41464466094067265,
+   "4": -0.425,
+   "5": -0.4323223304703363,
+   "6": -0.4375,
+   "7": -0.4411611652351682
+  },
+  "second_crossover_z_m": {
+   "focused": -0.060210434976384994,
+   "parallel": -0.21602803738317752,
+   "console_spot_3": -0.07640897959721737
+  },
+  "CL3_parallel_at_spot_3": 45553.94217203375
+ }
+}

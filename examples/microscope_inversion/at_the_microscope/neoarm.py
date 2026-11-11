@@ -11,8 +11,8 @@ the simulated NEOARM, matplotlib only to show frames)::
     scope.save()                                          # table.csv, console.json, frames/ and a copy of the scripts
 
 Every row of a recording has the same columns, whatever script made it: what the frame is for, the function mode,
-magnification or camera length, high tension, spot size, every lens, CLA1, CLA2 and PLA, the time, and where the
-beam is in the frame (found by :func:`find_beam`).
+magnification or camera length, high tension, spot size, every lens, CLA1, CLA2 and PLA, the condenser aperture's
+hole, the time, and where the beam is in the frame (found by :func:`find_beam`).
 """
 
 import atexit
@@ -73,20 +73,23 @@ class Neoarm:
             temgym_core.enable_x64()
             self.microscope = SimulatedMicroscope.from_file(
                 HERE.parents[1] / "virtual_neoarm/virtual_neoarm.json", ht_v=200e3, magnification=magnification,
-                diffraction_camera_length_m=camera_length_m, ray_sample_power=20, detector_samples_per_pixel=2)
+                diffraction_camera_length_m=camera_length_m,
+                condenser_path=HERE.parents[1] / "virtual_neoarm/condenser.json",
+                ray_sample_power=20, detector_samples_per_pixel=2)
             TEM3, detector = self.microscope.pyjem()
             self.camera = detector.Detector(detector.get_attached_detector()[0])
             settings = self.camera.get_detectorsetting()
             self.frame_shape = (settings["ImagingArea"]["Height"], settings["ImagingArea"]["Width"])
             self.frame_dtype = np.dtype("<i4" if settings["OutputImageInformation"]["DataBits"] == 32 else "<i2")
-            self.lens_settle_s = self.mode_settle_s = 0
+            self.lens_settle_s = self.mode_settle_s = self.pause_s = 0
         else:
             from PyJEM import TEM3, sightx
             sightx.set_ip(CAMERA_IP)
             self.camera = sightx.Detector(CAMERA_NAME)
             self.frame_shape, self.frame_dtype = FRAME_SHAPE, np.dtype(FRAME_DTYPE)
-            self.lens_settle_s, self.mode_settle_s = LENS_SETTLE_S, MODE_SETTLE_S
+            self.lens_settle_s, self.mode_settle_s, self.pause_s = LENS_SETTLE_S, MODE_SETTLE_S, PAUSE_S
         self.lens, self.deflectors, self.eos, self.ht = TEM3.Lens3(), TEM3.Def3(), TEM3.EOS3(), TEM3.HT3()
+        self.apertures = TEM3.Apt3()
         self.name = name
         self.folder = None                       # made at the first saved frame
         self.rows = []                           # the table: one row per saved frame
@@ -102,7 +105,7 @@ class Neoarm:
     def ask(self, call, *arguments):
         """Read something: ``call(*arguments)``, then a short pause."""
         answer = call(*arguments)
-        time.sleep(PAUSE_S)
+        time.sleep(self.pause_s)
         return answer
 
     def change(self, call, *arguments):
@@ -112,7 +115,7 @@ class Neoarm:
             print(f"   would call {call.__name__}{arguments}")
             return
         call(*arguments)
-        time.sleep(PAUSE_S)
+        time.sleep(self.pause_s)
 
     def wait(self, seconds):
         """Wait for the microscope to settle (not in a dry run, nor on the simulated NEOARM)."""
@@ -136,6 +139,13 @@ class Neoarm:
             if name not in self.taken_over:
                 self.taken_over.append(name)
 
+    def release(self, *names):
+        """Free-lens control off for these lenses: they go back to the console's values."""
+        for name in names:
+            self.change(self.lens.SetFLCSw, FREE_LENS[name], 0)
+            if name in self.taken_over:
+                self.taken_over.remove(name)
+
     def set_deflector(self, name, x, y):
         """CLA1, CLA2 or PLA to (x, y)."""
         x, y = int(round(x)), int(round(y))
@@ -154,6 +164,10 @@ class Neoarm:
                 state[name] = self.ask(getattr(self.lens, "Get" + name))
         for name in DEFLECTORS:
             state[name + "_x"], state[name + "_y"] = self.ask(getattr(self.deflectors, "Get" + name))
+        try:
+            state["condenser_hole"] = self.ask(self.apertures.GetSize, 1)       # 1: the condenser aperture; 0: none in
+        except Exception:                                                        # this PyJEM cannot read it
+            pass
         return state
 
     def remember_console(self, label):

@@ -19,6 +19,7 @@ documented where it is implemented and in this package's ``README.md``.
 """
 
 import contextlib
+import functools
 import enum
 import sys
 import types
@@ -636,6 +637,19 @@ class Detector:
 
 
 # -------------------------------------------------------------- module glue
+def _then_settle(method):
+    """The same call, after which every lens goes to the DAC value it now has (so lens hysteresis sees each change,
+    in order)."""
+    @functools.wraps(method)
+    def call(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._scope.settle()
+
+    return call
+
+
 def pyjem_interface(scope):
     """Build ``TEM3`` and ``detector`` module objects bound to one simulated microscope.
 
@@ -653,7 +667,11 @@ def pyjem_interface(scope):
     exception.TEMError, exception.ErrorTypeKind, exception.ErrorCodeKind = TEMError, ErrorTypeKind, ErrorCodeKind
     tem3 = types.ModuleType("PyJEM.TEM3", "Virtual-microscope emulation of PyJEM.TEM3 (PyJEM 1.4).")
     for cls in (Lens3, Def3, EOS3, HT3, Apt3, Stage3):
-        setattr(tem3, cls.__name__, type(cls.__name__, (cls,), {"_scope": scope, "__doc__": cls.__doc__}))
+        members = {"_scope": scope, "__doc__": cls.__doc__}
+        if cls in (Lens3, EOS3):             # calls that can change a lens: let the lenses settle after each
+            members.update({name: _then_settle(getattr(cls, name)) for name in dir(cls)
+                            if name.startswith(("Set", "Select", "Up", "Down"))})
+        setattr(tem3, cls.__name__, type(cls.__name__, (cls,), members))
     state = {"connected": True}
     tem3.connect = lambda: state.update(connected=True) or True
     tem3.isconnect = lambda: state["connected"]

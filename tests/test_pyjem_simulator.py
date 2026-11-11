@@ -1,5 +1,7 @@
 """Simulated microscope: electronics, camera, strictness, modes and the specimen-plane beam, on a small
 column of its own (five solenoids imaging at 40 000x)."""
+from pathlib import Path
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -339,3 +341,116 @@ def test_a_file_of_electromagnetic_lenses_shows_a_beam_shift_where_temgym_puts_i
     expected = a * 3000 * shift / 440e-6                                      # px, x + iy
     assert abs(expected) > 5
     assert abs(displaced - expected) < 0.02 * abs(expected)                    # not mirrored, turned by the camera
+
+
+# ------------------------------------------------------------------------------------------------ the condenser
+VIRTUAL_NEOARM = Path(__file__).parents[1] / "examples" / "virtual_neoarm"
+
+
+def virtual_condenser():
+    """The virtual NEOARM's designed condenser, with the fitted objective's front field (control 1)."""
+    import json
+    from temgym_core.pyjem_simulator import Condenser
+    objective = json.loads((VIRTUAL_NEOARM / "virtual_neoarm.json").read_text())["lenses"]["objective"]
+    front = dict(z_m=-objective["z_m"], ampere_turns=objective["ampere_turns"], Gc=objective["Gc"], Tc=0.0)
+    d = json.loads((VIRTUAL_NEOARM / "condenser.json").read_text())
+    return Condenser.from_dict(d, front), d["design"]
+
+
+def condenser_matrix(condenser, cl3, kick=(0.0, 0.0, 0.0, 0.0)):
+    from temgym_core.run import column_matrix
+    dac = dict(CL1=condenser.spot_table[2]["CL1"], CL3=cl3, CM=condenser.cm_dac)
+    column = condenser.components(dac, hole=0, aperture_position_dac=(2048, 2048), specimen_kick=kick,
+                                  objective_control=1.0, voltage_v=200e3) + (Plane(z=0.0),)
+    return np.asarray(column_matrix(column, source_z=condenser.source_z_m, voltage=200e3))
+
+
+def test_the_condenser_deflectors_give_the_shift_and_tilt_asked_for_at_the_specimen():
+    condenser, _ = virtual_condenser()
+    kick = np.array([3e-8, -2e-8, 4e-4, 1e-4])
+    offset = condenser_matrix(condenser, 33866, kick)[:4, 4] - condenser_matrix(condenser, 33866)[:4, 4]
+    assert offset == pytest.approx(kick, rel=1e-9, abs=1e-15)
+
+
+def test_brightness_focuses_the_beam_on_the_specimen_or_makes_it_parallel():
+    """At the designed CL3s, a source point lands on one point of the specimen (focused), or a source angle no
+    longer changes the angle at the specimen (parallel)."""
+    condenser, design = virtual_condenser()
+    focused = condenser_matrix(condenser, 33400)                 # the CL3 the design focuses at
+    parallel = condenser_matrix(condenser, design["CL3_parallel_at_spot_3"])
+    console = condenser_matrix(condenser, 33866)
+    assert abs(focused[0, 2]) < 1e-3 * abs(console[0, 2])        # position no longer depends on the source angle
+    assert np.abs(parallel[2:4, 2:4]).max() < 1e-3 * np.abs(console[2:4, 2:4]).max()
+
+
+def test_the_virtual_neoarm_condenser_through_pyjem():
+    """Spot size sets CL1 and CL3 from the spot table, a smaller hole lets less current through, and a changed CL2 (not
+    on the NEOARM) is refused."""
+    from temgym_core.pyjem_simulator import UnmodelledStateError
+    scope = SimulatedMicroscope.from_file(VIRTUAL_NEOARM / "virtual_neoarm.json", ht_v=200e3, magnification=40000,
+                                          condenser_path=VIRTUAL_NEOARM / "condenser.json", ray_sample_power=14,
+                                          detector_samples_per_pixel=1)
+    tem3, _ = scope.pyjem()
+    lens, eos, apertures = tem3.Lens3(), tem3.EOS3(), tem3.Apt3()
+    table = scope.truth.condenser.spot_table
+    eos.SelectSpotSize(4)
+    assert (lens.GetCL1(), lens.GetCL3()) == (table[4]["CL1"], table[4]["CL3"])
+    eos.SelectSpotSize(2)
+    assert (lens.GetCL1(), lens.GetCL3(), lens.GetCM()) == (31232, 33866, 26624)
+
+    setting = lambda: scope.physical_setting()
+    apertures.SelectKind(1)
+    apertures.SetSize(1)
+    big = scope.expected_image(setting(), 4).sum()
+    apertures.SetSize(4)
+    small = scope.expected_image(setting(), 4).sum()
+    assert 0 < small < big
+
+    eos.SelectSpotSize(7)                                        # spot 8, the smallest
+    assert lens.GetCL1() == table[7]["CL1"]
+    setting()
+    eos.SelectSpotSize(2)
+    lens.SetFLCAbs(1, 1000)
+    lens.SetFLCSw(1, 1)
+    with pytest.raises(UnmodelledStateError, match="CL2"):
+        setting()
+
+
+# ------------------------------------------------------------------------------------------------ lens hysteresis
+def test_lens_hysteresis_lags_by_the_way_a_value_was_reached_and_a_large_swing_wipes_it():
+    from temgym_core.pyjem_simulator import LensHysteresis
+    law = LensHysteresis(widths_dac=(100.0, 1000.0), fractions=(0.01, 0.002))
+    up = law.effective_sequence([30000, 32000])[-1]            # reached from below
+    down = law.effective_sequence([34000, 32000])[-1]          # reached from above
+    assert up == pytest.approx(32000 - (0.01 * 100 + 0.002 * 1000))
+    assert down == pytest.approx(32000 + (0.01 * 100 + 0.002 * 1000))
+    small_loop = law.effective_sequence([30000, 32000, 31950, 32000])[-1]
+    assert small_loop == pytest.approx(up)                      # a small loop comes back to where it was
+    wiped = law.effective_sequence([34000, 32000, 20000, 32000])[-1]
+    assert wiped == pytest.approx(up)                           # a large swing wipes the earlier approach from above
+    assert LensHysteresis().effective_sequence([1, 5, 3])[-1] == 3
+
+
+def test_a_lens_with_hysteresis_shows_the_route_through_pyjem():
+    """The same IL1 value reached from below and from above gives two slightly different lens controls; without
+    hysteresis they are the same."""
+    from dataclasses import replace
+    from temgym_core.pyjem_simulator import LensHysteresis
+    scope = SimulatedMicroscope.from_file(VIRTUAL_NEOARM / "virtual_neoarm.json", ht_v=200e3, magnification=40000,
+                                          condenser_path=VIRTUAL_NEOARM / "condenser.json", ray_sample_power=10,
+                                          detector_samples_per_pixel=1)
+    scope.electronics = replace(scope.electronics, hysteresis={"IL1": LensHysteresis((500.0,), (0.01,))})
+    scope.reset()
+    lens = scope.pyjem()[0].Lens3()
+    value = lens.GetIL1()
+
+    def control_after(route):
+        for v in route:
+            lens.SetFLCAbs(10, v)
+            lens.SetFLCSw(10, 1)
+        return scope.physical_setting().projector_controls[1]
+
+    from_below = control_after([value - 3000, value])
+    from_above = control_after([value + 3000, value])
+    assert from_above - from_below == pytest.approx(2 * 0.01 * 500)
+    assert lens.GetIL1() == value                               # the console shows the DAC value, not the lag

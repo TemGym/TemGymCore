@@ -8,10 +8,12 @@ untabulated high tension, an inserted objective aperture, ...) raises
 :class:`UnmodelledStateError` listing every reason, instead of returning an
 image the model cannot produce.
 
-The beam starts at the specimen plane (:class:`SpecimenBeam`); the condenser is not modelled. If
-the optics give a law for it (:attr:`OpticalTruth.beam_size`), CL3 (brightness) sets the beam's rms
-size there; CL1, CL2, CM, spot size and the condenser aperture are accepted but change nothing.
-The hidden optics are any TemGym column after the specimen (:class:`OpticalTruth`); images
+The beam starts either at the electron source, traced through a TEM-mode condenser
+(:class:`~temgym_core.pyjem_simulator.condenser.Condenser`: CL1, CL3, the condenser aperture, CLA1 and CLA2, CM
+and the objective's front field), so spot size, brightness and the condenser aperture act on it; or, without a
+condenser, at the specimen plane (:class:`SpecimenBeam`), where CL3 (brightness) may set its rms size
+(:attr:`OpticalTruth.beam_size`) and the other condenser controls change nothing.
+The hidden optics after the specimen are any TemGym column (:class:`OpticalTruth`); images
 come from TemGym's ray images (:func:`temgym_core.evaluate.ray_image`).
 """
 
@@ -32,7 +34,8 @@ from .electronics import NEUTRAL_DAC, Electronics
 LENS_IDS = {"CL1": 0, "CL2": 1, "CL3": 2, "CM": 3, "OLc": 6, "OLf": 7, "OM": 8, "OM2": 9,
             "IL1": 10, "IL2": 11, "IL3": 12, "IL4": 13, "PL1": 14, "PL2": 15, "PL3": 16}
 PROJECTOR_LENSES = ("IL1", "IL2", "IL3", "PL1")
-#: Accepted but not modelled (the beam is given at the specimen plane), except CL3 when the optics give a beam-size law.
+#: The console's condenser lenses. With a condenser, CL1, CL3 and CM are modelled and CL2 (not on the NEOARM) must
+#: keep its value; without one, all are accepted and only CL3 may act (through a beam-size law).
 CONDENSER_LENSES = ("CL1", "CL2", "CL3", "CM")
 OBJECTIVE_LENSES = ("OLc", "OLf")
 UNMODELLED_LENSES = ("OM", "OM2", "IL4", "PL2", "PL3")
@@ -41,8 +44,8 @@ DEFLECTORS = ("GunA1", "GunA2", "CLA1", "CLA2", "CLs", "IS1", "IS2", "PLA", "OLs
               "SpotA", "ShifBal", "TiltBal", "AngBal")
 TEM_FUNCTION_MODES = {0: "MAG", 1: "MAG2", 2: "LowMAG", 3: "SAMAG", 4: "DIFF"}
 STEM_FUNCTION_MODES = {0: "Align", 1: "SM-LMAG", 2: "SM-MAG", 3: "AMAG", 4: "uuDIFF", 5: "Rocking"}
-#: Apt3 kinds. The condenser aperture (kind 1) is accepted but not modelled; the others
-#: (after the specimen, or analytical) must stay open.
+#: Apt3 kinds. The condenser aperture (kind 1) is modelled with a condenser (else accepted, changing nothing); the
+#: others (after the specimen, or analytical) must stay open.
 APERTURE_KINDS = {1: "CLA", 2: "OLA", 3: "HCA", 4: "SAA", 5: "ENTA", 6: "EDS"}
 CONDENSER_APERTURE = 1
 APERTURE_HOME = (2048, 2048)
@@ -85,7 +88,9 @@ class OpticalTruth:
         for its DAC values at a high tension, in DIFF or not. Needed with ``pla_z_m``.
     beam_size : callable, optional
         ``beam_size(cl3_dac)`` gives the beam's rms size (m) at the specimen for a CL3 DAC value; its
-        angle spread stays the ``incident_beam``'s. Without it CL3 changes nothing.
+        angle spread stays the ``incident_beam``'s. Without it CL3 changes nothing. Not used with a condenser.
+    condenser : Condenser, optional
+        The TEM-mode condenser: the beam then starts at the source and goes through it.
     """
 
     column: object
@@ -94,6 +99,7 @@ class OpticalTruth:
     pla_z_m: float = None
     pla_kick: object = None
     beam_size: object = None
+    condenser: object = None
 
     def __post_init__(self):
         object.__setattr__(self, "voltages_v", tuple(float(v) for v in self.voltages_v))
@@ -124,6 +130,10 @@ class PhysicalSetting:
         Slope kick (rad, x and y) of the projector alignment deflector PLA.
     cl3_dac : int, optional
         CL3's DAC value, when the optics give it a beam-size law (else ``None``).
+    condenser_dac : tuple of (str, float), optional
+        With a condenser: the (effective) DAC values of CL1, CL3 and CM.
+    aperture : tuple of int, optional
+        With a condenser: the condenser aperture's hole (0 = none) and its Apt3 position x, y.
     """
 
     voltage_v: float
@@ -131,6 +141,8 @@ class PhysicalSetting:
     specimen_kick: tuple
     pla_kick: tuple = (0.0, 0.0)
     cl3_dac: int = None
+    condenser_dac: tuple = None
+    aperture: tuple = None
 
 
 @dataclass(frozen=True)
@@ -174,7 +186,8 @@ class SimulatedMicroscope:
     camera : CameraModel, optional
         The camera; ideal by default.
     beam_current_a : float, optional
-        Beam current at the specimen; with the exposure it sets the dose.
+        Beam current where the beam starts (the specimen; the source with a condenser, before the aperture);
+        with the exposure it sets the dose.
     ray_sample_power : int, optional
         Trace ``2**ray_sample_power`` rays per image.
     detector_samples_per_pixel : int, optional
@@ -211,9 +224,15 @@ class SimulatedMicroscope:
 
     @classmethod
     def from_file(cls, path, *, ht_v, second_ht_v=None, diffraction_camera_length_m=None, magnification=None,
-                  ray_sample_power=22,
-                  detector_samples_per_pixel=8, seed=0):
+                  condenser_path=None, ray_sample_power=22, detector_samples_per_pixel=8, seed=0):
         """A simulated microscope from a ground-truth file, at its power-on state at ``ht_v``.
+
+        With ``condenser_path``, a second file (JSON) describing the TEM-mode condenser
+        (:meth:`~temgym_core.pyjem_simulator.condenser.Condenser.from_dict`; written by
+        ``examples/virtual_neoarm/design_condenser.py``), the beam starts at the source and goes through the
+        condenser and the objective's front field (the file's objective, an ElectromagneticLens, mirrored); the
+        file's ``beam`` and ``beam_size`` (the beam at the specimen) are then not needed or used, and the beam current
+        is the condenser source's.
 
         The file (JSON) describes the microscope in plain physics, at ``reference_voltage_v``:
 
@@ -248,6 +267,9 @@ class SimulatedMicroscope:
         * optionally, in a projection lens's entry, ``offset_m``: (x, y), how far that lens sits off the axis. Its
           field acts about its own axis (TemGym :class:`~temgym_core.components.Scanner` shifts the rays by
           -offset before it and back after it), so the beam lands elsewhere on the camera at each magnification;
+        * optionally ``hysteresis``: lens name (IL1-IL3, PL1, CL1, CL3, CM) -> ``widths_dac`` and ``fractions`` of a
+          :class:`~temgym_core.pyjem_simulator.electronics.LensHysteresis`: that lens's field lags behind its DAC
+          value, depending on the values it had before;
         * optionally ``beam_size``: CL3 (brightness) sets the beam's rms size at the specimen, smallest
           (``smallest_rms_m``) at ``CL3_smallest_dac`` and growing by ``rms_m_per_dac`` per DAC unit either side:
           sqrt(smallest_rms_m^2 + (rms_m_per_dac x (CL3 - CL3_smallest_dac))^2). Without it, ``beam``'s
@@ -265,7 +287,7 @@ class SimulatedMicroscope:
         from ..aberrations import SeidelCoeffs
         from ..components import ElectromagneticLens, HardEdgeSolenoid, Plane, Rotator, Scanner
         from ..constants import magnetic_strength_ratio
-        from .electronics import DeflectorDrive, LensDrive
+        from .electronics import DeflectorDrive, LensDrive, LensHysteresis
         from .seidel_plate import SeidelPlate
 
         g = json.loads(Path(path).read_text())
@@ -331,18 +353,37 @@ class SimulatedMicroscope:
         electronics = Electronics({n: LensDrive(dac_per_unit=1.0) for n in PROJECTOR_LENSES},
                                   DeflectorDrive(kick_per_dac, reference_voltage_v=v_ref),
                                   objective_dac=tuple(round(g["objective_dac"][n] * scale) for n in OBJECTIVE_LENSES),
-                                  objective_control=scale)
+                                  objective_control=scale,
+                                  hysteresis={n: LensHysteresis(**law) for n, law in g.get("hysteresis", {}).items()})
         truth = OpticalTruth(column=column, voltages_v=(ht_v, second_ht_v), parameters=g,
                              pla_z_m=pla_z_m, pla_kick=pla_kick, beam_size=beam_size)
-        beam = g["beam"]
+        beam, incident_beam = g.get("beam"), None
+        if condenser_path is None:
+            if beam is None:
+                raise ValueError(f"{path} has no beam at the specimen: give condenser_path, the beam's condenser.")
+            incident_beam = SpecimenBeam(rms_size_m=beam["rms_size_m"], rms_angle_rad=beam["rms_angle_rad"])
+            current_a = beam["current_a"]
+        else:           # the beam starts at the source and goes through the condenser
+            from .condenser import Condenser
+
+            objective = lenses["objective"]
+            if "Gc" not in objective:
+                raise ValueError("A condenser needs the objective as an ElectromagneticLens (with Gc): its front field "
+                                 "is the objective mirrored.")
+            front_field = {"z_m": -objective["z_m"], "ampere_turns": objective["ampere_turns"], "Gc": objective["Gc"],
+                           "Tc": objective.get("Tc", 0.0)}
+            condenser = Condenser.from_dict(json.loads(Path(condenser_path).read_text()), front_field, dac_scale=scale)
+            truth = OpticalTruth(column=column, voltages_v=(ht_v, second_ht_v), parameters=g,
+                                 pla_z_m=pla_z_m, pla_kick=pla_kick, condenser=condenser)
+            current_a = condenser.source_current_a
         return cls(truth, electronics,
                    magnification_table={float(m): at_ht(row) for m, row in g["lens_table"]["MAG"].items()},
                    diffraction_table={float(length): at_ht(row) for length, row in g["lens_table"]["DIFF"].items()},
                    diffraction_camera_length_m=diffraction_camera_length_m, magnification=magnification,
-                   condenser_dac=g.get("condenser_dac"), incident_beam=SpecimenBeam(rms_size_m=beam["rms_size_m"], rms_angle_rad=beam["rms_angle_rad"]),
+                   condenser_dac=g.get("condenser_dac"), incident_beam=incident_beam,
                    camera=CameraModel(**{k: tuple(v) if isinstance(v, list) else v for k, v in g["camera"].items()})
                    if "camera" in g else None,
-                   beam_current_a=beam["current_a"], ray_sample_power=ray_sample_power,
+                   beam_current_a=current_a, ray_sample_power=ray_sample_power,
                    detector_samples_per_pixel=detector_samples_per_pixel, seed=seed)
 
     def pyjem(self):
@@ -383,6 +424,8 @@ class SimulatedMicroscope:
         self.apertures[CONDENSER_APERTURE]["size"] = 1
         self.specimen = None                 # vacuum; or a TemGym component at the specimen plane
         self.stage = [0.0, 0.0, 0.0, 0.0, 0.0]
+        self.lens_memory = {}                # per lens with hysteresis: (the DAC value it has, its backlash elements)
+        self.settle()
         binning = max(self.camera.binnings)
         shape, _, _ = self.camera.geometry(binning)
         self.detector = {"inserted": True, "binning": binning, "exposure_us": 10_000.0, "frames": 1,
@@ -426,6 +469,8 @@ class SimulatedMicroscope:
         if name in OBJECTIVE_LENSES:
             return self.electronics.objective_dac[OBJECTIVE_LENSES.index(name)]
         if name in CONDENSER_LENSES:
+            if self.truth.condenser is not None and name != "CL2":
+                return self.truth.condenser.table_dac(self.spot, name)
             return self.condenser_dac.get(name, NEUTRAL_DAC)
         return NEUTRAL_DAC
 
@@ -447,6 +492,27 @@ class SimulatedMicroscope:
         if name in self.direct:
             return self.direct[name]
         return self.table_dac(name)
+
+    def settle(self):
+        """Let every lens with hysteresis go to the DAC value it now has. The PyJEM calls do this after each change,
+        so a lens's field depends on the order of the values it was given."""
+        for name, law in self.electronics.hysteresis.items():
+            dac = self.lens_dac(name)
+            if dac is None:
+                continue
+            if name not in self.lens_memory:
+                self.lens_memory[name] = (dac, law.at_rest(dac))
+            elif self.lens_memory[name][0] != dac:
+                self.lens_memory[name] = (dac, law.move(self.lens_memory[name][1], dac))
+
+    def effective_dac(self, name):
+        """The DAC value a lens acts as if it had: its DAC value, with its hysteresis lag if it has one."""
+        dac = self.lens_dac(name)
+        law = self.electronics.hysteresis.get(name)
+        if law is None or dac is None:
+            return dac
+        self.settle()
+        return law.effective_dac(self.lens_memory[name][1], dac)
 
     def reload_tables(self):
         """A selector, function-mode or spot change reloads table values and clears direct settings."""
@@ -493,16 +559,29 @@ class SimulatedMicroscope:
         for kind, state in self.apertures.items():
             if kind != CONDENSER_APERTURE and state["size"] != 0:
                 reasons.append(f"aperture {APERTURE_KINDS[kind]} must stay open")
+        condenser = self.truth.condenser
+        if condenser is not None:
+            if self.spot not in condenser.spot_table:
+                reasons.append(f"spot size index {self.spot} is not in the spot table {sorted(condenser.spot_table)}")
+            if self.lens_dac("CL2") != self.table_dac("CL2"):
+                reasons.append(f"CL2 is not modelled and must stay at {self.table_dac('CL2')}")
         if reasons:
             raise UnmodelledStateError(reasons)
         drives = self.electronics.lenses
         projector_controls = (self.electronics.objective_control,) + tuple(
-            drives[n].control(self.lens_dac(n)) for n in PROJECTOR_LENSES)
+            drives[n].control_at(self.effective_dac(n)) if n in self.electronics.hysteresis
+            else drives[n].control(self.lens_dac(n)) for n in PROJECTOR_LENSES)
         dac_values = (*self.deflectors["CLA1"], *self.deflectors["CLA2"])
         kick = tuple(float(k) for k in self.electronics.deflector.kick(dac_values, self.ht_v))
         pla_kick = (0.0, 0.0)
         if self.truth.pla_kick is not None:
             pla_kick = tuple(float(k) for k in self.truth.pla_kick(*self.deflectors["PLA"], self.ht_v, self.diffraction))
+        if condenser is not None:
+            aperture = self.apertures[CONDENSER_APERTURE]
+            return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=projector_controls,
+                                   specimen_kick=kick, pla_kick=pla_kick,
+                                   condenser_dac=tuple((n, self.effective_dac(n)) for n in ("CL1", "CL3", "CM")),
+                                   aperture=(int(aperture["size"]), *map(int, aperture["position"])))
         cl3_dac = int(self.lens_dac("CL3")) if self.truth.beam_size is not None else None
         return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=projector_controls, specimen_kick=kick,
                                pla_kick=pla_kick, cl3_dac=cl3_dac)
@@ -533,14 +612,23 @@ class SimulatedMicroscope:
             pla = Deflector(z=self.truth.pla_z_m, def_x=setting.pla_kick[0], def_y=setting.pla_kick[1])
             position = next((i for i, part in enumerate(projector) if part.z >= self.truth.pla_z_m), len(projector))
             projector = projector[:position] + (pla,) + projector[position:]
-        b = self.incident_beam
-        size = b.rms_size_m if setting.cl3_dac is None else self.truth.beam_size(setting.cl3_dac)
-        mean = np.asarray(setting.specimen_kick, float)
-        covariance = np.diag([size ** 2] * 2 + [b.rms_angle_rad ** 2] * 2)
         column = tuple(projector) if specimen is None else (specimen, *projector)
+        condenser = self.truth.condenser
+        if condenser is not None:                # from the source, through the condenser
+            hole, *position = setting.aperture
+            column = condenser.components(dict(setting.condenser_dac), hole=hole, aperture_position_dac=position,
+                                          specimen_kick=setting.specimen_kick,
+                                          objective_control=setting.projector_controls[0],
+                                          voltage_v=setting.voltage_v) + column
+            start, mean, covariance = condenser.source()
+        else:                                    # from the specimen plane
+            b = self.incident_beam
+            size = b.rms_size_m if setting.cl3_dac is None else self.truth.beam_size(setting.cl3_dac)
+            start, mean = 0.0, np.asarray(setting.specimen_kick, float)
+            covariance = np.diag([size ** 2] * 2 + [b.rms_angle_rad ** 2] * 2)
         shape, pitch, psf = self.camera.geometry(binning)
         detector = Detector(z=0.0, shape=shape, pixel_size=(pitch, pitch), flip_y=not self.camera.mirrored)
-        rays = sample_rays(mean, covariance, z=0.0, voltage=setting.voltage_v, sample_power=self.ray_sample_power)
+        rays = sample_rays(mean, covariance, z=start, voltage=setting.voltage_v, sample_power=self.ray_sample_power)
         image = ray_image(rays, column, detector, samples_per_pixel=self.detector_samples_per_pixel, psf_sigma_pixels=psf)
         image.setflags(write=False)
         self._images[key] = image

@@ -1,0 +1,125 @@
+{
+ "about": "TemGym ElectromagneticLens column (objective, IL1, IL2, IL3, PL1) fitted by fit_predictor.ipynb to 2026-11-11_201956 (record_predictor.py). Lengths at the specimen in CLA1 units, angles in CLA2 units; the gaps are not the real lens positions. Held: the PL1-to-camera gap and the size of a CLA1 unit.",
+ "numbers": {
+  "CLA1": {
+   "y_axis": [
+    0.006926490179036357,
+    -0.9735051985197679
+   ],
+   "log_size": -21.927238641272346
+  },
+  "CLA2": {
+   "log_size": -10.203569233981332,
+   "x_angle": 3.134812337554495,
+   "y_axis": [
+    0.01843698805099772,
+    -0.9952008867299317
+   ]
+  },
+  "camera_rotation": -1.0163870840206277,
+  "lenses": {
+   "ampere_turns_per_unit": [
+    -0.08003456020862598,
+    -0.0799829091294612,
+    -0.08002115838341224,
+    0.07989978277327213
+   ],
+   "log_Gc": [
+    0.8433549300930065,
+    0.7665693112101994,
+    0.672837135514032,
+    1.246078491062729
+   ],
+   "log_Tc": [
+    -14.074600041768953,
+    -14.045404524009047,
+    -13.907130958775516,
+    -13.531569699641485
+   ],
+   "log_gaps": [
+    -6.944437945951229,
+    -2.279437307836893,
+    -2.911884468798287,
+    -2.6925902138656808,
+    -2.173482164408798,
+    -1.0788096613719298
+   ],
+   "log_objective_Gc": 19.343455777693187
+  }
+ },
+ "repeat_scatter_px": 0.021937054838785733,
+ "chi2": 56.50522619546717,
+ "dof": 231,
+ "pixel_m": 0.00011,
+ "voltage_v": 200000.0,
+ "condenser_size_laws": {
+  "spot index 0, hole 1": {
+   "log_smallest": -9.901943378624297,
+   "log_growth": -0.6909734832444457,
+   "CL3_at_focus": 40383.999724524525
+  },
+  "spot index 1, hole 1": {
+   "log_smallest": 3.1440334160080576,
+   "log_growth": -0.12102827114466871,
+   "CL3_at_focus": 35591.95375501815
+  },
+  "spot index 2, hole 1": {
+   "log_smallest": 4.062983944554397,
+   "log_growth": 0.19599456975333504,
+   "CL3_at_focus": 33427.23890659041
+  },
+  "spot index 2, hole 2": {
+   "log_smallest": 3.5434679651691336,
+   "log_growth": -0.4261209995338224,
+   "CL3_at_focus": 33430.96010519848
+  },
+  "spot index 2, hole 4": {
+   "log_smallest": -13.203806027809868,
+   "log_growth": -2.5100051204800113,
+   "CL3_at_focus": 33389.92779517031
+  },
+  "spot index 3, hole 1": {
+   "log_smallest": 4.379090424874519,
+   "log_growth": 0.2763755570703201,
+   "CL3_at_focus": 32238.209482544113
+  },
+  "spot index 4, hole 1": {
+   "log_smallest": 4.494221747760453,
+   "log_growth": 0.2949861351976854,
+   "CL3_at_focus": 31520.520846262683
+  }
+ },
+ "condenser": {
+  "about": "source -> CL1 -> CL3 -> aperture -> one fixed lens -> specimen (section 10); gaps from the source, not the real positions. Held: m per CLA1 unit, rad per CLA2 unit, hole 1's radius.",
+  "numbers": {
+   "log_Gc": [
+    1.3382760088697976,
+    -0.7081579317562856
+   ],
+   "log_fixed_focal_length": -4.474826357067251,
+   "log_gaps": [
+    -3.7190076580460607,
+    -2.4384999307320845,
+    -3.478854317222252,
+    -2.821718347971116,
+    -4.480089589877447
+   ],
+   "log_hole_ratio": [
+    -0.7684168570038211,
+    -2.789145560611299
+   ],
+   "log_signal": 17.62403240837947,
+   "log_source_angle": -7.803479208405694,
+   "log_source_size": -17.86044826920354
+  },
+  "holes": [
+   1,
+   2,
+   4
+  ],
+  "m_per_cla1_unit": 3e-10,
+  "rad_per_cla2_unit": 1.5e-05,
+  "hole_1_radius_m": 7.5e-05,
+  "ampere_turns_per_unit": 0.08
+ }
+}

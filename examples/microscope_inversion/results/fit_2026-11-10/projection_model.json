@@ -1,58 +1,58 @@
 {
- "about": "TemGym ElectromagneticLens column (objective, IL1, IL2, IL3, PL1) fitted to the NEOARM stage-1 recording of 2026-11-10 at 200 kV by fit_projection_response.ipynb. Held, not measured: the PL1-to-camera gap and the shift per CLA1 unit. The gaps are not the real lens positions.",
+ "about": "TemGym ElectromagneticLens column (objective, IL1, IL2, IL3, PL1) fitted to the NEOARM stage-1 recording of 2026-11-10 at 200 kV by fit_projection_response.ipynb. Scales from the console's labels (40k row = 40000x, 40 cm row = 0.40 m), not measured; PL1-to-camera gap (0.34 m) and objective focal length (1.9 mm) held. The gaps are not the real lens positions.",
  "numbers": {
   "CLA1": {
+   "log_size": -21.846255095578083,
    "y_axis": [
-    0.006914124396798233,
-    -0.9735144801192931
-   ],
-   "log_size": -25.328436022934504
-  },
-  "CLA2": {
-   "log_size": -11.876566267145195,
-   "x_angle": -0.006756283402688852,
-   "y_axis": [
-    0.018442182962630452,
-    -0.995186370455884
+    0.006914179673829566,
+    -0.9735145352552724
    ]
   },
-  "camera_rotation": -1.0194244022501768,
+  "CLA2": {
+   "log_size": -11.068256031852131,
+   "x_angle": -3.1483446455256985,
+   "y_axis": [
+    0.01844186517336876,
+    -0.9951855634529384
+   ]
+  },
+  "camera_rotation": -1.0194177199619057,
   "lenses": {
    "ampere_turns_per_unit": [
-    -0.07989023640105856,
-    -0.08053332001085596,
-    -0.0814165976523194,
-    0.08100156156491961
+    -0.07989204636652199,
+    -0.08053450254840876,
+    -0.08140946743170507,
+    0.0809989775413958
    ],
    "log_Gc": [
-    0.580359575227654,
-    0.7516545126676992,
-    -1.2163234114233685,
-    2.234810039280425
+    0.11366179962210116,
+    -0.4088043987684113,
+    -1.8961638698163044,
+    0.43093482034960445
    ],
    "log_Tc": [
-    -14.218655847557402,
-    -13.55286074023194,
-    -11.170397571606335,
-    -15.414018329423305
+    -22.19819120496115,
+    -10.268048850299984,
+    -40.841280692798314,
+    -13.591853348698091
    ],
    "log_gaps": [
-    -6.513254202317542,
-    -0.8665040790309722,
-    -2.6379956650425265,
-    -2.242969383541425,
-    -0.7722241414554866,
+    -6.252722803658365,
+    -0.7854322709786441,
+    -2.009017568364313,
+    -0.540450268029025,
+    -1.2520744312612984,
     -1.0788096613719298
    ],
-   "log_objective_Gc": 18.90187668239904
+   "log_objective_Gc": 18.650701744803808
   }
  },
  "repeat_scatter_px": {
   "MAG 40k": 0.040604861475976195,
   "DIFF 40 cm": 0.12565388049841897
  },
- "chi2": 328.8403459008293,
- "dof": 55,
+ "chi2": 575.416754457481,
+ "dof": 57,
  "pixel_m": 0.00011,
  "voltage_v": 200000.0
 }

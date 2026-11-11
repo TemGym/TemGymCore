@@ -9,6 +9,8 @@ the specimen kick is not known to the user. Here it is part of the hidden truth:
 * :class:`DeflectorDrive` maps the CLA1 (shift) and CLA2 (tilt) DAC values to the
   calibrated specimen displacement and angle, with the magnetic 1/p scaling of
   a fixed deflector field when the high tension changes.
+* :class:`LensHysteresis` makes a lens's field lag behind its DAC value, depending on
+  the values the lens had before (its iron pole pieces).
 """
 
 from dataclasses import dataclass, field
@@ -89,6 +91,10 @@ class LensDrive:
         """
         return (check_dac(dac) - self.dac_offset) / self.dac_per_unit
 
+    def control_at(self, effective_dac):
+        """Relative lens control for an effective DAC value, which need not be whole (:class:`LensHysteresis`)."""
+        return (float(effective_dac) - self.dac_offset) / self.dac_per_unit
+
     def dac(self, control):
         """Nearest integer DAC value for a relative control.
 
@@ -108,6 +114,74 @@ class LensDrive:
             If the control needs a DAC value outside 0-65535.
         """
         return check_dac(int(np.rint(control * self.dac_per_unit + self.dac_offset)))
+
+
+@dataclass(frozen=True)
+class LensHysteresis:
+    """A lens's field lagging behind its DAC value, by how the value was reached.
+
+    The iron of a lens remembers: after the DAC value rises to ``d`` the field is that of a slightly lower value,
+    after it falls, of a slightly higher one, and a large swing wipes out the memory of smaller ones. This is the
+    sum of a few backlash elements (a Prandtl-Ishlinskii model): element ``i`` follows the DAC value but stays up to
+    ``widths_dac[i]`` behind it, and the lens acts as if its DAC value were
+
+        effective = DAC value + sum_i fractions[i] * (element_i - DAC value),
+
+    so the lag is at most ``sum_i fractions[i] * widths_dac[i]`` DAC units. It depends on the order of the values,
+    not on time. With no elements the lens follows its DAC value exactly.
+
+    Parameters
+    ----------
+    widths_dac : tuple of float
+        How far behind (DAC units) each element can stay.
+    fractions : tuple of float
+        How much of each element's lag the field shows.
+    """
+
+    widths_dac: tuple = ()
+    fractions: tuple = ()
+
+    def __post_init__(self):
+        widths, fractions = tuple(map(float, self.widths_dac)), tuple(map(float, self.fractions))
+        if len(widths) != len(fractions) or any(w < 0 for w in widths):
+            raise ValueError("Give one fraction per width, and widths that are not negative.")
+        object.__setattr__(self, "widths_dac", widths)
+        object.__setattr__(self, "fractions", fractions)
+
+    def at_rest(self, dac):
+        """The elements of a lens that has no lag at this DAC value."""
+        return (float(dac),) * len(self.widths_dac)
+
+    def move(self, elements, dac):
+        """The elements after the DAC value goes (in one direction) to ``dac``."""
+        return tuple(min(max(e, dac - w), dac + w) for e, w in zip(elements, self.widths_dac))
+
+    def effective_dac(self, elements, dac):
+        """The DAC value the lens acts as if it had."""
+        return float(dac) + sum(f * (e - dac) for f, e in zip(self.fractions, elements))
+
+    def effective_sequence(self, dac_values, start=None):
+        """The effective DAC value after each of a sequence of DAC values (the lens at rest at ``start``, by default
+        at the first value): what a fit applies to a recording's rows.
+
+        Parameters
+        ----------
+        dac_values : array_like
+            The DAC values the lens took, in order.
+        start : float, optional
+            The DAC value the lens was at rest at before the sequence.
+
+        Returns
+        -------
+        numpy.ndarray
+        """
+        values = np.asarray(dac_values, float)
+        elements = self.at_rest(values[0] if start is None else start)
+        out = np.empty(len(values))
+        for i, dac in enumerate(values):
+            elements = self.move(elements, dac)
+            out[i] = self.effective_dac(elements, dac)
+        return out
 
 
 @dataclass(frozen=True)
@@ -191,12 +265,16 @@ class Electronics:
     objective_control : float, optional
         The objective's relative control at those DAC values (1 at the reference HT's alignment;
         p(HT) / p(reference) for a console aligned at another HT).
+    hysteresis : dict, optional
+        :class:`LensHysteresis` per lens name (projection or condenser lenses); a lens not in it follows its DAC
+        value exactly.
     """
 
     lenses: dict
     deflector: DeflectorDrive
     objective_dac: tuple = (45818, 39178)
     objective_control: float = 1.0
+    hysteresis: dict = field(default_factory=dict)
     modelled: tuple = field(default=("IL1", "IL2", "IL3", "PL1"), init=False)
 
     def __post_init__(self):
@@ -204,4 +282,5 @@ class Electronics:
         if missing:
             raise ValueError(f"Supply a LensDrive for {sorted(missing)}.")
         object.__setattr__(self, "lenses", dict(self.lenses))
+        object.__setattr__(self, "hysteresis", dict(self.hysteresis))
         object.__setattr__(self, "objective_dac", tuple(check_dac(w) for w in self.objective_dac))
