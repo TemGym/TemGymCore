@@ -8,8 +8,9 @@ untabulated high tension, an inserted objective aperture, ...) raises
 :class:`UnmodelledStateError` listing every reason, instead of returning an
 image the model cannot produce.
 
-The beam starts at the specimen plane (:class:`SpecimenBeam`); the condenser is not
-modelled, so its lenses, spot size and aperture are accepted but change nothing.
+The beam starts at the specimen plane (:class:`SpecimenBeam`); the condenser is not modelled. If
+the optics give a law for it (:attr:`OpticalTruth.beam_size`), CL3 (brightness) sets the beam's rms
+size there; CL1, CL2, CM, spot size and the condenser aperture are accepted but change nothing.
 The hidden optics are any TemGym column after the specimen (:class:`OpticalTruth`); images
 come from TemGym's ray images (:func:`temgym_core.evaluate.ray_image`).
 """
@@ -20,7 +21,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.constants import elementary_charge
 
-from ..components import Detector
+from ..components import Deflector, Detector
 from ..config import require_x64
 from ..evaluate import ray_image
 from ..source import sample_rays
@@ -31,11 +32,11 @@ from .electronics import NEUTRAL_DAC, Electronics
 LENS_IDS = {"CL1": 0, "CL2": 1, "CL3": 2, "CM": 3, "OLc": 6, "OLf": 7, "OM": 8, "OM2": 9,
             "IL1": 10, "IL2": 11, "IL3": 12, "IL4": 13, "PL1": 14, "PL2": 15, "PL3": 16}
 PROJECTOR_LENSES = ("IL1", "IL2", "IL3", "PL1")
-#: Accepted but not modelled: the beam is given at the specimen plane.
+#: Accepted but not modelled (the beam is given at the specimen plane), except CL3 when the optics give a beam-size law.
 CONDENSER_LENSES = ("CL1", "CL2", "CL3", "CM")
 OBJECTIVE_LENSES = ("OLc", "OLf")
 UNMODELLED_LENSES = ("OM", "OM2", "IL4", "PL2", "PL3")
-#: PyJEM Def3 deflector pairs; only CLA1 (beam shift) and CLA2 (beam tilt) are modelled.
+#: PyJEM Def3 deflector pairs; CLA1 (beam shift) and CLA2 (beam tilt) are modelled, PLA only if the optics give it a plane.
 DEFLECTORS = ("GunA1", "GunA2", "CLA1", "CLA2", "CLs", "IS1", "IS2", "PLA", "OLs", "ILs",
               "SpotA", "ShifBal", "TiltBal", "AngBal")
 TEM_FUNCTION_MODES = {0: "MAG", 1: "MAG2", 2: "LowMAG", 3: "SAMAG", 4: "DIFF"}
@@ -75,11 +76,24 @@ class OpticalTruth:
         Modelled operating high tensions.
     parameters : dict, optional
         What the column was built from, for scoring a fit only.
+    pla_z_m : float, optional
+        Plane (m from the specimen) of the projector alignment deflector PLA: a TemGym
+        :class:`~temgym_core.components.Deflector` is put there, in front of the first component
+        at or after it. Without it PLA is not modelled and must stay neutral.
+    pla_kick : callable, optional
+        ``pla_kick(dac_x, dac_y, voltage_v, diffraction)`` gives PLA's slope kick (rad, x and y)
+        for its DAC values at a high tension, in DIFF or not. Needed with ``pla_z_m``.
+    beam_size : callable, optional
+        ``beam_size(cl3_dac)`` gives the beam's rms size (m) at the specimen for a CL3 DAC value; its
+        angle spread stays the ``incident_beam``'s. Without it CL3 changes nothing.
     """
 
     column: object
     voltages_v: tuple
     parameters: dict = field(default_factory=dict)
+    pla_z_m: float = None
+    pla_kick: object = None
+    beam_size: object = None
 
     def __post_init__(self):
         object.__setattr__(self, "voltages_v", tuple(float(v) for v in self.voltages_v))
@@ -106,11 +120,17 @@ class PhysicalSetting:
         Relative Objective, IL1, IL2, IL3 and PL1 controls.
     specimen_kick : tuple of float
         Specimen displacement (m) and angle (rad).
+    pla_kick : tuple of float, optional
+        Slope kick (rad, x and y) of the projector alignment deflector PLA.
+    cl3_dac : int, optional
+        CL3's DAC value, when the optics give it a beam-size law (else ``None``).
     """
 
     voltage_v: float
     projector_controls: tuple
     specimen_kick: tuple
+    pla_kick: tuple = (0.0, 0.0)
+    cl3_dac: int = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +162,12 @@ class SimulatedMicroscope:
         Camera length (m, at this camera) -> DAC values for ``IL1``, ``IL2``, ``IL3`` and
         ``PL1`` (the TEM DIFF selector, in increasing camera length). Without it DIFF
         mode is refused as unmodelled.
+    diffraction_camera_length_m : float, optional
+        The camera length (m) the DIFF selector starts at, as a console left on it: the row
+        nearest to it. By default the first (shortest) row.
+    magnification : float, optional
+        The magnification the MAG selector starts at: the row nearest to it. By default the first
+        (lowest) row.
     camera : CameraModel, optional
         The camera; ideal by default.
     beam_current_a : float, optional
@@ -155,8 +181,8 @@ class SimulatedMicroscope:
     """
 
     def __init__(self, truth, electronics, *, magnification_table, incident_beam, diffraction_table=None,
-                 camera=None, beam_current_a=1.602176634e-9, ray_sample_power=18, detector_samples_per_pixel=1,
-                 seed=0):
+                 diffraction_camera_length_m=None, magnification=None, camera=None, beam_current_a=1.602176634e-9,
+                 ray_sample_power=18, detector_samples_per_pixel=1, seed=0):
         require_x64("the simulated microscope")
         if not isinstance(electronics, Electronics):
             raise TypeError("electronics must be an Electronics instance.")
@@ -167,6 +193,8 @@ class SimulatedMicroscope:
             (float(m), {k: int(w) for k, w in dac_values.items()}) for m, dac_values in (diffraction_table or {}).items()))
         if not self.magnification_table:
             raise ValueError("Supply at least one magnification row.")
+        self.diffraction_camera_length_m = diffraction_camera_length_m
+        self.start_magnification = magnification
         self.camera = camera or CameraModel()
         self.beam_current_a = float(beam_current_a)
         self.ray_sample_power = int(ray_sample_power)
@@ -178,7 +206,9 @@ class SimulatedMicroscope:
         self.reset()
 
     @classmethod
-    def from_file(cls, path, *, ht_v, second_ht_v=None, ray_sample_power=22, detector_samples_per_pixel=8, seed=0):
+    def from_file(cls, path, *, ht_v, second_ht_v=None, diffraction_camera_length_m=None, magnification=None,
+                  ray_sample_power=22,
+                  detector_samples_per_pixel=8, seed=0):
         """A simulated microscope from a ground-truth file, at its power-on state at ``ht_v``.
 
         The file (JSON) describes the microscope in plain physics, at ``reference_voltage_v``:
@@ -190,31 +220,85 @@ class SimulatedMicroscope:
         * ``deflectors``: ``shift_m_per_dac`` (CLA1) and ``tilt_rad_per_dac`` (CLA2), pure;
         * ``beam``: ``rms_size_m``, ``rms_angle_rad`` and ``current_a`` at the specimen;
         * ``objective_dac`` (``OLc``, ``OLf``) and ``lens_table``: ``MAG`` (nominal magnification
-          -> IL1-IL3, PL1 DAC values) and ``DIFF`` (camera length in m -> DAC values).
+          -> IL1-IL3, PL1 DAC values) and ``DIFF`` (camera length in m -> DAC values);
+        * optionally ``pla``: ``rad_per_dac``, the slope kick per DAC unit of PLA, a TemGym
+          :class:`~temgym_core.components.Deflector` at PL1's ``z_m``, and ``diffraction_offset_rad``,
+          a fixed kick (x, y) that is there in DIFF only, so the pattern starts off-centre;
+        * optionally ``aberrations``: ``objective``: ``seidel``, Seidel coefficient name (``A`` ... ``F``,
+          ``e``, ``f``, ``c``) -> value, a :class:`~temgym_core.pyjem_simulator.seidel_plate.SeidelPlate`
+          (TemGym's Seidel wave aberration acting on rays) at the specimen plane: the objective's field
+          aberrations by where the beam is at the specimen. There the field terms (``C``, ``E``, ``F``) all
+          give a tilt that grows as the cube of the beam's distance from the axis, so a centred beam stays
+          round and a tilt (CLA2) is untouched. (A plate after the specimen would be levered by the
+          magnification in MAG.)
+        * optionally, in a projection lens's entry, ``offset_m``: (x, y), how far that lens sits off the axis. Its
+          field acts about its own axis (TemGym :class:`~temgym_core.components.Scanner` shifts the rays by
+          -offset before it and back after it), so the beam lands elsewhere on the camera at each magnification;
+        * optionally ``beam_size``: CL3 (brightness) sets the beam's rms size at the specimen, smallest
+          (``smallest_rms_m``) at ``CL3_smallest_dac`` and growing by ``rms_m_per_dac`` per DAC unit either side:
+          sqrt(smallest_rms_m^2 + (rms_m_per_dac x (CL3 - CL3_smallest_dac))^2). Without it, ``beam``'s
+          ``rms_size_m`` is used and CL3 changes nothing.
 
         A lens's strength is ``q_per_dac`` x its DAC value x p(reference) / p(HT): the same field
         turns a slower beam more. The console's DAC values are the file's times p(HT) / p(reference),
         so the optics at ``ht_v`` are those at the reference HT. ``second_ht_v`` is another HT it
-        models, with the DAC values held.
+        models, with the DAC values held. ``diffraction_camera_length_m`` is the camera length the
+        DIFF selector starts at (the nearest row), ``magnification`` the MAG row.
         """
         import json
         from pathlib import Path
 
-        from ..components import HardEdgeSolenoid, Plane
+        from ..aberrations import SeidelCoeffs
+        from ..components import HardEdgeSolenoid, Plane, Scanner
         from ..constants import magnetic_strength_ratio
         from .electronics import DeflectorDrive, LensDrive
+        from .seidel_plate import SeidelPlate
 
         g = json.loads(Path(path).read_text())
         v_ref, lenses = float(g["reference_voltage_v"]), g["lenses"]
         names = ("objective", *PROJECTOR_LENSES)
         per_unit = [lenses["objective"]["q"]] + [lenses[n]["q_per_dac"] for n in PROJECTOR_LENSES]
 
+        aberration = g.get("aberrations", {}).get("objective")
+
+        def lens(n, q):
+            """One solenoid; if it sits off the axis, the rays are shifted to its axis and back."""
+            z, length = lenses[n]["z_m"], lenses[n]["length_m"]
+            solenoid = HardEdgeSolenoid(z=z, length=length, q=q)
+            if "offset_m" not in lenses[n]:
+                return (solenoid,)
+            dx, dy = lenses[n]["offset_m"]
+            return (Scanner(z=z, scan_pos_x=-dx, scan_pos_y=-dy), solenoid,
+                    Scanner(z=z + length, scan_pos_x=dx, scan_pos_y=dy))
+
         def column(controls, voltage_v):
             # controls: the objective's relative strength, then IL1-IL3, PL1 DAC values
             r = magnetic_strength_ratio(voltage_v, v_ref)
-            return (*(HardEdgeSolenoid(z=lenses[n]["z_m"], length=lenses[n]["length_m"], q=k * c * r)
-                      for n, k, c in zip(names, per_unit, controls)),
-                    Plane(z=g["camera_z_m"]))
+            plate = ()
+            if aberration:                       # at the specimen plane, scaling with the field like the lenses
+                plate = (SeidelPlate(z=0.0, object_plane_dist=0.0,
+                                     coeffs=SeidelCoeffs(**{name: value * r for name, value in aberration["seidel"].items()})),)
+            parts = [part for n, k, c in zip(names, per_unit, controls) for part in lens(n, k * c * r)]
+            return (*plate, *parts, Plane(z=g["camera_z_m"]))
+
+        beam_size = None
+        if "beam_size" in g:                     # CL3 sets the beam's rms size at the specimen
+            law = g["beam_size"]
+
+            def beam_size(cl3_dac):
+                return float(np.hypot(law["smallest_rms_m"], law["rms_m_per_dac"] * (cl3_dac - law["CL3_smallest_dac"])))
+
+        pla, pla_z_m, pla_kick = g.get("pla"), None, None
+        if pla:                                  # PLA: a slope kick at the plane of PL1, scaled with HT like CLA1/CLA2
+            pla_drive = DeflectorDrive(np.diag([1.0, 1.0, pla["rad_per_dac"], pla["rad_per_dac"]]),
+                                       reference_voltage_v=v_ref)
+            offset = np.asarray(pla.get("diffraction_offset_rad", (0.0, 0.0)), float)
+
+            def pla_kick(dac_x, dac_y, voltage_v, diffraction):
+                kick = pla_drive.kick((NEUTRAL_DAC, NEUTRAL_DAC, dac_x, dac_y), voltage_v)[2:]
+                return kick + offset if diffraction else kick
+
+            pla_z_m = lenses["PL1"]["z_m"]
 
         ht_v = float(ht_v)
         second_ht_v = float(second_ht_v or ht_v)
@@ -225,11 +309,13 @@ class SimulatedMicroscope:
                                   DeflectorDrive(np.diag([shift, shift, tilt, tilt]), reference_voltage_v=v_ref),
                                   objective_dac=tuple(round(g["objective_dac"][n] * scale) for n in OBJECTIVE_LENSES),
                                   objective_control=scale)
-        truth = OpticalTruth(column=column, voltages_v=(ht_v, second_ht_v), parameters=g)
+        truth = OpticalTruth(column=column, voltages_v=(ht_v, second_ht_v), parameters=g,
+                             pla_z_m=pla_z_m, pla_kick=pla_kick, beam_size=beam_size)
         beam = g["beam"]
         return cls(truth, electronics,
                    magnification_table={float(m): at_ht(row) for m, row in g["lens_table"]["MAG"].items()},
                    diffraction_table={float(length): at_ht(row) for length, row in g["lens_table"]["DIFF"].items()},
+                   diffraction_camera_length_m=diffraction_camera_length_m, magnification=magnification,
                    incident_beam=SpecimenBeam(rms_size_m=beam["rms_size_m"], rms_angle_rad=beam["rms_angle_rad"]),
                    beam_current_a=beam["current_a"], ray_sample_power=ray_sample_power,
                    detector_samples_per_pixel=detector_samples_per_pixel, seed=seed)
@@ -245,14 +331,21 @@ class SimulatedMicroscope:
 
     # ------------------------------------------------------------------ state
     def reset(self):
-        """Return every control to its power-on value (first table rows, neutral DAC values)."""
+        """Return every control to its power-on value (the MAG and DIFF rows nearest ``magnification`` and
+        ``diffraction_camera_length_m``, else the first rows; neutral DAC values)."""
         self.ht_v = self.truth.voltages_v[0]
         self.tem_stem = 0
         self.function_mode = 0
         self.probe_mode = 0
         self.alpha = 0
         self.selector = 0
+        if self.start_magnification is not None:
+            mags = np.array([row[0] for row in self.magnification_table])
+            self.selector = int(np.argmin(np.abs(mags - self.start_magnification)))
         self.camera_length_selector = 0
+        if self.diffraction_table and self.diffraction_camera_length_m is not None:
+            lengths = np.array([row[0] for row in self.diffraction_table])
+            self.camera_length_selector = int(np.argmin(np.abs(lengths - self.diffraction_camera_length_m)))
         self.spot = 2                        # PyJEM index of "spot 3"; not modelled
         self.direct = {}
         self.flc_switch = {name: 0 for name in LENS_IDS}
@@ -366,8 +459,9 @@ class SimulatedMicroscope:
         if objective != self.electronics.objective_dac:
             reasons.append(f"objective (OLc, OLf) = {objective} differs from the modelled "
                            f"{self.electronics.objective_dac}")
+        modelled = ("CLA1", "CLA2", "PLA") if self.truth.pla_kick is not None else ("CLA1", "CLA2")
         for name in DEFLECTORS:
-            if name not in ("CLA1", "CLA2") and self.deflectors[name] != [NEUTRAL_DAC, NEUTRAL_DAC]:
+            if name not in modelled and self.deflectors[name] != [NEUTRAL_DAC, NEUTRAL_DAC]:
                 reasons.append(f"deflector {name} is not modelled and must stay neutral")
         for kind, state in self.apertures.items():
             if kind != CONDENSER_APERTURE and state["size"] != 0:
@@ -379,7 +473,12 @@ class SimulatedMicroscope:
             drives[n].control(self.lens_dac(n)) for n in PROJECTOR_LENSES)
         dac_values = (*self.deflectors["CLA1"], *self.deflectors["CLA2"])
         kick = tuple(float(k) for k in self.electronics.deflector.kick(dac_values, self.ht_v))
-        return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=projector_controls, specimen_kick=kick)
+        pla_kick = (0.0, 0.0)
+        if self.truth.pla_kick is not None:
+            pla_kick = tuple(float(k) for k in self.truth.pla_kick(*self.deflectors["PLA"], self.ht_v, self.diffraction))
+        cl3_dac = int(self.lens_dac("CL3")) if self.truth.beam_size is not None else None
+        return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=projector_controls, specimen_kick=kick,
+                               pla_kick=pla_kick, cl3_dac=cl3_dac)
 
     def expected_image(self, setting, binning):
         """Mean transmitted fraction per output pixel for a setting (cached).
@@ -402,10 +501,15 @@ class SimulatedMicroscope:
         if key in self._images:
             self._images.move_to_end(key)
             return self._images[key]
-        projector = self.truth.column(np.asarray(setting.projector_controls), setting.voltage_v)
+        projector = tuple(self.truth.column(np.asarray(setting.projector_controls), setting.voltage_v))
+        if self.truth.pla_z_m is not None:       # PLA's deflector, in front of the first component at or after its plane
+            pla = Deflector(z=self.truth.pla_z_m, def_x=setting.pla_kick[0], def_y=setting.pla_kick[1])
+            position = next((i for i, part in enumerate(projector) if part.z >= self.truth.pla_z_m), len(projector))
+            projector = projector[:position] + (pla,) + projector[position:]
         b = self.incident_beam
+        size = b.rms_size_m if setting.cl3_dac is None else self.truth.beam_size(setting.cl3_dac)
         mean = np.asarray(setting.specimen_kick, float)
-        covariance = np.diag([b.rms_size_m ** 2] * 2 + [b.rms_angle_rad ** 2] * 2)
+        covariance = np.diag([size ** 2] * 2 + [b.rms_angle_rad ** 2] * 2)
         column = tuple(projector) if specimen is None else (specimen, *projector)
         shape, pitch, psf = self.camera.geometry(binning)
         detector = Detector(z=0.0, shape=shape, pixel_size=(pitch, pitch))

@@ -187,8 +187,8 @@ def compute_Rc_from_voltage(U_accel: float) -> float:
 
     Notes
     -----
-    Formula: Rc = (e·μ₀)/(2·mₑ·v)
-    where v is the relativistic electron velocity.
+    Formula: Rc = (e·μ₀)/(2·γ·mₑ·v) = (e·μ₀)/(2·p)
+    where p = γ·mₑ·v is the relativistic electron momentum.
 
     References
     ----------
@@ -207,8 +207,8 @@ def compute_Rc_from_voltage(U_accel: float) -> float:
     # Relativistic electron velocity
     v_electron = c * jnp.sqrt(1.0 - 1.0 / gamma_rel**2)
 
-    # Rotation constant
-    K_rot = e * mu_0 / (2.0 * m_e * v_electron)
+    # Rotation constant: e mu0 / (2 p), with the relativistic momentum p = gamma m v
+    K_rot = e * mu_0 / (2.0 * gamma_rel * m_e * v_electron)
 
     return K_rot
 

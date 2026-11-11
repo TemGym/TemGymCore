@@ -1,5 +1,5 @@
 {
- "description": "The virtual NEOARM, worked out by design.ipynb: hidden lenses fitted to the recorded NEOARM lens table, its deflectors, beam and lens table (MAG: the recorded rows by nominal magnification; DIFF: designed, by camera length in m), at 200 kV.",
+ "description": "The virtual NEOARM, worked out by design.ipynb: hidden lenses fitted to the recorded NEOARM lens table, its deflectors, beam and lens table (MAG: the recorded rows by nominal magnification; DIFF: designed, by camera length in m), at 200 kV. The pla and aberrations blocks were added by hand (chosen, not fitted): PLA is a deflector at PL1's plane that moves the pattern 0.01 px per DAC unit, with the DIFF pattern starting about 28 px off-centre; the objective's field aberration is a Seidel plate (distortion E) at the specimen plane: a tilt that grows as the cube of the beam's distance from the axis there, so a centred beam stays round, a tilt (CLA2) is untouched, MAG barely sees it, and in DIFF a CLA1 shift moves the pattern nothing at first and then very non-linearly. Chosen, not fitted. Added by hand for setting up the beam at each magnification (chosen, not fitted): the MAG rows 8k to 30k are designed (the recorded PL1; IL1, IL2, IL3 solved so the specimen is in focus at the nominal magnification, as the fitted lenses do not reproduce the recorded low-magnification rows); IL2 sits 6 um off the axis, so the beam lands up to about 50 px off-centre, differently at each magnification; beam_size: CL3 (brightness) sets the beam's rms size at the specimen, smallest (3 nm) at CL3 32410 and growing 0.0467 nm per DAC unit either side, so the console's CL3 (32768) gives the fitted 17 nm",
  "reference_voltage_v": 200000.0,
  "lenses": {
   "objective": {
@@ -15,7 +15,11 @@
   "IL2": {
    "z_m": 0.3344499129395562,
    "length_m": 0.0031739463431106614,
-   "q_per_dac": 2.0906151799124123e-05
+   "q_per_dac": 2.0906151799124123e-05,
+   "offset_m": [
+    6e-06,
+    0.0
+   ]
   },
   "IL3": {
    "z_m": 0.35762389710632475,
@@ -33,6 +37,20 @@
   "shift_m_per_dac": 1e-11,
   "tilt_rad_per_dac": 2e-07
  },
+ "pla": {
+  "rad_per_dac": 1.21e-05,
+  "diffraction_offset_rad": [
+   0.0272,
+   -0.0204
+  ]
+ },
+ "aberrations": {
+  "objective": {
+   "seidel": {
+    "E": 3e+17
+   }
+  }
+ },
  "beam": {
   "rms_size_m": 1.698643600576038e-08,
   "rms_angle_rad": 0.0004671269901584105,
@@ -44,6 +62,48 @@
  },
  "lens_table": {
   "MAG": {
+   "8000": {
+    "IL1": 43730,
+    "IL2": 23661,
+    "IL3": 45060,
+    "PL1": 58059
+   },
+   "10000": {
+    "IL1": 41411,
+    "IL2": 23338,
+    "IL3": 42057,
+    "PL1": 58790
+   },
+   "12000": {
+    "IL1": 40671,
+    "IL2": 19861,
+    "IL3": 53230,
+    "PL1": 60207
+   },
+   "15000": {
+    "IL1": 40911,
+    "IL2": 19822,
+    "IL3": 52791,
+    "PL1": 62792
+   },
+   "20000": {
+    "IL1": 41298,
+    "IL2": 19792,
+    "IL3": 51424,
+    "PL1": 63931
+   },
+   "25000": {
+    "IL1": 41829,
+    "IL2": 21729,
+    "IL3": 43006,
+    "PL1": 65535
+   },
+   "30000": {
+    "IL1": 42091,
+    "IL2": 23786,
+    "IL3": 38344,
+    "PL1": 64000
+   },
    "40000": {
     "IL1": 41782,
     "IL2": 24862,
@@ -179,5 +239,10 @@
     "PL1": 64000
    }
   }
+ },
+ "beam_size": {
+  "CL3_smallest_dac": 32410,
+  "smallest_rms_m": 3e-09,
+  "rms_m_per_dac": 4.67e-11
  }
 }

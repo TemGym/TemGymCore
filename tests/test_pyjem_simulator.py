@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from temgym_core.aberrations import SeidelCoeffs
 from temgym_core.components import HardEdgeSolenoid, Plane
 from temgym_core.pyjem_simulator import (
     CameraModel,
@@ -16,6 +17,8 @@ from temgym_core.pyjem_simulator import (
     SpecimenBeam,
     UnmodelledStateError,
 )
+from temgym_core.pyjem_simulator.seidel_plate import SeidelPlate
+from temgym_core.ray import Ray
 from temgym_core.run import position_and_angle_response
 
 LENSES = ("IL1", "IL2", "IL3", "PL1")
@@ -109,6 +112,7 @@ def test_the_mag_row_gives_its_strengths_and_images_at_40000x(scope):
     (lambda s: s.apertures[2].update(size=1), "OLA"),
     (lambda s: setattr(s, "function_mode", 2), "LowMAG"),
     (lambda s: s.deflectors.update(IS1=[30000, 32768]), "IS1"),
+    (lambda s: s.deflectors.update(PLA=[30000, 32768]), "PLA"),
     (lambda s: setattr(s, "ht_v", 120e3), "high tension"),
     (lambda s: s.direct.update(OLf=39000), "objective"),
     (lambda s: s.direct.update(PL2=40000), "PL2"),
@@ -191,3 +195,112 @@ def test_a_microscope_from_a_ground_truth_file_is_the_same_microscope(tmp_path):
         # the same up to the whole DAC values the console holds at another HT
         np.testing.assert_allclose(complex(actual[0]), complex(expected[0]), rtol=2e-4)       # A
         np.testing.assert_allclose(complex(actual[1]), complex(expected[1]), atol=1e-4)       # B, near 0 in focus
+
+
+def microscope_with(pla=False, diffraction_camera_length_m=None, ray_sample_power=12):
+    """The test microscope with two DIFF rows (0.2 m and 0.4 m), and optionally a PLA deflector at the plane of PL1
+    that kicks 2e-5 rad per DAC unit."""
+    drives = {n: LensDrive(MAG_ROW[n] / u) for n, u in zip(LENSES, CONTROLS_40K[1:])}
+    electronics = Electronics(drives, DeflectorDrive(np.diag([1e-11, 1e-11, 2e-7, 2e-7])),
+                              objective_dac=(45818, 39178), objective_control=1.0)
+    extra = {}
+    if pla:
+        extra = dict(pla_z_m=ENTRANCES[4],
+                     pla_kick=lambda x, y, voltage_v, diffraction: np.array([2e-5 * (x - 32768), 2e-5 * (y - 32768)]))
+    truth = OpticalTruth(column=column, voltages_v=(200e3, 195e3), parameters={"made by": "the test"}, **extra)
+    return SimulatedMicroscope(truth, electronics, magnification_table={40000.0: MAG_ROW},
+                               diffraction_table={0.2: DIFF_ROW, 0.4: DIFF_ROW}, incident_beam=SpecimenBeam(
+                                   rms_size_m=17e-9, rms_angle_rad=0.47e-3),
+                               diffraction_camera_length_m=diffraction_camera_length_m, camera=SMALL_CAMERA,
+                               beam_current_a=1.6e-9, ray_sample_power=ray_sample_power, detector_samples_per_pixel=4)
+
+
+def test_pla_moves_the_pattern_linearly_when_the_optics_give_it_a_plane():
+    """PLA is a deflector at the plane of PL1: it moves the beam on the camera, equally far either way."""
+    scope = microscope_with(pla=True, ray_sample_power=15)
+    tem3, detector = scope.pyjem()
+    camera = detector.Detector(detector.get_attached_detector()[0])
+    frame = lambda: np.frombuffer(camera.snapshot_rawdata(), "<i4").reshape(64, 64).astype(float)
+    start, _ = spot(frame())
+    moved = {}
+    for sign in (+1, -1):
+        tem3.Def3().SetPLA(32768 + sign * 1000, 32768)
+        centre, _ = spot(frame())
+        moved[sign] = centre - start
+    assert abs(moved[+1]) > 3                                           # px: 0.02 rad over about 0.25 m
+    assert abs(moved[+1] + moved[-1]) < 0.05 * abs(moved[+1])
+
+
+def test_the_diffraction_selector_starts_on_the_chosen_camera_length():
+    """A console left on 40 cm gives 40 cm when switched to DIFF; by default the first (shortest) row."""
+    chosen = microscope_with(diffraction_camera_length_m=0.4).pyjem()[0].EOS3()
+    chosen.SelectFunctionMode(4)
+    assert chosen.GetMagValue() == [40, "cm", "40cm"]
+    default = microscope_with().pyjem()[0].EOS3()
+    default.SelectFunctionMode(4)
+    assert default.GetMagValue() == [20, "cm", "20cm"]
+
+
+def test_a_seidel_plate_has_field_terms_only_so_a_centred_beam_is_untouched():
+    """Distortion E kicks a ray from object height h by -E h^3 (the plate adds -W to the path); a ray from the axis is not kicked, and A and B are
+    unchanged. (Spherical aberration B, which acts on a ray by its aperture position alone, is left out.)"""
+    plate_distance = 5e-4
+    plate = SeidelPlate(z=plate_distance, object_plane_dist=plate_distance, coeffs=SeidelCoeffs(E=2.75e17))
+
+    def kick(x, y=0.0, dx=0.0, dy=0.0):
+        after = plate(Ray(x=x, y=y, dx=dx, dy=dy, z=plate_distance, pathlength=0.0))
+        return float(after.dx - dx), float(after.dy - dy)
+
+    kick_x, kick_y = kick(2e-7)                                          # a ray from 0.2 um off the axis, parallel
+    assert kick_x == pytest.approx(-2.75e17 * (2e-7) ** 3, rel=1e-6)     # -E h^3 = -2.2 mrad
+    assert abs(kick_y) < 1e-12 * abs(kick_x)
+    assert kick(4e-7)[0] == pytest.approx(8 * kick_x, rel=1e-6)          # twice as far: eight times the kick
+    assert abs(kick(0.0)[0]) < 1e-30                                     # from the axis: none
+    # a ray from the axis that crosses the plate off-axis (tilted by 4e-4 rad) is not kicked either
+    assert abs(kick(plate_distance * 4e-4, dx=4e-4)[0]) < 1e-12 * abs(kick_x)
+    with_plate = position_and_angle_response((plate, *column(CONTROLS_40K, 200e3)))
+    without = position_and_angle_response(column(CONTROLS_40K, 200e3))
+    np.testing.assert_allclose([complex(v) for v in with_plate], [complex(v) for v in without], rtol=1e-6, atol=1e-9)
+
+
+def test_cl3_sets_the_beam_size_and_an_off_axis_lens_moves_the_beam(tmp_path):
+    """With ``beam_size`` in the file, CL3 sets the beam's rms size at the specimen (seen on the camera times |A|);
+    with ``offset_m`` on a lens, the beam lands off-centre by what that lens, shifted, gives a ray from the axis."""
+    import json
+    from temgym_core.ray import Ray
+    from temgym_core.run import run_to_end
+    names = ("objective", *LENSES)
+    per_dac = GAINS[1:] * CONTROLS_40K[1:] / np.array([MAG_ROW[n] for n in LENSES])
+    lenses = {n: {"z_m": z, "length_m": length} for n, z, length in zip(names, ENTRANCES, LENGTHS)}
+    lenses["objective"]["q"] = GAINS[0]
+    for n, k in zip(LENSES, per_dac):
+        lenses[n]["q_per_dac"] = k
+    lenses["IL2"]["offset_m"] = [2e-6, 0.0]
+    path = tmp_path / "microscope.json"
+    path.write_text(json.dumps(dict(
+        reference_voltage_v=200e3, lenses=lenses, camera_z_m=CAMERA_Z,
+        deflectors=dict(shift_m_per_dac=1e-11, tilt_rad_per_dac=2e-7),
+        beam=dict(rms_size_m=17e-9, rms_angle_rad=0.47e-3, current_a=1.6e-9),
+        beam_size=dict(CL3_smallest_dac=32000, smallest_rms_m=3e-9, rms_m_per_dac=4e-11),
+        objective_dac=dict(OLc=45818, OLf=39178), lens_table=dict(MAG={"40000": MAG_ROW}, DIFF={"0.4": DIFF_ROW})),
+        default=float))
+    scope = SimulatedMicroscope.from_file(path, ht_v=200e3, ray_sample_power=15, detector_samples_per_pixel=4)
+    scope.camera = SMALL_CAMERA
+    tem3, detector = scope.pyjem()
+    camera = detector.Detector(detector.get_attached_detector()[0])
+    frame = lambda: np.frombuffer(camera.snapshot_rawdata(), "<i4").reshape(64, 64).astype(float)
+    pitch = 440e-6
+    setting = scope.physical_setting()
+    column = scope.truth.column(np.asarray(setting.projector_controls), setting.voltage_v)
+    a = abs(complex(position_and_angle_response(column)[0]))
+    end = run_to_end(Ray(x=0.0, y=0.0, dx=0.0, dy=0.0, z=0.0, pathlength=0.0), list(column))
+    landing = complex(float(end.x), float(end.y)) / pitch                    # px from the frame centre
+    assert abs(landing) > 2                                                  # the offset moves the beam measurably
+    lens = tem3.Lens3()
+    lens.SetFLCSw(2, 1)
+    for cl3 in (33000, 34000):
+        lens.SetFLCAbs(2, cl3)
+        centre, rms = spot(frame())
+        expected = np.hypot(3e-9, 4e-11 * (cl3 - 32000)) * a / pitch
+        assert rms == pytest.approx(expected, rel=0.05)
+        assert abs(centre - (31.5 + 31.5j) - np.conj(landing)) < 0.3          # the camera's image is mirrored

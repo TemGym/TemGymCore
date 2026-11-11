@@ -9,6 +9,7 @@ Scripts written against PyJEM run on it unchanged. See
 from .camera import CameraModel
 from .electronics import DeflectorDrive, Electronics, LensDrive, DACRangeError
 from .pyjem import ErrorCodeKind, ErrorTypeKind, NotEmulatedError, TEMError, pyjem_interface, install
+from .seidel_plate import SeidelPlate
 from .microscope import (
     OpticalTruth,
     PhysicalSetting,
@@ -26,6 +27,7 @@ __all__ = [
     "LensDrive",
     "NotEmulatedError",
     "OpticalTruth",
+    "SeidelPlate",
     "PhysicalSetting",
     "SpecimenBeam",
     "TEMError",
