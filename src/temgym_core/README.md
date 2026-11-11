@@ -1,9 +1,9 @@
 # Reading TemGymCore
 
 The microscope work starts at
-[examples/microscope_inversion](../../examples/microscope_inversion/stage1_projection_response.ipynb): the projection-system
-calibration (a PyJEM session script, and a notebook with the lens model, the fit and the figures)
-rehearsed on the [simulated microscope](pyjem_simulator/README.md). The lens model is part of that
+[examples/microscope_inversion](../../examples/microscope_inversion/README.md): scripts run at the NEOARM
+through PyJEM (rehearsed on the [simulated microscope](pyjem_simulator/README.md)), the recordings they made, and a
+notebook that fits TemGym's lenses to them. The lens model is part of that
 experiment, built from TemGym components. [ARCHITECTURE.md](../../ARCHITECTURE.md) has the rules
 that keep the package understandable.
 

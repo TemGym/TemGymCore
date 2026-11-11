@@ -1,5 +1,5 @@
 {
- "about": "TemGym ElectromagneticLens column (objective, IL1, IL2, IL3, PL1) fitted to the NEOARM stage-1 recording of 2026-11-10 at 200 kV by stage1_fit_neoarm.ipynb. Held, not measured: the PL1-to-camera gap and the shift per CLA1 unit. The gaps are not the real lens positions.",
+ "about": "TemGym ElectromagneticLens column (objective, IL1, IL2, IL3, PL1) fitted to the NEOARM stage-1 recording of 2026-11-10 at 200 kV by fit_projection_response.ipynb. Held, not measured: the PL1-to-camera gap and the shift per CLA1 unit. The gaps are not the real lens positions.",
  "numbers": {
   "CLA1": {
    "y_axis": [
