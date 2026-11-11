@@ -7,7 +7,7 @@
 | [`at_the_microscope/record_projection_response.py`](at_the_microscope/record_projection_response.py) | How far CLA1 (MAG 40k) and CLA2 (DIFF 40 cm) displace the beam, with IL1, IL2, IL3, PL1 each changed up and down. |
 | [`at_the_microscope/beam_per_magnification.py`](at_the_microscope/beam_per_magnification.py) | At every MAG row from 8k to 500k: size the beam with CL3, centre it with CLA1, and measure px per CLA1 unit. |
 | [`recordings/`](recordings/) | Recordings as copied from the microscope PC, one folder per day (zips, not in git). |
-| [`fit_projection_response.ipynb`](fit_projection_response.ipynb) | Fits TemGym `ElectromagneticLens`es (IL1-PL1) to a projection-response recording, tests the fit on settings it never saw and on the magnification recording, and shows the frames. |
+| [`fit_projection_response.ipynb`](fit_projection_response.ipynb) | Fits TemGym `ElectromagneticLens`es (IL1-PL1) to a projection-response recording, tests the fit on settings it never saw and on the magnification recording, shows the frames, and writes the virtual NEOARM (`../virtual_neoarm/virtual_neoarm.json`) from the fit. |
 | [`results/`](results/) | What the notebook saves: the fitted model. |
 
 Each script runs three ways, from `at_the_microscope/`:

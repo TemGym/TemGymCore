@@ -168,6 +168,9 @@ class SimulatedMicroscope:
     magnification : float, optional
         The magnification the MAG selector starts at: the row nearest to it. By default the first
         (lowest) row.
+    condenser_dac : dict, optional
+        DAC values the console holds for condenser lenses (``CL1``, ``CL2``, ``CL3``, ``CM``); others are
+        32768.
     camera : CameraModel, optional
         The camera; ideal by default.
     beam_current_a : float, optional
@@ -181,7 +184,7 @@ class SimulatedMicroscope:
     """
 
     def __init__(self, truth, electronics, *, magnification_table, incident_beam, diffraction_table=None,
-                 diffraction_camera_length_m=None, magnification=None, camera=None, beam_current_a=1.602176634e-9,
+                 diffraction_camera_length_m=None, magnification=None, condenser_dac=None, camera=None, beam_current_a=1.602176634e-9,
                  ray_sample_power=18, detector_samples_per_pixel=1, seed=0):
         require_x64("the simulated microscope")
         if not isinstance(electronics, Electronics):
@@ -195,6 +198,7 @@ class SimulatedMicroscope:
             raise ValueError("Supply at least one magnification row.")
         self.diffraction_camera_length_m = diffraction_camera_length_m
         self.start_magnification = magnification
+        self.condenser_dac = {n: int(v) for n, v in (condenser_dac or {}).items() if n in CONDENSER_LENSES}
         self.camera = camera or CameraModel()
         self.beam_current_a = float(beam_current_a)
         self.ray_sample_power = int(ray_sample_power)
@@ -213,14 +217,24 @@ class SimulatedMicroscope:
 
         The file (JSON) describes the microscope in plain physics, at ``reference_voltage_v``:
 
-        * ``lenses``: the objective and IL1, IL2, IL3, PL1, each a uniform magnetic field
-          (TemGym :class:`~temgym_core.components.HardEdgeSolenoid`) with its entrance ``z_m`` and
-          ``length_m`` from the specimen, and its strength: ``q`` (rad) for the objective,
-          ``q_per_dac`` (rad per DAC unit) for the others; ``camera_z_m``;
-        * ``deflectors``: ``shift_m_per_dac`` (CLA1) and ``tilt_rad_per_dac`` (CLA2), pure;
+        * ``lenses``: the objective and IL1, IL2, IL3, PL1, each placed at ``z_m`` from the specimen, either
+
+          - a uniform magnetic field (TemGym :class:`~temgym_core.components.HardEdgeSolenoid`) of ``length_m``,
+            with its strength ``q`` (rad) for the objective, ``q_per_dac`` (rad per DAC unit) for the others; or
+          - a TemGym :class:`~temgym_core.components.ElectromagneticLens` with its own ``Gc`` (strength) and ``Tc``
+            (thickness per ampere-turn): ``ampere_turns`` for the objective, ``ampere_turns_per_dac`` for the
+            others. Its focusing and image rotation follow the high tension by themselves;
+
+          and ``camera_z_m``; optionally ``camera_rotation_rad``, a TemGym
+          :class:`~temgym_core.components.Rotator` just before the camera;
+        * ``deflectors``: ``shift_m_per_dac`` (CLA1) and ``tilt_rad_per_dac`` (CLA2), pure; or ``kick_per_dac``, the
+          4 x 4 matrix from (CLA1 x, CLA1 y, CLA2 x, CLA2 y) DAC units to (x, y, theta_x, theta_y) at the specimen;
         * ``beam``: ``rms_size_m``, ``rms_angle_rad`` and ``current_a`` at the specimen;
         * ``objective_dac`` (``OLc``, ``OLf``) and ``lens_table``: ``MAG`` (nominal magnification
           -> IL1-IL3, PL1 DAC values) and ``DIFF`` (camera length in m -> DAC values);
+        * optionally ``condenser_dac``: the DAC values the console holds for CL1, CL2, CL3 and CM;
+        * optionally ``camera``: :class:`CameraModel` fields (``sensor_shape``, ``sensor_pixel_m``, ``binnings``,
+          ``mirrored``, ...);
         * optionally ``pla``: ``rad_per_dac``, the slope kick per DAC unit of PLA, a TemGym
           :class:`~temgym_core.components.Deflector` at PL1's ``z_m``, and ``diffraction_offset_rad``,
           a fixed kick (x, y) that is there in DIFF only, so the pattern starts off-centre;
@@ -239,8 +253,8 @@ class SimulatedMicroscope:
           sqrt(smallest_rms_m^2 + (rms_m_per_dac x (CL3 - CL3_smallest_dac))^2). Without it, ``beam``'s
           ``rms_size_m`` is used and CL3 changes nothing.
 
-        A lens's strength is ``q_per_dac`` x its DAC value x p(reference) / p(HT): the same field
-        turns a slower beam more. The console's DAC values are the file's times p(HT) / p(reference),
+        A solenoid's strength is ``q_per_dac`` x its DAC value x p(reference) / p(HT): the same field
+        turns a slower beam more (an ElectromagneticLens does this itself). The console's DAC values are the file's times p(HT) / p(reference),
         so the optics at ``ht_v`` are those at the reference HT. ``second_ht_v`` is another HT it
         models, with the DAC values held. ``diffraction_camera_length_m`` is the camera length the
         DIFF selector starts at (the nearest row), ``magnification`` the MAG row.
@@ -249,7 +263,7 @@ class SimulatedMicroscope:
         from pathlib import Path
 
         from ..aberrations import SeidelCoeffs
-        from ..components import HardEdgeSolenoid, Plane, Scanner
+        from ..components import ElectromagneticLens, HardEdgeSolenoid, Plane, Rotator, Scanner
         from ..constants import magnetic_strength_ratio
         from .electronics import DeflectorDrive, LensDrive
         from .seidel_plate import SeidelPlate
@@ -257,19 +271,27 @@ class SimulatedMicroscope:
         g = json.loads(Path(path).read_text())
         v_ref, lenses = float(g["reference_voltage_v"]), g["lenses"]
         names = ("objective", *PROJECTOR_LENSES)
-        per_unit = [lenses["objective"]["q"]] + [lenses[n]["q_per_dac"] for n in PROJECTOR_LENSES]
-
         aberration = g.get("aberrations", {}).get("objective")
 
-        def lens(n, q):
-            """One solenoid; if it sits off the axis, the rays are shifted to its axis and back."""
-            z, length = lenses[n]["z_m"], lenses[n]["length_m"]
-            solenoid = HardEdgeSolenoid(z=z, length=length, q=q)
-            if "offset_m" not in lenses[n]:
-                return (solenoid,)
-            dx, dy = lenses[n]["offset_m"]
-            return (Scanner(z=z, scan_pos_x=-dx, scan_pos_y=-dy), solenoid,
-                    Scanner(z=z + length, scan_pos_x=dx, scan_pos_y=dy))
+        def lens(n, control, r):
+            """One lens at its relative control; if it sits off the axis, the rays are shifted to its axis and back."""
+            entry, z = lenses[n], lenses[n]["z_m"]
+            if "Gc" in entry:                    # an ElectromagneticLens: it scales with the HT itself
+                turns = entry["ampere_turns"] if n == "objective" else entry["ampere_turns_per_dac"]
+                body = ElectromagneticLens(z=z, turns=turns, current=control, Gc=entry["Gc"], Tc=entry.get("Tc", 0.0))
+                end = z + body.thickness
+            else:                                # a uniform field (solenoid): its strength scales as p(reference) / p(HT)
+                per_unit = entry["q"] if n == "objective" else entry["q_per_dac"]
+                body = HardEdgeSolenoid(z=z, length=entry["length_m"], q=per_unit * control * r)
+                end = z + entry["length_m"]
+            if "offset_m" not in entry:
+                return (body,)
+            dx, dy = entry["offset_m"]
+            return (Scanner(z=z, scan_pos_x=-dx, scan_pos_y=-dy), body, Scanner(z=end, scan_pos_x=dx, scan_pos_y=dy))
+
+        camera_rotation = ()
+        if "camera_rotation_rad" in g:           # the camera turned about the axis
+            camera_rotation = (Rotator(z=g["camera_z_m"], angle=float(np.degrees(g["camera_rotation_rad"]))),)
 
         def column(controls, voltage_v):
             # controls: the objective's relative strength, then IL1-IL3, PL1 DAC values
@@ -278,8 +300,8 @@ class SimulatedMicroscope:
             if aberration:                       # at the specimen plane, scaling with the field like the lenses
                 plate = (SeidelPlate(z=0.0, object_plane_dist=0.0,
                                      coeffs=SeidelCoeffs(**{name: value * r for name, value in aberration["seidel"].items()})),)
-            parts = [part for n, k, c in zip(names, per_unit, controls) for part in lens(n, k * c * r)]
-            return (*plate, *parts, Plane(z=g["camera_z_m"]))
+            parts = [part for n, c in zip(names, controls) for part in lens(n, c, r)]
+            return (*plate, *parts, *camera_rotation, Plane(z=g["camera_z_m"]))
 
         beam_size = None
         if "beam_size" in g:                     # CL3 sets the beam's rms size at the specimen
@@ -304,9 +326,10 @@ class SimulatedMicroscope:
         second_ht_v = float(second_ht_v or ht_v)
         scale = 1 / float(magnetic_strength_ratio(ht_v, v_ref))          # p(HT) / p(reference)
         at_ht = lambda row: {n: round(row[n] * scale) for n in PROJECTOR_LENSES}
-        shift, tilt = g["deflectors"]["shift_m_per_dac"], g["deflectors"]["tilt_rad_per_dac"]
+        d = g["deflectors"]
+        kick_per_dac = d.get("kick_per_dac") or np.diag([d["shift_m_per_dac"]] * 2 + [d["tilt_rad_per_dac"]] * 2)
         electronics = Electronics({n: LensDrive(dac_per_unit=1.0) for n in PROJECTOR_LENSES},
-                                  DeflectorDrive(np.diag([shift, shift, tilt, tilt]), reference_voltage_v=v_ref),
+                                  DeflectorDrive(kick_per_dac, reference_voltage_v=v_ref),
                                   objective_dac=tuple(round(g["objective_dac"][n] * scale) for n in OBJECTIVE_LENSES),
                                   objective_control=scale)
         truth = OpticalTruth(column=column, voltages_v=(ht_v, second_ht_v), parameters=g,
@@ -316,7 +339,9 @@ class SimulatedMicroscope:
                    magnification_table={float(m): at_ht(row) for m, row in g["lens_table"]["MAG"].items()},
                    diffraction_table={float(length): at_ht(row) for length, row in g["lens_table"]["DIFF"].items()},
                    diffraction_camera_length_m=diffraction_camera_length_m, magnification=magnification,
-                   incident_beam=SpecimenBeam(rms_size_m=beam["rms_size_m"], rms_angle_rad=beam["rms_angle_rad"]),
+                   condenser_dac=g.get("condenser_dac"), incident_beam=SpecimenBeam(rms_size_m=beam["rms_size_m"], rms_angle_rad=beam["rms_angle_rad"]),
+                   camera=CameraModel(**{k: tuple(v) if isinstance(v, list) else v for k, v in g["camera"].items()})
+                   if "camera" in g else None,
                    beam_current_a=beam["current_a"], ray_sample_power=ray_sample_power,
                    detector_samples_per_pixel=detector_samples_per_pixel, seed=seed)
 
@@ -400,6 +425,8 @@ class SimulatedMicroscope:
             return self.magnification_table[self.selector][1].get(name)
         if name in OBJECTIVE_LENSES:
             return self.electronics.objective_dac[OBJECTIVE_LENSES.index(name)]
+        if name in CONDENSER_LENSES:
+            return self.condenser_dac.get(name, NEUTRAL_DAC)
         return NEUTRAL_DAC
 
     def lens_dac(self, name):
@@ -512,7 +539,7 @@ class SimulatedMicroscope:
         covariance = np.diag([size ** 2] * 2 + [b.rms_angle_rad ** 2] * 2)
         column = tuple(projector) if specimen is None else (specimen, *projector)
         shape, pitch, psf = self.camera.geometry(binning)
-        detector = Detector(z=0.0, shape=shape, pixel_size=(pitch, pitch))
+        detector = Detector(z=0.0, shape=shape, pixel_size=(pitch, pitch), flip_y=not self.camera.mirrored)
         rays = sample_rays(mean, covariance, z=0.0, voltage=setting.voltage_v, sample_power=self.ray_sample_power)
         image = ray_image(rays, column, detector, samples_per_pixel=self.detector_samples_per_pixel, psf_sigma_pixels=psf)
         image.setflags(write=False)

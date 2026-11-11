@@ -304,3 +304,38 @@ def test_cl3_sets_the_beam_size_and_an_off_axis_lens_moves_the_beam(tmp_path):
         expected = np.hypot(3e-9, 4e-11 * (cl3 - 32000)) * a / pitch
         assert rms == pytest.approx(expected, rel=0.05)
         assert abs(centre - (31.5 + 31.5j) - np.conj(landing)) < 0.3          # the camera's image is mirrored
+
+
+def test_a_file_of_electromagnetic_lenses_shows_a_beam_shift_where_temgym_puts_it(tmp_path):
+    """Lenses as TemGym ElectromagneticLenses, a deflector matrix, a turned and unmirrored camera and the console's
+    condenser values, all from the file: a CLA1 kick displaces the beam on the frame by exactly what TemGym's column
+    gives, x along the columns and y up the rows."""
+    import json
+    from temgym_core.components import ElectromagneticLens, Rotator
+    lenses = {"objective": dict(z_m=0.002, ampere_turns=1.0, Gc=1.6e8)}
+    for n, z, turns, gc in zip(LENSES, (0.4, 0.47, 0.58, 0.69), (-0.08, -0.08, -0.08, 0.08), (2.0, 2.0, 0.3, 9.0)):
+        lenses[n] = dict(z_m=z, ampere_turns_per_dac=turns, Gc=gc, Tc=1e-6)
+    shift = 1e-11
+    camera = dict(sensor_shape=[512, 512], sensor_pixel_m=55e-6, psf_sigma_sensor_pixels=2.0, binnings=[8], mirrored=False)
+    path = tmp_path / "microscope.json"
+    path.write_text(json.dumps(dict(
+        reference_voltage_v=200e3, lenses=lenses, camera_z_m=1.03, camera_rotation_rad=0.6, camera=camera,
+        deflectors=dict(kick_per_dac=[[shift, 0, 0, 0], [0, -shift, 0, 0], [0, 0, 1e-7, 0], [0, 0, 0, 1e-7]]),
+        beam=dict(rms_size_m=2e-9, rms_angle_rad=1e-5, current_a=1.6e-9), condenser_dac=dict(CL3=33866),
+        objective_dac=dict(OLc=45818, OLf=38938), lens_table=dict(MAG={"40000": MAG_ROW}, DIFF={"0.4": DIFF_ROW}))))
+    scope = SimulatedMicroscope.from_file(path, ht_v=200e3, ray_sample_power=14, detector_samples_per_pixel=4)
+    tem3, detector = scope.pyjem()
+    assert tem3.Lens3().GetCL3() == 33866
+    camera = detector.Detector(detector.get_attached_detector()[0])
+    frame = lambda: np.frombuffer(camera.snapshot_rawdata(), "<i4").reshape(64, 64).astype(float)
+    column = [ElectromagneticLens(z=0.002, turns=1.0, current=1.0, Gc=1.6e8),
+              *(ElectromagneticLens(z=lenses[n]["z_m"], turns=lenses[n]["ampere_turns_per_dac"], current=MAG_ROW[n],
+                                    Gc=lenses[n]["Gc"], Tc=1e-6) for n in LENSES),
+              Rotator(z=1.03, angle=float(np.degrees(0.6))), Plane(z=1.03)]
+    a = complex(position_and_angle_response(column)[0])
+    before = spot(frame())[0]
+    tem3.Def3().SetCLA1(32768 + 3000, 32768)
+    displaced = spot(frame())[0] - before
+    expected = a * 3000 * shift / 440e-6                                      # px, x + iy
+    assert abs(expected) > 5
+    assert abs(displaced - expected) < 0.02 * abs(expected)                    # not mirrored, turned by the camera

@@ -30,7 +30,7 @@ with install(microscope):
 ```
 
 The virtual NEOARM's file, [`examples/virtual_neoarm/virtual_neoarm.json`](../../../examples/virtual_neoarm/virtual_neoarm.json),
-is worked out in [`design.ipynb`](../../../examples/virtual_neoarm/design.ipynb) and used by the scripts in
+is written by [`fit_projection_response.ipynb`](../../../examples/microscope_inversion/fit_projection_response.ipynb) from the real NEOARM's recording of 2026-11-10 (its projection lenses are TemGym `ElectromagneticLens`es fitted to it), and used by the scripts in
 [`examples/microscope_inversion/at_the_microscope/`](../../../examples/microscope_inversion/at_the_microscope/) (run with `--simulated`).
 
 ## What is modelled

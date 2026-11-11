@@ -73,7 +73,7 @@ class Neoarm:
             temgym_core.enable_x64()
             self.microscope = SimulatedMicroscope.from_file(
                 HERE.parents[1] / "virtual_neoarm/virtual_neoarm.json", ht_v=200e3, magnification=magnification,
-                diffraction_camera_length_m=camera_length_m, ray_sample_power=20)
+                diffraction_camera_length_m=camera_length_m, ray_sample_power=20, detector_samples_per_pixel=2)
             TEM3, detector = self.microscope.pyjem()
             self.camera = detector.Detector(detector.get_attached_detector()[0])
             settings = self.camera.get_detectorsetting()

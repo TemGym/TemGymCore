@@ -1,107 +1,144 @@
 {
- "description": "The virtual NEOARM, worked out by design.ipynb: hidden lenses fitted to the recorded NEOARM lens table, its deflectors, beam and lens table (MAG: the recorded rows by nominal magnification; DIFF: designed, by camera length in m), at 200 kV. The pla and aberrations blocks were added by hand (chosen, not fitted): PLA is a deflector at PL1's plane that moves the pattern 0.01 px per DAC unit, with the DIFF pattern starting about 28 px off-centre; the objective's field aberration is a Seidel plate (distortion E) at the specimen plane: a tilt that grows as the cube of the beam's distance from the axis there, so a centred beam stays round, a tilt (CLA2) is untouched, MAG barely sees it, and in DIFF a CLA1 shift moves the pattern nothing at first and then very non-linearly. Chosen, not fitted. Added by hand for setting up the beam at each magnification (chosen, not fitted): the MAG rows 8k to 30k are designed (the recorded PL1; IL1, IL2, IL3 solved so the specimen is in focus at the nominal magnification, as the fitted lenses do not reproduce the recorded low-magnification rows); IL2 sits 6 um off the axis, so the beam lands up to about 50 px off-centre, differently at each magnification; beam_size: CL3 (brightness) sets the beam's rms size at the specimen, smallest (3 nm) at CL3 32410 and growing 0.0467 nm per DAC unit either side, so the console's CL3 (32768) gives the fitted 17 nm",
+ "description": "The virtual NEOARM at 200 kV, written by fit_projection_response.ipynb from the recording of 2026-11-10. Fitted: the objective and IL1-PL1 (TemGym ElectromagneticLens), CLA1/CLA2 axes (kick_per_dac), the camera rotation; then, with those lenses, the CL3 beam-size law and the spread of angles. As recorded: the MAG lens table, the DIFF 40 cm row, the objective DAC values, the camera. Held (not measured): the PL1-to-camera gap and the CLA1 shift per unit, so specimen-plane lengths are in the fit's units. Left out: lens offsets, PLA, aberrations.",
  "reference_voltage_v": 200000.0,
  "lenses": {
   "objective": {
-   "z_m": 0.0005000001122357951,
-   "length_m": 0.0002178553101115069,
-   "q": -0.6227526140856892
+   "z_m": 0.001483643781728428,
+   "ampere_turns": 1.0,
+   "Gc": 161800828.38743892
   },
   "IL1": {
-   "z_m": 0.05259816951180706,
-   "length_m": 0.003645826528171328,
-   "q_per_dac": 9.507869169317752e-06
+   "z_m": 0.4219023776218184,
+   "ampere_turns_per_dac": -0.07989023640105856,
+   "Gc": 1.7866807614015834,
+   "Tc": 6.682150075839475e-07
   },
   "IL2": {
-   "z_m": 0.3344499129395562,
-   "length_m": 0.0031739463431106614,
-   "q_per_dac": 2.0906151799124123e-05,
-   "offset_m": [
-    6e-06,
-    0.0
-   ]
+   "z_m": 0.4934068225031082,
+   "ampere_turns_per_dac": -0.08053332001085596,
+   "Gc": 2.1205055191071547,
+   "Tc": 1.3003712722507741e-06
   },
   "IL3": {
-   "z_m": 0.35762389710632475,
-   "length_m": 0.01467009719350765,
-   "q_per_dac": 2.5605171123790613e-05
+   "z_m": 0.5995496796224299,
+   "ampere_turns_per_dac": -0.0814165976523194,
+   "Gc": 0.2963176045887168,
+   "Tc": 1.408503641018902e-05
   },
   "PL1": {
-   "z_m": 0.6178096169987732,
-   "length_m": 0.0011870486290814501,
-   "q_per_dac": -7.231643095114933e-06
+   "z_m": 1.061534085743155,
+   "ampere_turns_per_dac": 0.08100156156491961,
+   "Gc": 9.344706556402068,
+   "Tc": 2.021980186391156e-07
   }
  },
- "camera_z_m": 0.718996863230155,
- "deflectors": {
-  "shift_m_per_dac": 1e-11,
-  "tilt_rad_per_dac": 2e-07
+ "camera_z_m": 1.401534085743155,
+ "camera_rotation_rad": -1.0194244022501768,
+ "camera": {
+  "name": "screenCamera",
+  "sensor_shape": [
+   1916,
+   1916
+  ],
+  "sensor_pixel_m": 2.75e-05,
+  "binnings": [
+   1,
+   2,
+   4
+  ],
+  "psf_sigma_sensor_pixels": 4.0,
+  "mirrored": false
  },
- "pla": {
-  "rad_per_dac": 1.21e-05,
-  "diffraction_offset_rad": [
-   0.0272,
-   -0.0204
+ "deflectors": {
+  "kick_per_dac": [
+   [
+    9.999999999999985e-12,
+    6.914124396798223e-14,
+    0,
+    0
+   ],
+   [
+    0.0,
+    -9.735144801192916e-12,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    6.951249773688791e-06,
+    8.14569657455675e-08
+   ],
+   [
+    0,
+    0,
+    -4.696532809059068e-08,
+    -6.91865517558318e-06
+   ]
   ]
  },
- "aberrations": {
-  "objective": {
-   "seidel": {
-    "E": 3e+17
-   }
-  }
- },
  "beam": {
-  "rms_size_m": 1.698643600576038e-08,
-  "rms_angle_rad": 0.0004671269901584105,
-  "current_a": 1.602176634e-09
+  "rms_size_m": 1.1016047260011308e-09,
+  "rms_angle_rad": 0.0008489269837772593,
+  "current_a": 1.602e-09
+ },
+ "beam_size": {
+  "CL3_smallest_dac": 33401.9059950985,
+  "smallest_rms_m": 5.570199096412465e-49,
+  "rms_m_per_dac": 3.071083553213499e-12
  },
  "objective_dac": {
   "OLc": 45818,
-  "OLf": 39178
+  "OLf": 38938
+ },
+ "condenser_dac": {
+  "CL1": 31232,
+  "CL2": 0,
+  "CL3": 33866,
+  "CM": 26624
  },
  "lens_table": {
   "MAG": {
    "8000": {
-    "IL1": 43730,
-    "IL2": 23661,
-    "IL3": 45060,
+    "IL1": 27185,
+    "IL2": 24703,
+    "IL3": 44496,
     "PL1": 58059
    },
    "10000": {
-    "IL1": 41411,
-    "IL2": 23338,
-    "IL3": 42057,
+    "IL1": 28644,
+    "IL2": 23569,
+    "IL3": 45511,
     "PL1": 58790
    },
    "12000": {
-    "IL1": 40671,
-    "IL2": 19861,
-    "IL3": 53230,
+    "IL1": 29685,
+    "IL2": 22821,
+    "IL3": 46846,
     "PL1": 60207
    },
    "15000": {
-    "IL1": 40911,
-    "IL2": 19822,
-    "IL3": 52791,
+    "IL1": 30768,
+    "IL2": 22189,
+    "IL3": 49190,
     "PL1": 62792
    },
    "20000": {
-    "IL1": 41298,
-    "IL2": 19792,
-    "IL3": 51424,
+    "IL1": 32855,
+    "IL2": 21206,
+    "IL3": 48825,
     "PL1": 63931
    },
    "25000": {
-    "IL1": 41829,
-    "IL2": 21729,
-    "IL3": 43006,
+    "IL1": 34450,
+    "IL2": 20706,
+    "IL3": 39733,
     "PL1": 65535
    },
    "30000": {
-    "IL1": 42091,
-    "IL2": 23786,
-    "IL3": 38344,
+    "IL1": 40738,
+    "IL2": 24862,
+    "IL3": 39733,
     "PL1": 64000
    },
    "40000": {
@@ -184,65 +221,12 @@
    }
   },
   "DIFF": {
-   "0.15": {
-    "IL1": 29877,
-    "IL2": 25583,
-    "IL3": 37384,
-    "PL1": 64000
-   },
-   "0.2": {
-    "IL1": 29997,
-    "IL2": 25229,
-    "IL3": 36561,
-    "PL1": 64000
-   },
-   "0.25": {
-    "IL1": 30073,
-    "IL2": 24887,
-    "IL3": 35622,
-    "PL1": 64000
-   },
-   "0.3": {
-    "IL1": 30126,
-    "IL2": 24596,
-    "IL3": 34552,
-    "PL1": 64000
-   },
    "0.4": {
-    "IL1": 30200,
-    "IL2": 24517,
-    "IL3": 31945,
-    "PL1": 64000
-   },
-   "0.5": {
-    "IL1": 30243,
-    "IL2": 25630,
-    "IL3": 29376,
-    "PL1": 64000
-   },
-   "0.6": {
-    "IL1": 30260,
-    "IL2": 27292,
-    "IL3": 27582,
-    "PL1": 64000
-   },
-   "0.8": {
-    "IL1": 30269,
-    "IL2": 30553,
-    "IL3": 25387,
-    "PL1": 64000
-   },
-   "1": {
-    "IL1": 30268,
-    "IL2": 33498,
-    "IL3": 24034,
+    "IL1": 20771,
+    "IL2": 48739,
+    "IL3": 32605,
     "PL1": 64000
    }
   }
- },
- "beam_size": {
-  "CL3_smallest_dac": 32410,
-  "smallest_rms_m": 3e-09,
-  "rms_m_per_dac": 4.67e-11
  }
 }

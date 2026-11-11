@@ -36,6 +36,9 @@ class CameraModel:
         Mean stray electrons per output pixel and frame (Poisson).
     data_bits : {16, 32}, optional
         Signed output integer size; values are clipped to its range.
+    mirrored : bool, optional
+        The image is mirrored relative to the column's x + iy (y runs down the rows). False: x along the
+        columns and y up the rows, as :func:`find_beam`-style centres read a real NEOARM frame.
     """
 
     name: str = "camera"
@@ -48,6 +51,7 @@ class CameraModel:
     read_noise_electrons: float = 2.0
     background_electrons: float = 3.0
     data_bits: int = 32
+    mirrored: bool = True
 
     def __post_init__(self):
         if self.data_bits not in (16, 32):
