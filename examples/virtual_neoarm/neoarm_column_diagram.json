@@ -1,0 +1,41 @@
+{
+ "description": "NEOARM column positions read by hand off the JEOL cross-section diagram (neoarm_column_diagram.png), metres below the specimen (negative = above). Scale: the 20 cm elliptical box on the left of the diagram spans 96 px, so 1 px = 2.08 mm. Read once by eye: each value is good to a few pixels (about 5 mm), and the whole column scales with that one 20 cm assumption.",
+ "source": "examples/microscope_models/measure_microscope_geometry.ipynb, git 126961f (2026-06-12); the raw diagram file microscope.png was never committed. An earlier reading in projector_model_tem.ipynb (git 0b3a210) put IL1 at 684 px (0.227 m), CL1 at 340 px and CL2 at 360 px.",
+ "metres_per_pixel": 0.0020833333333333333,
+ "pixel_rows": {
+  "Source": 250,
+  "CL1": 330,
+  "CL2": 369,
+  "CLAperture": 373,
+  "Corrector Top": 385,
+  "Corrector Bottom": 504,
+  "CLMini": 529,
+  "Objective lens Pre": 570,
+  "Sample": 575,
+  "Objective lens Post": 576,
+  "SAAperture": 666,
+  "IL1": 672,
+  "IL2": 709,
+  "IL3": 739,
+  "PL1": 764,
+  "Screen": 920
+ },
+ "z_m": {
+  "Source": -0.67708,
+  "CL1": -0.51042,
+  "CL2": -0.42917,
+  "CLAperture": -0.42083,
+  "Corrector Top": -0.39583,
+  "Corrector Bottom": -0.14792,
+  "CLMini": -0.09583,
+  "Objective lens Pre": -0.01042,
+  "Sample": 0.0,
+  "Objective lens Post": 0.00208,
+  "SAAperture": 0.18958,
+  "IL1": 0.20208,
+  "IL2": 0.27917,
+  "IL3": 0.34167,
+  "PL1": 0.39375,
+  "Screen": 0.71875
+ }
+}

@@ -19,6 +19,7 @@ from .components import (
     Deflector,
     Detector,
     DoubleDeflector,
+    ElectromagneticLens,
     HardEdgeSolenoid,
     Lens,
     PhaseBiprism,
@@ -625,9 +626,12 @@ def plot_model(
         elif isinstance(c, Deflector):
             _label_component(ax, label_x, c.z, name, p)
             _draw_deflector(c.z)
-        elif isinstance(c, (Lens, HardEdgeSolenoid)):
-            # A finite solenoid is drawn as a lens at its field centre.
-            lens_z = c.z + getattr(c, "length", 0.0) / 2
+        elif isinstance(c, (Lens, HardEdgeSolenoid, ElectromagneticLens)):
+            # A finite solenoid, or a thick electromagnetic lens, is drawn as a lens at its centre.
+            body = getattr(c, "length", None)
+            if body is None and isinstance(c, ElectromagneticLens):
+                body = float(c.thickness)
+            lens_z = c.z + (body or 0.0) / 2
             lens_width = max(np.finfo(float).eps, 2.0 * component_x)
             _label_component(ax, label_x, lens_z, name, p)
             ax.add_patch(

@@ -934,3 +934,31 @@ def test_electromagnetic_lens_rotation_responds_to_voltage():
 
     # Higher voltage -> faster electrons -> smaller Rc -> smaller rotation
     assert float(lens.rotation_angle(voltage_b)) < float(lens.rotation_angle(voltage_a))
+
+
+@pytest.mark.parametrize("Tc", [0.0, 2e-6])
+def test_electromagnetic_lens_off_axis_acts_about_its_own_axis(Tc):
+    """A lens at (x0, y0) is the same lens on the axis, seen by rays shifted to its axis and shifted back: for rays,
+    and for the centre of a Gaussian beam."""
+    from temgym_core.components import Scanner
+
+    voltage, x0, y0 = 200e3, 3e-5, -2e-5
+    settings = dict(z=0.0, turns=0.08, current=30000.0, Gc=5e-6 * float(effective_accelerating_potential(voltage)), Tc=Tc)
+    off_axis = ElectromagneticLens(**settings, x0=x0, y0=y0)
+    on_axis = ElectromagneticLens(**settings)
+    ray = Ray(x=jnp.array(1e-4), y=jnp.array(-5e-5), dx=jnp.array(2e-3), dy=jnp.array(1e-3), z=jnp.array(0.0),
+              pathlength=jnp.array(0.0), voltage=jnp.array(voltage), _one=jnp.array(1.0))
+
+    out = off_axis(ray)
+    expected = on_axis(Scanner(z=0.0, scan_pos_x=-x0, scan_pos_y=-y0)(ray))
+    expected = Scanner(z=float(expected.z), scan_pos_x=x0, scan_pos_y=y0)(expected)
+    for name in ("x", "y", "dx", "dy", "z"):
+        np.testing.assert_allclose(getattr(out, name), getattr(expected, name), rtol=1e-12, atol=1e-18)
+    # a ray on the optical axis is deflected by an off-axis lens
+    on_the_axis = off_axis(ray.derive(x=jnp.array(0.0), y=jnp.array(0.0), dx=jnp.array(0.0), dy=jnp.array(0.0)))
+    assert abs(float(on_the_axis.dx)) > 1e-6
+
+    beam = make_gaussian(voltage=voltage, x=1e-4, y=-5e-5, dx=2e-3, dy=1e-3, z=0.0)
+    out_beam = off_axis(beam)
+    for name in ("x", "y", "dx", "dy"):
+        np.testing.assert_allclose(getattr(out_beam, name), getattr(out, name), rtol=1e-9, atol=1e-15)

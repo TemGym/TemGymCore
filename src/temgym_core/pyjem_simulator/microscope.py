@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.constants import elementary_charge
 
-from ..components import Deflector, Detector
+from ..components import Deflector, Detector, Plane, Rotator, Scanner
 from ..config import require_x64
 from ..evaluate import ray_image
 from ..source import sample_rays
@@ -91,6 +91,13 @@ class OpticalTruth:
         angle spread stays the ``incident_beam``'s. Without it CL3 changes nothing. Not used with a condenser.
     condenser : Condenser, optional
         The TEM-mode condenser: the beam then starts at the source and goes through it.
+    whole_column : callable, optional
+        The hidden optics as one function of the whole console: ``whole_column(console, voltage_v)`` returns
+        ``(components, start_z, mean, covariance)``, the TemGym components from the source to the camera and the
+        beam where it starts (its mean and covariance in x, y, theta_x, theta_y). ``console`` is a dict with every
+        lens's DAC value (as the lens acts: with its hysteresis lag) and every deflector's ``(x, y)`` DAC pair.
+        With it, ``column`` (give ``None``), the deflector law, PLA, the beam-size law and the condenser are not
+        used, and every lens and deflector may be changed.
     """
 
     column: object
@@ -100,6 +107,7 @@ class OpticalTruth:
     pla_kick: object = None
     beam_size: object = None
     condenser: object = None
+    whole_column: object = None
 
     def __post_init__(self):
         object.__setattr__(self, "voltages_v", tuple(float(v) for v in self.voltages_v))
@@ -134,6 +142,8 @@ class PhysicalSetting:
         With a condenser: the (effective) DAC values of CL1, CL3 and CM.
     aperture : tuple of int, optional
         With a condenser: the condenser aperture's hole (0 = none) and its Apt3 position x, y.
+    console : tuple of (str, value), optional
+        With :attr:`OpticalTruth.whole_column`: every lens's (effective) DAC value and every deflector's DAC pair.
     """
 
     voltage_v: float
@@ -143,6 +153,7 @@ class PhysicalSetting:
     cl3_dac: int = None
     condenser_dac: tuple = None
     aperture: tuple = None
+    console: tuple = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +164,35 @@ class SpecimenBeam:
 
     rms_size_m: float
     rms_angle_rad: float
+
+
+@dataclass(frozen=True)
+class LowerCamera:
+    """A second camera further down the column than the first (the first camera is where the column ends).
+
+    The beam reaches it by a straight flight from the first camera's plane, so it is seen only while every camera
+    above it is retracted.
+
+    Parameters
+    ----------
+    model : CameraModel
+        The camera itself (its name is the detector's name).
+    below_m : float
+        How far below the first camera's plane it sits.
+    rotation_rad : float, optional
+        How far it is turned about the axis, relative to the first camera.
+    centre_m : tuple of float, optional
+        Where its middle pixel is (x, y, in the first camera's own x and y).
+    """
+
+    model: CameraModel
+    below_m: float
+    rotation_rad: float = 0.0
+    centre_m: tuple = (0.0, 0.0)
+
+    def __post_init__(self):
+        if self.below_m <= 0:
+            raise ValueError("A lower camera sits below the first one: below_m must be positive.")
 
 
 class SimulatedMicroscope:
@@ -183,8 +223,14 @@ class SimulatedMicroscope:
     condenser_dac : dict, optional
         DAC values the console holds for condenser lenses (``CL1``, ``CL2``, ``CL3``, ``CM``); others are
         32768.
+    spot_table : dict, optional
+        Spot-size index -> DAC values of the condenser lenses the console changes with the spot (e.g. ``CL1``,
+        ``CL3``); they take the place of ``condenser_dac``'s at that spot. Not used with a condenser.
     camera : CameraModel, optional
         The camera; ideal by default.
+    lower_cameras : sequence of LowerCamera, optional
+        More cameras further down the column, each read by its own name. A camera sees the beam only while every
+        camera above it is retracted.
     beam_current_a : float, optional
         Beam current where the beam starts (the specimen; the source with a condenser, before the aperture);
         with the exposure it sets the dose.
@@ -197,8 +243,9 @@ class SimulatedMicroscope:
     """
 
     def __init__(self, truth, electronics, *, magnification_table, incident_beam, diffraction_table=None,
-                 diffraction_camera_length_m=None, magnification=None, condenser_dac=None, camera=None, beam_current_a=1.602176634e-9,
-                 ray_sample_power=18, detector_samples_per_pixel=1, seed=0):
+                 diffraction_camera_length_m=None, magnification=None, condenser_dac=None, spot_table=None, camera=None,
+                 lower_cameras=(), beam_current_a=1.602176634e-9, ray_sample_power=18, detector_samples_per_pixel=1,
+                 seed=0):
         require_x64("the simulated microscope")
         if not isinstance(electronics, Electronics):
             raise TypeError("electronics must be an Electronics instance.")
@@ -212,7 +259,12 @@ class SimulatedMicroscope:
         self.diffraction_camera_length_m = diffraction_camera_length_m
         self.start_magnification = magnification
         self.condenser_dac = {n: int(v) for n, v in (condenser_dac or {}).items() if n in CONDENSER_LENSES}
+        self.spot_table = {int(spot): {n: int(v) for n, v in row.items() if n in CONDENSER_LENSES}
+                           for spot, row in (spot_table or {}).items()}
         self.camera = camera or CameraModel()
+        self.lower_cameras = {c.model.name: c for c in sorted(lower_cameras, key=lambda c: c.below_m)}
+        if self.camera.name in self.lower_cameras or len(self.lower_cameras) != len(tuple(lower_cameras)):
+            raise ValueError("Every camera needs its own name.")
         self.beam_current_a = float(beam_current_a)
         self.ray_sample_power = int(ray_sample_power)
         self.detector_samples_per_pixel = int(detector_samples_per_pixel)
@@ -254,6 +306,9 @@ class SimulatedMicroscope:
         * optionally ``condenser_dac``: the DAC values the console holds for CL1, CL2, CL3 and CM;
         * optionally ``camera``: :class:`CameraModel` fields (``sensor_shape``, ``sensor_pixel_m``, ``binnings``,
           ``mirrored``, ...);
+        * optionally ``lower_cameras``: a list of more cameras further down the column (:class:`LowerCamera`), each
+          with ``below_camera_m``, ``camera`` (:class:`CameraModel` fields, with its own ``name``) and optionally
+          ``rotation_rad`` and ``centre_m``;
         * optionally ``pla``: ``rad_per_dac``, the slope kick per DAC unit of PLA, a TemGym
           :class:`~temgym_core.components.Deflector` at PL1's ``z_m``, and ``diffraction_offset_rad``,
           a fixed kick (x, y) that is there in DIFF only, so the pattern starts off-centre;
@@ -344,6 +399,9 @@ class SimulatedMicroscope:
 
             pla_z_m = lenses["PL1"]["z_m"]
 
+        def camera_model(fields):
+            return CameraModel(**{k: tuple(v) if isinstance(v, list) else v for k, v in fields.items()})
+
         ht_v = float(ht_v)
         second_ht_v = float(second_ht_v or ht_v)
         scale = 1 / float(magnetic_strength_ratio(ht_v, v_ref))          # p(HT) / p(reference)
@@ -381,10 +439,61 @@ class SimulatedMicroscope:
                    diffraction_table={float(length): at_ht(row) for length, row in g["lens_table"]["DIFF"].items()},
                    diffraction_camera_length_m=diffraction_camera_length_m, magnification=magnification,
                    condenser_dac=g.get("condenser_dac"), incident_beam=incident_beam,
-                   camera=CameraModel(**{k: tuple(v) if isinstance(v, list) else v for k, v in g["camera"].items()})
-                   if "camera" in g else None,
+                   camera=camera_model(g["camera"]) if "camera" in g else None,
+                   lower_cameras=[LowerCamera(model=camera_model(c["camera"]), below_m=c["below_camera_m"],
+                                              rotation_rad=c.get("rotation_rad", 0.0),
+                                              centre_m=tuple(c.get("centre_m", (0.0, 0.0))))
+                                  for c in g.get("lower_cameras", ())],
                    beam_current_a=current_a, ray_sample_power=ray_sample_power,
                    detector_samples_per_pixel=detector_samples_per_pixel, seed=seed)
+
+    @classmethod
+    def from_console(cls, tables, whole_column, *, ht_v=200e3, alpha=0, camera=None, hysteresis=None, magnification=None,
+                     diffraction_camera_length_m=None, spot=None, beam_current_a=1.602176634e-9, ray_sample_power=18,
+                     detector_samples_per_pixel=2, seed=0):
+        """A simulated microscope with a real console's lens tables and any hidden column behind them.
+
+        Parameters
+        ----------
+        tables : dict
+            What ``record_console_tables.py`` read from a console: ``rows`` (``MAG`` and ``DIFF``: per selector row
+            ``mag`` = [value, unit, label] and every lens's DAC value) and ``spot_alpha`` (per spot and alpha: CL1,
+            CL3, CM). The MAG and DIFF rows are kept in the console's order, so selector indices are the console's
+            (a row out of order, like the NEOARM's last DIFF row, is left out). Selecting a row sets IL1-IL3 and
+            PL1; selecting a spot sets CL1, CL3 and CM; deflectors stay where they are put.
+        alpha : int, optional
+            The console's alpha whose spot table is used. The simulated console's own alpha selector stays 0.
+        whole_column : callable
+            The hidden optics, as a function of the whole console (:attr:`OpticalTruth.whole_column`).
+        ht_v : float, optional
+            The high tension.
+        camera : CameraModel, optional
+            The camera, in the column's length unit.
+        hysteresis : dict, optional
+            Lens name -> :class:`~temgym_core.pyjem_simulator.electronics.LensHysteresis`.
+        magnification, diffraction_camera_length_m, spot : optional
+            The MAG row, DIFF row and spot the console starts on.
+        """
+        from .electronics import DeflectorDrive, LensDrive
+
+        rows = {mode: [r for i, r in enumerate(tables["rows"][mode])
+                       if all(r["mag"][0] > earlier["mag"][0] for earlier in tables["rows"][mode][:i])]
+                for mode in ("MAG", "DIFF")}
+        spots = {r["spot"]: {n: r[n] for n in ("CL1", "CL3", "CM")} for r in tables["spot_alpha"] if r["alpha"] == alpha}
+        electronics = Electronics({n: LensDrive(dac_per_unit=1.0) for n in PROJECTOR_LENSES},
+                                  DeflectorDrive(np.eye(4), reference_voltage_v=ht_v),      # not used
+                                  objective_dac=tuple(rows["MAG"][0][n] for n in OBJECTIVE_LENSES),
+                                  hysteresis=hysteresis or {})
+        scope = cls(OpticalTruth(column=None, voltages_v=(ht_v,), whole_column=whole_column), electronics,
+                    magnification_table={r["mag"][0]: {n: r[n] for n in PROJECTOR_LENSES} for r in rows["MAG"]},
+                    diffraction_table={r["mag"][0] / 1000: {n: r[n] for n in PROJECTOR_LENSES} for r in rows["DIFF"]},
+                    magnification=magnification, diffraction_camera_length_m=diffraction_camera_length_m,
+                    spot_table=spots, incident_beam=None, camera=camera, beam_current_a=beam_current_a,
+                    ray_sample_power=ray_sample_power, detector_samples_per_pixel=detector_samples_per_pixel, seed=seed)
+        if spot is not None:
+            scope.spot = int(spot)
+            scope.settle()
+        return scope
 
     def pyjem(self):
         """``TEM3, detector``: this microscope behind PyJEM's names, used exactly like PyJEM's
@@ -426,10 +535,28 @@ class SimulatedMicroscope:
         self.stage = [0.0, 0.0, 0.0, 0.0, 0.0]
         self.lens_memory = {}                # per lens with hysteresis: (the DAC value it has, its backlash elements)
         self.settle()
-        binning = max(self.camera.binnings)
-        shape, _, _ = self.camera.geometry(binning)
-        self.detector = {"inserted": True, "binning": binning, "exposure_us": 10_000.0, "frames": 1,
-                         "area": [0, 0, shape[1], shape[0]], "gain_index": 0, "offset_index": 0}
+        self.screen = 1                      # PyJEM detect3 screen: 0 lower screen, 1 the first camera, 2 the camera below
+        self.detectors = {}                  # per camera name: the detector settings a script can change
+        for name, model in self.camera_models.items():
+            binning = max(model.binnings)
+            shape, _, _ = model.geometry(binning)
+            self.detectors[name] = {"inserted": True, "binning": binning, "exposure_us": 10_000.0, "frames": 1,
+                                    "area": [0, 0, shape[1], shape[0]], "gain_index": 0, "offset_index": 0}
+
+    @property
+    def camera_models(self):
+        """Every camera's :class:`CameraModel` by name, from the top of the column down."""
+        return {self.camera.name: self.camera, **{name: c.model for name, c in self.lower_cameras.items()}}
+
+    @property
+    def detector(self):
+        """The first camera's detector settings."""
+        return self.detectors[self.camera.name]
+
+    def blocked_by(self, camera):
+        """The inserted cameras above ``camera`` (by name): while any is in, ``camera`` sees no beam."""
+        names = list(self.camera_models)
+        return [name for name in names[:names.index(camera)] if self.detectors[name]["inserted"]]
 
     @property
     def magnification(self):
@@ -471,7 +598,7 @@ class SimulatedMicroscope:
         if name in CONDENSER_LENSES:
             if self.truth.condenser is not None and name != "CL2":
                 return self.truth.condenser.table_dac(self.spot, name)
-            return self.condenser_dac.get(name, NEUTRAL_DAC)
+            return self.spot_table.get(self.spot, {}).get(name, self.condenser_dac.get(name, NEUTRAL_DAC))
         return NEUTRAL_DAC
 
     def lens_dac(self, name):
@@ -545,6 +672,14 @@ class SimulatedMicroscope:
             reasons.append("only the TEM probe mode is modelled")
         if self.alpha != 0:
             reasons.append("only alpha selector 0 is modelled")
+        if self.truth.whole_column is not None:  # the hidden optics take the whole console: nothing else to refuse
+            if reasons:
+                raise UnmodelledStateError(reasons)
+            lenses = tuple((n, float(NEUTRAL_DAC if self.lens_dac(n) is None else self.effective_dac(n)))
+                           for n in LENS_IDS)
+            deflectors = tuple((n, tuple(float(v) for v in pair)) for n, pair in self.deflectors.items())
+            return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=(), specimen_kick=(),
+                                   console=lenses + deflectors)
         for name in UNMODELLED_LENSES:
             if self.lens_dac(name) != NEUTRAL_DAC:
                 reasons.append(f"{name} is not modelled and must stay at {NEUTRAL_DAC}")
@@ -586,7 +721,7 @@ class SimulatedMicroscope:
         return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=projector_controls, specimen_kick=kick,
                                pla_kick=pla_kick, cl3_dac=cl3_dac)
 
-    def expected_image(self, setting, binning):
+    def expected_image(self, setting, binning, camera=None):
         """Mean transmitted fraction per output pixel for a setting (cached).
 
         Parameters
@@ -595,6 +730,8 @@ class SimulatedMicroscope:
             Physical controls.
         binning : int
             Camera binning.
+        camera : str, optional
+            The camera's name; the first camera by default.
 
         Returns
         -------
@@ -602,19 +739,32 @@ class SimulatedMicroscope:
             Read-only image per incident electron, full binned frame.
         """
         specimen = self.specimen
-        key = (setting, binning, self.ray_sample_power, self.detector_samples_per_pixel, id(specimen),
+        camera = camera or self.camera.name
+        model = self.camera_models[camera]
+        key = (setting, binning, camera, self.ray_sample_power, self.detector_samples_per_pixel, id(specimen),
                self.incident_beam)
         if key in self._images:
             self._images.move_to_end(key)
             return self._images[key]
-        projector = tuple(self.truth.column(np.asarray(setting.projector_controls), setting.voltage_v))
+        if setting.console is not None:          # the whole console in, the column from the source and its beam out
+            projector, start, mean, covariance = self.truth.whole_column(dict(setting.console), setting.voltage_v)
+            projector = tuple(projector)
+        else:
+            projector = tuple(self.truth.column(np.asarray(setting.projector_controls), setting.voltage_v))
         if self.truth.pla_z_m is not None:       # PLA's deflector, in front of the first component at or after its plane
             pla = Deflector(z=self.truth.pla_z_m, def_x=setting.pla_kick[0], def_y=setting.pla_kick[1])
             position = next((i for i, part in enumerate(projector) if part.z >= self.truth.pla_z_m), len(projector))
             projector = projector[:position] + (pla,) + projector[position:]
+        if camera in self.lower_cameras:         # a straight flight on, to where that camera is and how it is turned
+            lower = self.lower_cameras[camera]
+            z = projector[-1].z + lower.below_m
+            projector = projector + (Plane(z=z), Scanner(z=z, scan_pos_x=-lower.centre_m[0], scan_pos_y=-lower.centre_m[1]),
+                                     Rotator(z=z, angle=float(np.degrees(lower.rotation_rad))))
         column = tuple(projector) if specimen is None else (specimen, *projector)
         condenser = self.truth.condenser
-        if condenser is not None:                # from the source, through the condenser
+        if setting.console is not None:          # the beam and the whole column are already there
+            column = projector
+        elif condenser is not None:              # from the source, through the condenser
             hole, *position = setting.aperture
             column = condenser.components(dict(setting.condenser_dac), hole=hole, aperture_position_dac=position,
                                           specimen_kick=setting.specimen_kick,
@@ -626,8 +776,8 @@ class SimulatedMicroscope:
             size = b.rms_size_m if setting.cl3_dac is None else self.truth.beam_size(setting.cl3_dac)
             start, mean = 0.0, np.asarray(setting.specimen_kick, float)
             covariance = np.diag([size ** 2] * 2 + [b.rms_angle_rad ** 2] * 2)
-        shape, pitch, psf = self.camera.geometry(binning)
-        detector = Detector(z=0.0, shape=shape, pixel_size=(pitch, pitch), flip_y=not self.camera.mirrored)
+        shape, pitch, psf = model.geometry(binning)
+        detector = Detector(z=0.0, shape=shape, pixel_size=(pitch, pitch), flip_y=not model.mirrored)
         rays = sample_rays(mean, covariance, z=start, voltage=setting.voltage_v, sample_power=self.ray_sample_power)
         image = ray_image(rays, column, detector, samples_per_pixel=self.detector_samples_per_pixel, psf_sigma_pixels=psf)
         image.setflags(write=False)
@@ -636,14 +786,19 @@ class SimulatedMicroscope:
             self._images.popitem(last=False)
         return image
 
-    def acquire(self):
+    def acquire(self, camera=None):
         """Record one camera exposure with the current state and detector settings.
+
+        Parameters
+        ----------
+        camera : str, optional
+            The camera's name; the first camera by default.
 
         Returns
         -------
         numpy.ndarray
             Integer ADU frame (rows, columns) of the imaging area, in the camera's
-            output type.
+            output type. A camera below an inserted one sees no beam: its frame is dark.
 
         Raises
         ------
@@ -652,15 +807,16 @@ class SimulatedMicroscope:
         UnmodelledStateError
             If the beam is on and the state is not modelled.
         """
-        detector = self.detector
+        camera = camera or self.camera.name
+        model, detector = self.camera_models[camera], self.detectors[camera]
         if not detector["inserted"]:
-            raise RuntimeError(f"The {self.camera.name} detector is retracted.")
+            raise RuntimeError(f"The {camera} detector is retracted.")
         binning = detector["binning"]
-        shape, _, _ = self.camera.geometry(binning)
+        shape, _, _ = model.geometry(binning)
         x, y, width, height = detector["area"]
-        if self.beam_blank:
+        if self.beam_blank or self.blocked_by(camera) or self.screen == 0:
             expected = np.zeros(shape)
         else:
             incident = self.beam_current_a * detector["exposure_us"] * 1e-6 / elementary_charge
-            expected = self.expected_image(self.physical_setting(), binning) * incident
-        return self.camera.expose(expected[y:y + height, x:x + width], self.rng, detector["frames"])
+            expected = self.expected_image(self.physical_setting(), binning, camera) * incident
+        return model.expose(expected[y:y + height, x:x + width], self.rng, detector["frames"])

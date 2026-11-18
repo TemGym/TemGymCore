@@ -546,9 +546,9 @@ class ElectromagneticLens(Component):
     in excitation, with relativistic voltage factors. Nonzero Tc represents
     the body as two half-strength lenses separated by a drift.
 
-    Existing round-ray behaviour uses the optical axis even when x0/y0 are
-    set. Gaussian and stigmator paths use those offsets. This distinction is
-    retained here; it needs a separate physics correction and validation.
+    A lens that sits off the optical axis (x0, y0, in the beam length unit)
+    focuses and rotates about its own axis, for rays and Gaussian beams alike:
+    a ray on the optical axis is then deflected, differently at each excitation.
     """
 
     z: float
@@ -619,7 +619,7 @@ class ElectromagneticLens(Component):
         return stig(ray)
 
     def _apply_thin_lens_ray(self, ray: Ray, focal_length: float) -> Ray:
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        x, y, dx, dy = ray.x - self.x0 * ray._one, ray.y - self.y0 * ray._one, ray.dx, ray.dy
 
         new_dx = -x / focal_length + dx
         new_dy = -y / focal_length + dy
@@ -632,12 +632,13 @@ class ElectromagneticLens(Component):
         )
 
     def _apply_rotation_ray(self, ray: Ray, angle: float) -> Ray:
-        x, y, dx, dy = ray.x, ray.y, ray.dx, ray.dy
+        x0, y0 = self.x0 * ray._one, self.y0 * ray._one      # the rotation is about the lens's own axis
+        x, y, dx, dy = ray.x - x0, ray.y - y0, ray.dx, ray.dy
         cos_a = jnp.cos(angle)
         sin_a = jnp.sin(angle)
 
-        rot_x = cos_a * x - sin_a * y
-        rot_y = sin_a * x + cos_a * y
+        rot_x = x0 + cos_a * x - sin_a * y
+        rot_y = y0 + sin_a * x + cos_a * y
         rot_dx = cos_a * dx - sin_a * dy
         rot_dy = sin_a * dx + cos_a * dy
 
@@ -694,7 +695,8 @@ class ElectromagneticLens(Component):
             axis=-2,
         ).astype(jnp.float64)
 
-        r_xy_rot = _matvec(R, out.r_xy)
+        centre = jnp.stack((jnp.asarray(self.x0, float), jnp.asarray(self.y0, float)), axis=-1)
+        r_xy_rot = centre + _matvec(R, out.r_xy - centre)    # about the lens's own axis
         d_xy_rot = _matvec(R, out.d_xy)
         Q_rot = _rotate_quadratic_form(R, out.Q_inv)
 

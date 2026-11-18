@@ -529,7 +529,7 @@ class Stage3(_Accessor):
 
 # ------------------------------------------------------------------ detector
 class Detector:
-    """PyJEM ``detector.Detector(name)`` for the virtual camera.
+    """PyJEM ``detector.Detector(name)`` for one of the virtual cameras.
 
     Parameters
     ----------
@@ -540,9 +540,17 @@ class Detector:
     _scope = None
 
     def __init__(self, name):
-        if name != self._scope.camera.name:
-            raise ValueError(f"No detector named {name!r}; attached: [{self._scope.camera.name!r}].")
+        if name not in self._scope.camera_models:
+            raise ValueError(f"No detector named {name!r}; attached: {list(self._scope.camera_models)}.")
         self.name = name
+
+    @property
+    def _camera(self):
+        return self._scope.camera_models[self.name]
+
+    @property
+    def _state(self):
+        return self._scope.detectors[self.name]
 
     def __getattr__(self, name):
         if name.startswith("_"):
@@ -551,16 +559,16 @@ class Detector:
 
     def get_detectorsetting(self):
         """Return the detector settings dictionary (PyJEM keys)."""
-        s, camera = self._scope, self._scope.camera
-        x, y, width, height = s.detector["area"]
-        _, pitch, _ = camera.geometry(s.detector["binning"])
+        state, camera = self._state, self._camera
+        x, y, width, height = state["area"]
+        _, pitch, _ = camera.geometry(state["binning"])
         return {
             "ImagingArea": {"X": x, "Y": y, "Width": width, "Height": height},
-            "BinningSize": s.detector["binning"],
-            "ExposureTimeValue": s.detector["exposure_us"],
-            "GainIndex": s.detector["gain_index"],
-            "OffsetIndex": s.detector["offset_index"],
-            "frameIntegration": s.detector["frames"],
+            "BinningSize": state["binning"],
+            "ExposureTimeValue": state["exposure_us"],
+            "GainIndex": state["gain_index"],
+            "OffsetIndex": state["offset_index"],
+            "frameIntegration": state["frames"],
             "scanMode": 0,
             "OutputImageInformation": {"DataBits": camera.data_bits,
                                        "ImageSize": width * height * camera.dtype.itemsize,
@@ -580,12 +588,12 @@ class Detector:
             frames = setting["frameIntegration"]
             if isinstance(frames, bool) or int(frames) != frames or int(frames) < 1:
                 raise ValueError(f"frameIntegration must be a positive integer, not {frames!r}.")
-            self._scope.detector["frames"] = int(frames)
+            self._state["frames"] = int(frames)
         return self.get_detectorsetting()
 
     def _set_binning(self, binning):
-        shape, _, _ = self._scope.camera.geometry(int(binning))
-        self._scope.detector.update(binning=int(binning), area=[0, 0, shape[1], shape[0]])
+        shape, _, _ = self._camera.geometry(int(binning))
+        self._state.update(binning=int(binning), area=[0, 0, shape[1], shape[0]])
 
     def set_binningindex(self, index):
         """Select binning ``2**index`` (an assumption: PyJEM does not document the index)."""
@@ -597,21 +605,21 @@ class Detector:
         value = float(value)
         if not np.isfinite(value) or value <= 0:
             raise ValueError("The exposure time must be positive (µs).")
-        self._scope.detector["exposure_us"] = value
+        self._state["exposure_us"] = value
         return self.get_detectorsetting()
 
     def set_imaging_area(self, width, height, x=0, y=0):
         """Read out a ``width`` x ``height`` window at ``x, y`` (binned pixels)."""
-        shape, _, _ = self._scope.camera.geometry(self._scope.detector["binning"])
+        shape, _, _ = self._camera.geometry(self._state["binning"])
         if not (0 <= x < shape[1] and 0 <= y < shape[0] and 0 < width <= shape[1] - x
                 and 0 < height <= shape[0] - y):
             raise ValueError(f"Imaging area {width}x{height}+{x}+{y} does not fit the {shape} frame.")
-        self._scope.detector["area"] = [int(x), int(y), int(width), int(height)]
+        self._state["area"] = [int(x), int(y), int(width), int(height)]
         return self.get_detectorsetting()
 
     def snapshot_rawdata(self):
         """Acquire one frame and return its raw little-endian pixel bytes (rows of width ``Width``)."""
-        return self._scope.acquire().tobytes()
+        return self._scope.acquire(self.name).tobytes()
 
     def livestart(self):
         """Start live view (no effect)."""
@@ -622,18 +630,36 @@ class Detector:
         return {"status": "OK"}
 
     def insert(self):
-        """Insert the camera."""
-        self._scope.detector["inserted"] = True
+        """Insert the camera (it then blocks the beam to every camera below it)."""
+        self._state["inserted"] = True
         return {"status": "OK"}
 
     def retract(self):
         """Retract the camera."""
-        self._scope.detector["inserted"] = False
+        self._state["inserted"] = False
         return {"status": "OK"}
 
     def get_insert_state(self):
         """Return ``True`` when the camera is inserted."""
-        return bool(self._scope.detector["inserted"])
+        return bool(self._state["inserted"])
+
+
+class Detector3(_Accessor):
+    """PyJEM ``TEM3.Detector3``: the screen, which decides which camera the beam reaches.
+
+    0: the lower (fluorescent) screen is down, no camera sees the beam; 1: the beam reaches the first camera
+    (the SightX view camera); 2: the first camera is out of the way and the beam reaches the camera below it.
+    """
+
+    def getScreen(self):
+        """Return the screen position (0, 1 or 2)."""
+        return self._scope.screen
+
+    def setScreen(self, position):
+        """Move the screen to 0, 1 or 2."""
+        position = self._choice(position, {0, 1, 2}, "screen position")
+        self._scope.screen = position
+        self._scope.detectors[self._scope.camera.name]["inserted"] = position != 2
 
 
 # -------------------------------------------------------------- module glue
@@ -666,7 +692,7 @@ def pyjem_interface(scope):
     exception = types.ModuleType("PyJEM.TEM3.exception")
     exception.TEMError, exception.ErrorTypeKind, exception.ErrorCodeKind = TEMError, ErrorTypeKind, ErrorCodeKind
     tem3 = types.ModuleType("PyJEM.TEM3", "Virtual-microscope emulation of PyJEM.TEM3 (PyJEM 1.4).")
-    for cls in (Lens3, Def3, EOS3, HT3, Apt3, Stage3):
+    for cls in (Lens3, Def3, EOS3, HT3, Apt3, Stage3, Detector3):
         members = {"_scope": scope, "__doc__": cls.__doc__}
         if cls in (Lens3, EOS3):             # calls that can change a lens: let the lenses settle after each
             members.update({name: _then_settle(getattr(cls, name)) for name in dir(cls)
@@ -679,7 +705,7 @@ def pyjem_interface(scope):
     tem3.exception, tem3.TEMError = exception, TEMError
     det = types.ModuleType("PyJEM.detector", "Virtual-microscope emulation of PyJEM.detector (PyJEM 1.4).")
     det.Detector = type("Detector", (Detector,), {"_scope": scope, "__doc__": Detector.__doc__})
-    det.get_attached_detector = lambda: [scope.camera.name]
+    det.get_attached_detector = lambda: list(scope.camera_models)
     det.check_connection = lambda timeout=3.0: True
     return tem3, det
 

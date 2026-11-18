@@ -454,3 +454,111 @@ def test_a_lens_with_hysteresis_shows_the_route_through_pyjem():
     from_above = control_after([value + 3000, value])
     assert from_above - from_below == pytest.approx(2 * 0.01 * 500)
     assert lens.GetIL1() == value                               # the console shows the DAC value, not the lag
+
+
+def test_a_lower_camera_sees_a_straight_flight_on_and_only_while_the_camera_above_is_out():
+    """The second camera is a straight flight below the first: dark while the first is in; then the beam, moved by
+    position + flight x slope, turned and measured from its own middle."""
+    from temgym_core.pyjem_simulator import LowerCamera
+    scope = microscope(ray_sample_power=14)
+    scope.lower_cameras = {"lower": LowerCamera(model=CameraModel(name="lower", sensor_shape=(512, 512), sensor_pixel_m=55e-6,
+                                                                    psf_sigma_sensor_pixels=2.0, binnings=(8,)),
+                                                below_m=0.2, rotation_rad=0.5, centre_m=(0.0, 0.0))}
+    scope.reset()
+    _, detector = scope.pyjem()
+    assert detector.get_attached_detector() == ["camera", "lower"]
+    upper, lower = detector.Detector("camera"), detector.Detector("lower")
+    frame = lambda camera: np.frombuffer(camera.snapshot_rawdata(), "<i4").reshape(64, 64)
+    assert frame(lower).max() < 30 and scope.blocked_by("lower") == ["camera"]       # only its own background
+    upper.retract()
+    with pytest.raises(RuntimeError):
+        frame(upper)
+
+    def moved(camera, kick):
+        scope.deflectors["CLA1"] = [32768 + kick, 32768]
+        there = spot(frame(camera))[0]
+        scope.deflectors["CLA1"] = [32768 - kick, 32768]
+        return (there - spot(frame(camera))[0]) / 2
+
+    below = moved(lower, 6000)
+    upper.insert()
+    above = moved(upper, 6000)
+    from temgym_core.run import column_matrix
+    matrix = np.asarray(column_matrix(column(scope.physical_setting().projector_controls, 200e3), voltage=200e3))
+    a, c = complex(matrix[0, 0], matrix[1, 0]), complex(matrix[2, 0], matrix[3, 0])
+    # y runs down the rows of this (mirrored) camera, so its x + iy is the column's, conjugated
+    assert above.conjugate() == pytest.approx(a * 6000 * 1e-11 / 440e-6, rel=0.01)
+    assert (below / above).conjugate() == pytest.approx((a + 0.2 * c) / a * np.exp(0.5j), rel=0.01)
+
+
+def test_the_virtual_neoarm_has_a_merlin_below_its_screen_camera():
+    scope = SimulatedMicroscope.from_file(VIRTUAL_NEOARM / "virtual_neoarm.json", ht_v=200e3, magnification=40000,
+                                          condenser_path=VIRTUAL_NEOARM / "condenser.json", ray_sample_power=12,
+                                          detector_samples_per_pixel=1)
+    _, detector = scope.pyjem()
+    assert detector.get_attached_detector() == ["screenCamera", "merlin"]
+    merlin = detector.Detector("merlin")
+    settings = merlin.get_detectorsetting()
+    assert (settings["ImagingArea"]["Width"], settings["ImagingArea"]["Height"]) == (512, 512)
+    assert settings["OutputImageInformation"]["PixelsPerMeter"] == pytest.approx(1 / 55e-6)
+    assert np.frombuffer(merlin.snapshot_rawdata(), "<i4").max() == 0             # the screen camera is in the way
+    detector.Detector("screenCamera").retract()
+    assert np.frombuffer(merlin.snapshot_rawdata(), "<i4").sum() > 1000
+
+
+def test_the_screen_decides_which_camera_sees_the_beam():
+    scope = SimulatedMicroscope.from_file(VIRTUAL_NEOARM / "virtual_neoarm.json", ht_v=200e3, magnification=40000,
+                                          condenser_path=VIRTUAL_NEOARM / "condenser.json", ray_sample_power=12,
+                                          detector_samples_per_pixel=1)
+    tem3, detector = scope.pyjem()
+    screen, merlin, sightx = tem3.Detector3(), detector.Detector("merlin"), detector.Detector("screenCamera")
+    assert screen.getScreen() == 1                                                  # the SightX sees the beam
+    lit = np.frombuffer(sightx.snapshot_rawdata(), "<i4").sum()
+    assert lit > 1000
+    assert np.frombuffer(merlin.snapshot_rawdata(), "<i4").max() == 0
+    screen.setScreen(2)                                                             # raised: the Merlin sees it
+    assert screen.getScreen() == 2
+    assert np.frombuffer(merlin.snapshot_rawdata(), "<i4").sum() > 1000
+    screen.setScreen(0)                                                             # lower screen: nobody does
+    assert np.frombuffer(merlin.snapshot_rawdata(), "<i4").max() == 0
+    assert abs(np.frombuffer(sightx.snapshot_rawdata(), "<i4").sum()) < 0.05 * lit   # background and read noise only
+    with pytest.raises(Exception):
+        screen.setScreen(3)
+
+
+def test_a_hidden_column_of_the_whole_console_behind_a_real_consoles_tables():
+    """With ``whole_column`` every lens and deflector reaches the hidden optics (IS1 too, otherwise refused); with
+    ``from_console`` rows and spots load the console's own lens values, in the console's order."""
+    from temgym_core.components import Scanner
+
+    row = lambda value, unit, il1: dict(mag=[value, unit, str(value)], IL1=il1, IL2=30000, IL3=30000, PL1=64000,
+                                        OLc=45818, OLf=39269)
+    tables = dict(rows=dict(MAG=[row(8000, "X", 27185), row(40000, "X", 41782)],
+                            DIFF=[row(80, "mm", 20500), row(400, "mm", 20771), row(333, "mm", 20000)]),
+                  spot_alpha=[dict(spot=s, alpha=a, CL1=26112 + 2560 * s, CL3=30000 + 100 * a, CM=58624)
+                              for s in (0, 1, 2) for a in (0, 1)])
+
+    def whole_column(console, voltage_v):
+        # IS1 shifts the beam along x, IL1 along y: 1 pixel (440 um) per 100 DAC units
+        shift = Scanner(z=0.0, scan_pos_x=4.4e-6 * (console["IS1"][0] - 32768), scan_pos_y=4.4e-6 * (console["IL1"] - 41782))
+        return [shift, Plane(z=1.0)], 0.0, np.zeros(4), np.diag([1e-3 ** 2] * 2 + [1e-12] * 2)
+
+    scope = SimulatedMicroscope.from_console(tables, whole_column, camera=SMALL_CAMERA, magnification=40000, spot=1,
+                                             ray_sample_power=12)
+    TEM3, detector = scope.pyjem()
+    lens, deflector, eos = TEM3.Lens3(), TEM3.Def3(), TEM3.EOS3()
+    assert (lens.GetIL1(), lens.GetCL1(), lens.GetCL3(), lens.GetOLf()) == (41782, 28672, 30000, 39269)
+    start = spot(scope.acquire())[0]
+    deflector.SetIS1(32768 + 500, 32768)                    # a deflector the other optics refuse
+    lens.SetFLCAbs(10, 41782 + 300); lens.SetFLCSw(10, 1)
+    moved = spot(scope.acquire())[0] - start
+    assert np.allclose([abs(moved.real), abs(moved.imag)], [5.0, 3.0], atol=0.15)
+    eos.SelectSpotSize(2)
+    assert lens.GetCL1() == 31232
+    lens.SetFLCSw(10, 0)
+    eos.SetSelector(0)
+    assert lens.GetIL1() == 27185
+    eos.SelectFunctionMode(4)
+    assert [lens.GetIL1(), eos.SetSelector(1), lens.GetIL1()] == [20500, None, 20771]
+    with pytest.raises(Exception):
+        eos.SetSelector(2)                                  # the row out of order was left out

@@ -20,6 +20,14 @@ the plane of PL1) and the objective's Seidel field aberrations, acting by where 
 `diffraction_camera_length_m=` chooses the camera length the DIFF selector starts on, as a console left on it. Any other hidden column can be
 given directly to `SimulatedMicroscope(OpticalTruth(column=...), ...)`.
 
+A hidden column may also take the **whole console**: `SimulatedMicroscope.from_console(tables, whole_column, ...)`
+puts any function `whole_column(console, voltage_v)` behind a real console's lens tables (the file
+`record_console_tables.py` saves). `console` holds every lens's DAC value (with its hysteresis lag) and every
+deflector's DAC pair; the function returns the TemGym components from the source to the camera and the beam at the
+source. Every lens and deflector may then be changed (IS1, IS2, PLA, CL1, CM, ...); selecting a row sets IL1-IL3 and
+PL1, selecting a spot sets CL1, CL3 and CM. Used by
+[`examples/microscope_inversion/neoarm_predictor_offline.ipynb`](../../../examples/microscope_inversion/neoarm_predictor_offline.ipynb).
+
 or, for an unmodified script that does `from PyJEM import TEM3, detector`:
 
 ```python

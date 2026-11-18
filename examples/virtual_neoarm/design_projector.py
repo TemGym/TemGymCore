@@ -74,6 +74,12 @@ KICK_PER_DAC = [[3.253059162429868e-10, 2.2492235538637627e-12, 0, 0], [0.0, -3.
 CAMERA = dict(name="screenCamera", sensor_shape=[1916, 1916], sensor_pixel_m=2.75e-05, binnings=[1, 2, 4],
               psf_sigma_sensor_pixels=4.0, mirrored=False)
 CAMERA_ROTATION_RAD = -1.0194177199619057
+# A second camera further down: a Merlin (512 x 512 px of 55 um). Where it is, how it is turned and where its middle
+# sits are placeholders, not measured: a fit has to find them without being told.
+MERLIN = dict(below_camera_m=0.45, rotation_rad=0.3, centre_m=[0.6e-3, -0.4e-3],
+              camera=dict(name="merlin", sensor_shape=[512, 512], sensor_pixel_m=55e-6, binnings=[1],
+                          psf_sigma_sensor_pixels=0.5, read_noise_electrons=0.0, background_electrons=0.0,
+                          mirrored=False))
 OBJECTIVE_DAC = {"OLc": 45818, "OLf": 38938}
 CONDENSER_DAC = {"CL1": 31232, "CL2": 0, "CL3": 33866, "CM": 26624}
 
@@ -173,12 +179,13 @@ virtual = dict(
                 "IL1-IL3 and PL1 (TemGym ElectromagneticLens) with a lens table solved so that every MAG row is in "
                 "focus at its labelled magnification and every DIFF row has its labelled camera length. Carried over "
                 "from the real NEOARM (2026-11-10): the CLA1/CLA2 response on the camera (kick_per_dac), the camera, "
-                "the objective and condenser DAC values. The condenser is in condenser.json.",
+                "the objective and condenser DAC values. The second camera (lower_cameras: a Merlin) is a placeholder. "
+                "The condenser is in condenser.json.",
     reference_voltage_v=VOLTAGE,
     lenses=dict(objective=dict(z_m=OBJECTIVE_Z, ampere_turns=1.0, Gc=OBJECTIVE_GC),
                 **{n: dict(z_m=LENS_Z[n], ampere_turns_per_dac=WINDING[n] * AMPERE_TURNS_PER_DAC, Gc=Gc[n],
                            Tc=THICKNESS_PER_AMPERE_TURN, offset_m=list(OFFSET_M[n])) for n in LENSES}),
-    camera_z_m=CAMERA_Z, camera_rotation_rad=CAMERA_ROTATION_RAD, camera=CAMERA,
+    camera_z_m=CAMERA_Z, camera_rotation_rad=CAMERA_ROTATION_RAD, camera=CAMERA, lower_cameras=[MERLIN],
     deflectors=dict(kick_per_dac=KICK_PER_DAC),
     objective_dac=OBJECTIVE_DAC, condenser_dac=CONDENSER_DAC,
     hysteresis={n: HYSTERESIS for n in LENSES_WITH_HYSTERESIS},

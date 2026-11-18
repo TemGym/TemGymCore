@@ -1,5 +1,5 @@
 {
- "description": "The virtual NEOARM at 200 kV, designed by design_projector.py (not fitted): a plausible objective, IL1-IL3 and PL1 (TemGym ElectromagneticLens) with a lens table solved so that every MAG row is in focus at its labelled magnification and every DIFF row has its labelled camera length. Carried over from the real NEOARM (2026-11-10): the CLA1/CLA2 response on the camera (kick_per_dac), the camera, the objective and condenser DAC values. The condenser is in condenser.json.",
+ "description": "The virtual NEOARM at 200 kV, designed by design_projector.py (not fitted): a plausible objective, IL1-IL3 and PL1 (TemGym ElectromagneticLens) with a lens table solved so that every MAG row is in focus at its labelled magnification and every DIFF row has its labelled camera length. Carried over from the real NEOARM (2026-11-10): the CLA1/CLA2 response on the camera (kick_per_dac), the camera, the objective and condenser DAC values. The second camera (lower_cameras: a Merlin) is a placeholder. The condenser is in condenser.json.",
  "reference_voltage_v": 200000.0,
  "lenses": {
   "objective": {
@@ -65,6 +65,31 @@
   "psf_sigma_sensor_pixels": 4.0,
   "mirrored": false
  },
+ "lower_cameras": [
+  {
+   "below_camera_m": 0.45,
+   "rotation_rad": 0.3,
+   "centre_m": [
+    0.0006,
+    -0.0004
+   ],
+   "camera": {
+    "name": "merlin",
+    "sensor_shape": [
+     512,
+     512
+    ],
+    "sensor_pixel_m": 5.5e-05,
+    "binnings": [
+     1
+    ],
+    "psf_sigma_sensor_pixels": 0.5,
+    "read_noise_electrons": 0.0,
+    "background_electrons": 0.0,
+    "mirrored": false
+   }
+  }
+ ],
  "deflectors": {
   "kick_per_dac": [
    [

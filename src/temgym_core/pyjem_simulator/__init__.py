@@ -12,6 +12,7 @@ from .electronics import DeflectorDrive, Electronics, LensDrive, LensHysteresis,
 from .pyjem import ErrorCodeKind, ErrorTypeKind, NotEmulatedError, TEMError, pyjem_interface, install
 from .seidel_plate import SeidelPlate
 from .microscope import (
+    LowerCamera,
     OpticalTruth,
     PhysicalSetting,
     SpecimenBeam,
@@ -28,6 +29,7 @@ __all__ = [
     "ErrorTypeKind",
     "LensDrive",
     "LensHysteresis",
+    "LowerCamera",
     "NotEmulatedError",
     "OpticalTruth",
     "SeidelPlate",
