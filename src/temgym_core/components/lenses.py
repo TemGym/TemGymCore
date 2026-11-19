@@ -709,6 +709,130 @@ class ElectromagneticLens(Component):
         )
 
 
+#: The constant of Lenz's tanh model of a pole-piece field. Each pole edge has a width of about
+#: bore_radius / LENZ_WIDTH. This value is in the model as the NEOARM work used it. Its literature
+#: source is not yet checked.
+LENZ_WIDTH = 1.318
+#: Fourth-order Runge-Kutta steps across a pole-piece field. At 3 rad of rotation the error of the
+#: transfer matrix is about 1e-6.
+POLE_PIECE_STEPS = 200
+
+
+@jdc.pytree_dataclass
+class PolePieceLens(Component):
+    """A magnetic lens with the field of two iron pole pieces (Lenz's model).
+
+    The axial field of a gap ``S`` between two bores of radius ``R`` is
+
+    .. math::
+
+        B(z) = \\frac{\\mu_0 NI}{2S}\\left[\\tanh\\frac{1.318\\,(z + S/2)}{R}
+               - \\tanh\\frac{1.318\\,(z - S/2)}{R}\\right].
+
+    Its integral along the axis is exactly :math:`\\mu_0 NI` (Ampere's law), so the image
+    rotation is ``Rc * NI``, as for :class:`ElectromagneticLens`. The gap and the bore set
+    how strongly the lens focuses, so the lens needs no strength constant. The lens is not
+    thin. A strong lens can focus less than a thin lens with the same field, and its
+    principal planes move.
+
+    The component acts at its centre plane ``z``. It maps the straight-line asymptotes of a
+    ray before the field to those after it, from a fourth-order Runge-Kutta integration of
+    the paraxial ray equation. Rays outside the field are exact. Inside the field they are
+    the asymptotes, as for :class:`ThickLens`. The lens accepts rays only.
+
+    Parameters
+    ----------
+    z : float
+        Centre of the gap, in the beam length unit.
+    turns : float
+        Number of turns of the coil.
+    current : float
+        Coil current in amperes. ``turns * current`` is the excitation in ampere-turns.
+    gap : float
+        Distance between the pole faces, in the beam length unit.
+    bore_radius : float
+        Radius of the bores, in the beam length unit.
+    x0, y0 : float
+        Axis of the lens, in the beam length unit. A lens off the optical axis focuses and
+        rotates about its own axis.
+    """
+
+    z: float
+    turns: float
+    current: float
+    gap: float
+    bore_radius: float
+    x0: float = 0.0
+    y0: float = 0.0
+
+    @property
+    def excitation(self) -> float:
+        """The excitation NI in ampere-turns."""
+        return self.turns * self.current
+
+    def rotation_angle(self, voltage: float) -> float:
+        """Image rotation in radians: ``Rc * NI``."""
+        return compute_Rc_from_voltage(voltage) * self.excitation
+
+    def field_shape(self, z: jnp.ndarray) -> jnp.ndarray:
+        """Return B(z) / (mu0 NI) at distance ``z`` from the centre, per beam length unit.
+
+        The shape integrates to 1 along the axis.
+        """
+        S, R = self.gap, self.bore_radius
+        return (jnp.tanh(LENZ_WIDTH * (z + S / 2) / R)
+                - jnp.tanh(LENZ_WIDTH * (z - S / 2) / R)) / (2 * S)
+
+    def transfer_matrix(self, voltage: float) -> jnp.ndarray:
+        """The 2x2 matrix from centre plane to centre plane, in the rotating frame.
+
+        It acts on (r, r') and holds the focusing alone. Entries broadcast over ``voltage``.
+        The ``[1, 0]`` entry is ``-1 / f``.
+        """
+        larmor = self.rotation_angle(voltage)
+        half_width = self.gap / 2 + 6 * self.bore_radius / LENZ_WIDTH   # tanh(6) = 1 - 1.2e-5
+        h = 2 * half_width / POLE_PIECE_STEPS
+
+        def slope(z, m):
+            r, dr = m
+            return jnp.stack([dr, -(larmor * self.field_shape(z)) ** 2 * r])
+
+        def rk4(m, i):
+            z = -half_width + i * h
+            k1 = slope(z, m)
+            k2 = slope(z + h / 2, m + h / 2 * k1)
+            k3 = slope(z + h / 2, m + h / 2 * k2)
+            k4 = slope(z + h, m + h * k3)
+            return m + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4), None
+
+        one, zero = jnp.ones_like(larmor), jnp.zeros_like(larmor)
+        start = jnp.stack([jnp.stack([one, zero]), jnp.stack([zero, one])], axis=1)   # (r, r') x two rays
+        m, _ = lax.scan(rk4, start, jnp.arange(POLE_PIECE_STEPS))
+        back = jnp.array([[1.0, -half_width], [0.0, 1.0]])           # from the field's ends to the centre
+        return jnp.einsum("ij,jk...,kl->il...", back, m, back)
+
+    def _call_ray(self, ray: Ray) -> Ray:
+        m = self.transfer_matrix(ray.voltage)
+        angle = self.rotation_angle(ray.voltage)
+        cos_a, sin_a = jnp.cos(angle), jnp.sin(angle)
+        x0, y0 = self.x0 * ray._one, self.y0 * ray._one
+        x, y, dx, dy = ray.x - x0, ray.y - y0, ray.dx, ray.dy
+        fx, fy = m[0, 0] * x + m[0, 1] * dx, m[0, 0] * y + m[0, 1] * dy
+        fdx, fdy = m[1, 0] * x + m[1, 1] * dx, m[1, 0] * y + m[1, 1] * dy
+        # The excess optical path of a linear map is half the change of r . r'.
+        pathlength = ray.pathlength + 0.5 * (fx * fdx + fy * fdy - x * dx - y * dy)
+        return ray.derive(
+            x=x0 + cos_a * fx - sin_a * fy,
+            y=y0 + sin_a * fx + cos_a * fy,
+            dx=cos_a * fdx - sin_a * fdy,
+            dy=sin_a * fdx + cos_a * fdy,
+            pathlength=pathlength,
+        )
+
+    def _call_gaussian(self, ray: GaussianBeam):
+        raise NotImplementedError("PolePieceLens is implemented for rays only.")
+
+
 @jdc.pytree_dataclass(kw_only=True)
 class FourierTransform:
     """Explicit drift(f) → lens(f) → drift(f) for rays or Gaussians."""

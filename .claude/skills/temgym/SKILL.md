@@ -83,6 +83,7 @@ Read these before the first line of code, each time. Do not work from memory.
 | Element | Component | Module |
 |---|---|---|
 | Round magnetic lens with rotation and a field of finite length | `ElectromagneticLens` | `components/lenses.py` |
+| Round magnetic lens of iron pole pieces, set by its gap and bore radius (Lenz's field; not thin, rays only) | `PolePieceLens` | `components/lenses.py` |
 | Ideal thin lens | `Lens` | `components/lenses.py` |
 | Deflector coil, one stage | `Deflector` | `components/deflection.py` |
 | Deflector coil, two stages | `DoubleDeflector` | `components/deflection.py` |

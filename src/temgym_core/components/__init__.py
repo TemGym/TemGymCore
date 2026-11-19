@@ -32,6 +32,7 @@ from .lenses import (
     HardEdgeSolenoid,
     RotatingLens,
     ElectromagneticLens,
+    PolePieceLens,
     FourierTransform,
 )
 from .deflection import (
@@ -93,6 +94,7 @@ __all__ = [
     "Biprism",
     "RotatingLens",
     "ElectromagneticLens",
+    "PolePieceLens",
     "ABCDTransfer",
     "SigmoidAperture",
     "ConstantPhaseShift",

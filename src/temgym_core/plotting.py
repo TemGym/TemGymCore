@@ -23,6 +23,7 @@ from .components import (
     HardEdgeSolenoid,
     Lens,
     PhaseBiprism,
+    PolePieceLens,
     SigmoidAperture,
 )
 from .ray import Ray
@@ -326,7 +327,7 @@ def _compute_cumulative_rotation(
         # Propagation step – no rotation change
         angles.append(np.asarray(cum, dtype=float).copy())
         # Component application step
-        if isinstance(c, _EMLens):
+        if isinstance(c, (_EMLens, PolePieceLens)):
             cum = np.asarray(cum, dtype=float) + np.asarray(
                 c.rotation_angle(voltage_use), dtype=float
             )
@@ -626,7 +627,7 @@ def plot_model(
         elif isinstance(c, Deflector):
             _label_component(ax, label_x, c.z, name, p)
             _draw_deflector(c.z)
-        elif isinstance(c, (Lens, HardEdgeSolenoid, ElectromagneticLens)):
+        elif isinstance(c, (Lens, HardEdgeSolenoid, ElectromagneticLens, PolePieceLens)):
             # A finite solenoid, or a thick electromagnetic lens, is drawn as a lens at its centre.
             body = getattr(c, "length", None)
             if body is None and isinstance(c, ElectromagneticLens):

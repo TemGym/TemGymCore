@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `PolePieceLens`: a magnetic lens with Lenz's field of two iron pole pieces, set by its gap
+  and bore radius. Excitation is `turns * current` as for `ElectromagneticLens`, and the image
+  rotation is the same. The lens is not thin. A fourth-order Runge-Kutta integration across
+  the field gives its centre-to-centre ray map, so a strong lens can focus less than a thin
+  lens of the same field. The lens accepts rays only.
 - `temgym_core.render`: the differentiable GPU renderer behind `evaluate_gaussians`. Three JAX
   primitives (forward field, tangent map, adjoint map) with hand-written Pallas/Triton float64
   kernels make `method="sparse"` and `method="dense"` first-order differentiable with `jit`,
