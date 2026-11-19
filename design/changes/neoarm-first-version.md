@@ -1,7 +1,9 @@
 # Build plan: the first version of the NEOARM predictor
 
-Date: 2026-11-19. Status: stages 1, 2, 2b, 3 and 4 are built (2026-11-19). The build stops
-after stage 4 for the principal's review of the jemwrap interface (B3).
+Date: 2026-11-19. Status: stages 1, 2, 2b, 3, 4 and 5 are built (2026-11-19). Stage 5 is
+`examples/neoarm/record_lens_changes.py`. It has run on the simulated NEOARM only: 862 frames in
+4 minutes with no settle waits. On the real NEOARM it should take about 40 minutes. A fresh agent
+reviewed it, and its five findings are fixed. Ctrl-C part way leaves the start values (E6).
 
 This plan says what the first version contains, in which order the agent builds it, and
 how each stage is checked. Requirement and example numbers refer to `../requirements.md`

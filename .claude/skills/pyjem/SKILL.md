@@ -77,6 +77,15 @@ its `Neoarm` object as a pattern. They have the wrappers that this skill removes
     from PyJEM import TEM3, detector, sightx
     ```
 
+    The simulated microscope needs no spacing and no time to settle. The switch also sets the
+    spacing to 1 ms and every wait to zero, so that a rehearsal takes minutes:
+
+    ```python
+    monitor = MicroscopeMonitor(adapter=adapter, rate_hz=1000.0 if SIMULATED else 10.0)
+    if SIMULATED:
+        SETTLE_S = 0.0
+    ```
+
     Run the script on the simulated microscope and report the output before you hand the
     script over.
 
@@ -127,12 +136,16 @@ from jemwrap import MicroscopeMonitor, PyJEMAdapter
 from jemwrap.control import read_value, restore, set_value, settable_snapshot, take_frame
 
 adapter = PyJEMAdapter(connect=not SIMULATED, tem3_module=TEM3, detector_module=detector, sightx_module=sightx)
-monitor = MicroscopeMonitor(adapter=adapter)
+# jemwrap spaces the calls to the real NEOARM by 0.1 s. The simulated NEOARM needs no spacing.
+monitor = MicroscopeMonitor(adapter=adapter, rate_hz=1000.0 if SIMULATED else 10.0)
 
 # A kick of 200 units moves the beam about 40 px at MAG 40k (recording of 2026-11-12).
 KICKS_DAC = (-400, -200, 0, 200, 400)
 # The wait after each change of CLA1, before a frame. This time is a choice. No measurement gives it.
 SETTLE_S = 0.2
+# The simulated NEOARM has no time to settle, so a rehearsal does not wait.
+if SIMULATED:
+    SETTLE_S = 0.0
 
 # Every value that a script may change, for the restore at the end.
 start = settable_snapshot(monitor)

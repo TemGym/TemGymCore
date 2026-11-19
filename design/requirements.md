@@ -331,6 +331,10 @@ See `stakeholders.md`.
   `[record]` On 2026-11-19 no model followed the console table in MAG and DIFF together
   (M10). Whether one model meets R22 in DIFF as well as in MAG is open until the recording of
   stage 5.
+- R32 `[answered]` A focused DIFF spot on the SightX, with no specimen and CL3 at the console
+  value, is safe for the camera (the principal, 2026-11-19). The settle waits of
+  `record_lens_changes.py` are accepted: 2 s after a change of mode, 1 s after a row, 0.5 s after
+  a lens and 0.2 s after a deflector.
 - R29 `[answered]` A calibration recording can take any length of time that is not hours
   of waiting.
 

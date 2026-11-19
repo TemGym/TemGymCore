@@ -33,13 +33,18 @@ from jemwrap.control import (  # noqa: E402
 adapter = PyJEMAdapter(
     connect=not SIMULATED, tem3_module=TEM3, detector_module=detector, sightx_module=sightx
 )
-monitor = MicroscopeMonitor(adapter=adapter)
+# jemwrap spaces the calls to the real NEOARM by 0.1 s (requirement R16). The simulated NEOARM
+# needs no spacing, so a rehearsal spaces its calls by 1 ms.
+monitor = MicroscopeMonitor(adapter=adapter, rate_hz=1000.0 if SIMULATED else 10.0)
 
 # A kick of 200 units moves the beam about 40 px at MAG 40k (recording of 2026-11-12).
 KICKS_DAC = (-400, -200, 0, 200, 400)
 # The wait after each change of CLA1, before a frame. This time is a choice. No measurement gives
 # it.
 SETTLE_S = 0.2
+# The simulated NEOARM has no time to settle, so a rehearsal does not wait.
+if SIMULATED:
+    SETTLE_S = 0.0
 
 # Every value that a script may change, for the restore at the end.
 start = settable_snapshot(monitor)

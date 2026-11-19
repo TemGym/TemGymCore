@@ -53,3 +53,6 @@ examples/microscope_inversion/at_the_microscope/output/
 
 # A separate repository with a bundled copy of PyJEM. It must not be committed here.
 /jemwrap/
+
+# Recordings of the scripts in examples/neoarm
+examples/neoarm/output/
