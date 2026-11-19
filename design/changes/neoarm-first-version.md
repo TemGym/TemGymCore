@@ -53,6 +53,8 @@ stage 4. That visit resolves U1 and H5.
 | The sample-plane scale is the nominal magnification (M7). | The principal | Yes |
 | The lenses are `PolePieceLens` components, Lenz's field with a gap and a bore (M10). | The principal, 2026-11-19 | Yes |
 | The console table sets the MAG focus and the mean MAG and DIFF scale only (M11). | The principal, 2026-11-19 | Yes |
+| jemwrap control: plain functions, the narrow settable list, every lens through free lens control, the selector limited to its mode's rows (J14). | The principal, 2026-11-19 | Yes |
+| The fits read small tables committed next to them; the recording zips stay outside git (J15). | The principal, 2026-11-19 | Yes |
 
 ## Must, should, will not
 

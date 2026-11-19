@@ -20,9 +20,7 @@ start values to L. This assumes that the screen of the drawing is at the SightX.
 """
 
 import csv
-import io
 import json
-import zipfile
 from pathlib import Path
 
 import jax
@@ -36,9 +34,8 @@ from temgym_core.run import position_and_angle_response
 jax.config.update("jax_enable_x64", True)
 
 HERE = Path(__file__).parent
-RECORDING = (
-    HERE.parent / "microscope_inversion/recordings/2026-11-10/imaging-system-fitting-40k-40cm.zip"
-)
+# The table of imaging-system-fitting-40k-40cm.zip, copied out of the zip unchanged.
+RECORDING = HERE / "recordings/projection_response_2026-11-10.csv"
 DRAWING = json.loads((HERE.parent / "virtual_neoarm/neoarm_column_diagram.json").read_text())["z_m"]
 VOLTAGE = 200e3
 PROJECTOR = ("IL1", "IL2", "IL3", "PL1")
@@ -88,9 +85,8 @@ MAG_LABEL = np.array([r["mag"][0] for r in MAG_ROWS], float)
 DIFF_LABEL = np.array([r["mag"][0] / 1000 for r in DIFF_ROWS], float) / L_DRAWING
 
 # Each block has five frames. They have no kick, then kicks of +x, -x, +y and -y.
-with zipfile.ZipFile(RECORDING) as archive:
-    table = next(name for name in archive.namelist() if name.endswith("/table.csv"))
-    frames = list(csv.DictReader(io.StringIO(archive.read(table).decode())))
+with open(RECORDING, newline="") as table:
+    frames = list(csv.DictReader(table))
 blocks = []
 for i in range(len(frames) - 4):
     rows = frames[i : i + 5]

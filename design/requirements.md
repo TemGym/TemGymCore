@@ -148,13 +148,23 @@ See `stakeholders.md`.
 - J13 `[record]` What stage 4 built (2026-11-19), on branch `control` of the jemwrap
   repository: `jemwrap.control` with `read_value`, `set_value`, `settable_snapshot`,
   `restore` and `take_frame`; a write path in the endpoint table; `MicroscopeMonitor.poll_now`.
-  Three choices are the agent's and wait for the principal: `[assumed]`
-  - plain functions that take the monitor, in place of a control object;
-  - the narrowest settable list (M1's lenses, SpotA, CLA1, CLA2, the shift and tilt balances,
-    the selector, MAG or DIFF, the spot size, alpha);
-  - every lens through free lens control, CL3 too, although the table has `SetCL3`.
   Every settable key ran on the simulated NEOARM and on the offline PyJEM. No setter has
   run on a real microscope.
+- J14 `[answered]` The principal accepted on 2026-11-19:
+  - plain functions that take the monitor, in place of a control object;
+  - the narrowest settable list (M1's lenses, SpotA, CLA1, CLA2, the shift and tilt balances,
+    the selector, MAG or DIFF, the spot size, alpha). CM and the objective go on the list
+    when a recording needs them, each with its reason (the pyjem skill, safety rule 5);
+  - every lens through free lens control, CL3 too, although the table has `SetCL3`, so that
+    the restore of every lens is its switch;
+  - the selector must be a row of its function mode: 31 MAG rows and 30 DIFF rows, from the
+    console tables of 2026-11-17 (`SELECTOR_ROWS` in `jemwrap.control`);
+  - the `control` branch goes to jemwrap's author as a pull request if the author reviews on
+    GitHub, otherwise as a patch file. The agent does not push it (J10).
+- J15 `[answered]` The fits read small tables committed in `examples/neoarm/recordings/`,
+  copied unchanged out of the recording zips (2026-11-19). The zips stay outside git as the
+  raw source. A fresh checkout reruns `fit_projector_lenses.py` and `fit_condenser.py`, and
+  both give the same JSON as from the zips.
 - J12 `[answered]` Every change to jemwrap conforms logically to the style that its author
   set. `[record]` That style is: a declarative table of endpoints, typed dataclasses for
   the state, one small module for each responsibility, a test for each behaviour in

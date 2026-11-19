@@ -26,9 +26,7 @@ the axis, positions are in metres, so a slope is in metres per L.
 """
 
 import csv
-import io
 import json
-import zipfile
 from pathlib import Path
 
 import jax
@@ -41,8 +39,10 @@ from temgym_core.run import column_matrix, position_and_angle_response
 jax.config.update("jax_enable_x64", True)
 
 HERE = Path(__file__).parent
-FOCUS_CURVE = HERE.parent / "microscope_inversion/recordings/2026-11-10/beam_per_magnification.zip"
-PARALLEL = HERE.parent / "microscope_inversion/calimages.zip"
+# The table of beam_per_magnification.zip, copied out of the zip unchanged.
+FOCUS_CURVE = HERE / "recordings/beam_per_magnification_2026-11-10.csv"
+# CL1 and CL3 of the five parallel frames of calimages.zip, one line for each frame.
+PARALLEL = HERE / "recordings/parallel_settings.csv"
 CONSOLE = json.loads(
     (HERE.parent / "microscope_inversion/recordings/2026-11-17/console_tables.json").read_text()
 )
@@ -75,13 +75,8 @@ SMALLEST_POLE_PIECE = 1 * MM
 FIELD_CLEARANCE = 0.8 * (Z["CL2"] - Z["CL1"])
 
 # The focus curve. One row, MAG 100k, has the flag "good" at False and stays out.
-with zipfile.ZipFile(FOCUS_CURVE) as archive:
-    table = next(
-        n for n in archive.namelist() if "beam_per_magnification_" in n and n.endswith("table.csv")
-    )
-    curve = [
-        r for r in csv.DictReader(io.StringIO(archive.read(table).decode())) if r["good"] == "True"
-    ]
+with open(FOCUS_CURVE, newline="") as table:
+    curve = [r for r in csv.DictReader(table) if r["good"] == "True"]
 console_mag = {r["mag"][0]: r for r in CONSOLE["rows"]["MAG"]}
 curve_mag = np.array([int(r["magnification"]) for r in curve])
 curve_dac = np.array(
@@ -93,13 +88,9 @@ curve_dac = np.array(
 curve_size_px = np.array([float(r["beam_rms_px"]) for r in curve])
 kept_back = curve_mag <= 15000
 
-# The parallel settings, one for each spot. Each file holds CL1 and CL3 as the console gave them.
-with zipfile.ZipFile(PARALLEL) as archive:
-    parallel = []
-    for name in sorted(n for n in archive.namelist() if "parallel" in n and n.endswith(".npz")):
-        with np.load(io.BytesIO(archive.read(name))) as frame:
-            parallel.append([float(frame["cl1"]), float(frame["cl3"])])
-parallel = np.array(sorted(parallel))
+# The parallel settings, one for each spot, with CL1 and CL3 as the console gave them.
+with open(PARALLEL, newline="") as table:
+    parallel = np.array(sorted([float(r["cl1"]), float(r["cl3"])] for r in csv.DictReader(table)))
 print("parallel settings (CL1, CL3):", parallel.astype(int).tolist())
 
 
