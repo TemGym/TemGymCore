@@ -50,3 +50,6 @@ archive/
 # Rehearsal recordings and fits (rerun the notebook to make them)
 examples/microscope_inversion/output/
 examples/microscope_inversion/at_the_microscope/output/
+
+# A separate repository with a bundled copy of PyJEM. It must not be committed here.
+/jemwrap/

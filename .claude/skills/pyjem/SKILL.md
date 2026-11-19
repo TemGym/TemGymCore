@@ -7,6 +7,12 @@ description: How to write PyJEM code for the JEOL microscope in this repository.
 
 DRAFT for David to edit.
 
+**This skill changes at stage 4 of `design/changes/neoarm-first-version.md`.** The principal
+decided on 2026-11-19 that scripts handle the microscope through jemwrap (`jemwrap/`), once
+jemwrap has control calls. Until that stage is done, do not write a new microscope script.
+The rules below on the order of a script, visible loops, printed steps, raw data and safety
+stay. The rules on calling PyJEM by its own names are replaced.
+
 A PyJEM script is a list of the things an operator does at the microscope, in order. A
 person who knows the microscope and has not seen the script before can read it once and
 say what it does to the column. The same script runs on the simulated microscope and on
@@ -48,7 +54,19 @@ that use its `Neoarm` object as a pattern. They have the wrappers that this skil
    what changes and to which value. A person at the console can follow the script.
 8. **Save the raw data.** Save each frame and the lens and deflector values that the
    microscope had for that frame. Analysis is a different script or notebook.
-9. **Rehearse on the simulated microscope first.** The script gets its two PyJEM modules
+9. **Do not call PyJEM too often.** Many calls in a short time can crash PyJEM. Each script
+   has two constants at the top:
+
+   ```python
+   PAUSE_S = 0.1      # the shortest time between two PyJEM calls
+   SETTLE_S = 2.0     # the wait after a big change, so that the lenses settle
+   ```
+
+   Write `time.sleep(PAUSE_S)` after each PyJEM call that is followed by another PyJEM
+   call. Write `time.sleep(SETTLE_S)` after each big change. A big change is a change
+   between MAG mode and DIFF mode. The sleeps are visible lines in the steps. No loop reads the
+   microscope without a sleep in the loop.
+10. **Rehearse on the simulated microscope first.** The script gets its two PyJEM modules
    from one switch at the top. Everything below the switch is the same for both.
 
    ```python
@@ -95,6 +113,8 @@ frameworks.
 The script changes CLA1 only. It saves five frames and the CLA1 values to cla1_kicks.npz.
 At the end the script sets CLA1 to its value at the start.
 """
+import time
+
 import numpy as np
 
 SIMULATED = True      # False at the microscope
@@ -109,6 +129,7 @@ frame_width_px = camera.get_detectorsetting()["ImagingArea"]["Width"]
 
 # A kick of 200 units moves the beam about 40 px at MAG 40k (recording of 2026-11-12).
 KICKS_DAC = (-400, -200, 0, 200, 400)
+PAUSE_S = 0.1      # the shortest time between two PyJEM calls
 
 
 def take_frame():
@@ -125,7 +146,9 @@ try:
         assert 0 <= cla1_x <= 65535, f"CLA1 x = {cla1_x} is outside 0 to 65535"
         print(f"CLA1 x -> {cla1_x}")
         deflector.SetCLA1(cla1_x, cla1_y_start)
+        time.sleep(PAUSE_S)
         frames.append(take_frame())
+        time.sleep(PAUSE_S)
 finally:
     print(f"CLA1 -> {cla1_x_start}, {cla1_y_start} (the values at the start)")
     deflector.SetCLA1(cla1_x_start, cla1_y_start)
