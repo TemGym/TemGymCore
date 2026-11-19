@@ -56,7 +56,7 @@ for number, name in MODES.items():
 
 # Every spot at every alpha, at the mode and row the console started on
 eos.SelectFunctionMode(start["mode"][0])
-eos.SetSelector(start["selector"][0])
+eos.SetSelector(start["selector"])
 time.sleep(WAIT_S)
 for alpha in range(9):
     try:
@@ -74,7 +74,7 @@ for alpha in range(9):
 eos.SetAlphaSelector(start["alpha"])
 eos.SelectSpotSize(start["spot"])
 eos.SelectFunctionMode(start["mode"][0])
-eos.SetSelector(start["selector"][0])
+eos.SetSelector(start["selector"])
 deflector.SetBeamBlank(0)
 
 with open("console_tables.json", "w") as file:

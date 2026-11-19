@@ -319,9 +319,9 @@ class EOS3(_Accessor):
         return [value, "X", f"X{value}"]
 
     def GetCurrentMagSelectorID(self):
-        """Return ``[index, value]`` of the selected row (magnification, or camera length in cm in DIFF)."""
+        """Return the index of the selected row (magnification, or camera length in DIFF), as PyJEM does."""
         rows, attribute = self._rows()
-        return [int(getattr(self._scope, attribute)), self.GetMagValue()[0]]
+        return int(getattr(self._scope, attribute))
 
     def SetSelector(self, index):
         """Select a row of the current mode's table by index (reloads the lens tables)."""
@@ -351,6 +351,10 @@ class EOS3(_Accessor):
     def GetAlpha(self):
         """Return the alpha-selector index."""
         return int(self._scope.alpha)
+
+    def GetAlphaSelectorEx(self):
+        """Return ``[index, name]`` of the alpha selector, as PyJEM does."""
+        return [int(self._scope.alpha), f"Alpha{int(self._scope.alpha)}"]
 
     def SetAlphaSelector(self, value):
         """Select an alpha index (0-8); only 0 is modelled."""
@@ -562,23 +566,25 @@ class Detector:
         state, camera = self._state, self._camera
         x, y, width, height = state["area"]
         _, pitch, _ = camera.geometry(state["binning"])
+        binning = state["binning"]
         return {
             "ImagingArea": {"X": x, "Y": y, "Width": width, "Height": height},
-            "BinningSize": state["binning"],
+            "BinningSize": {"Width": binning, "Height": binning},
             "ExposureTimeValue": state["exposure_us"],
             "GainIndex": state["gain_index"],
             "OffsetIndex": state["offset_index"],
             "frameIntegration": state["frames"],
             "scanMode": 0,
             "OutputImageInformation": {"DataBits": camera.data_bits,
-                                       "ImageSize": width * height * camera.dtype.itemsize,
+                                       "ImageSize": {"Width": width * binning, "Height": height * binning},
                                        "PixelsPerMeter": 1.0 / pitch},
         }
 
     def set_detectorsetting(self, setting):
         """Apply the given keys of a settings dictionary; return the new settings."""
         if "BinningSize" in setting:
-            self._set_binning(setting["BinningSize"])
+            binning = setting["BinningSize"]
+            self._set_binning(binning["Width"] if isinstance(binning, dict) else binning)
         if "ImagingArea" in setting:
             area = setting["ImagingArea"]
             self.set_imaging_area(area["Width"], area["Height"], area["X"], area["Y"])
@@ -661,6 +667,9 @@ class Detector3(_Accessor):
         self._scope.screen = position
         self._scope.detectors[self._scope.camera.name]["inserted"] = position != 2
 
+    # PyJEM's offline TEM3 spells these with a capital G and S.
+    GetScreen, SetScreen = getScreen, setScreen
+
 
 # -------------------------------------------------------------- module glue
 def _then_settle(method):
@@ -707,6 +716,7 @@ def pyjem_interface(scope):
     det.Detector = type("Detector", (Detector,), {"_scope": scope, "__doc__": Detector.__doc__})
     det.get_attached_detector = lambda: list(scope.camera_models)
     det.check_connection = lambda timeout=3.0: True
+    det.set_ip = lambda address: None
     return tem3, det
 
 
@@ -726,7 +736,8 @@ def install(scope, *, include_offline=True, force=False):
     Yields
     ------
     tuple
-        ``(TEM3, detector)`` module objects.
+        ``(TEM3, detector)`` module objects. ``PyJEM.sightx`` is registered too, with the same
+        ``Detector`` calls.
     """
     if "PyJEM" in sys.modules and not getattr(sys.modules["PyJEM"], "_temgym_virtual", False) and not force:
         raise RuntimeError("A real PyJEM is already imported; pass force=True to shadow it.")
@@ -735,14 +746,19 @@ def install(scope, *, include_offline=True, force=False):
     package.__path__ = []
     package._temgym_virtual = True
     package.TEM3, package.detector = tem3, det
+    # PyJEM reads the SightX through its own module, with the same Detector calls.
+    sightx = types.ModuleType("PyJEM.sightx", "Virtual-microscope emulation of PyJEM.sightx (PyJEM 1.4).")
+    sightx.Detector, sightx.get_attached_detector, sightx.set_ip = det.Detector, det.get_attached_detector, det.set_ip
+    package.sightx = sightx
     modules = {"PyJEM": package, "PyJEM.TEM3": tem3, "PyJEM.TEM3.exception": tem3.exception,
-               "PyJEM.detector": det}
+               "PyJEM.detector": det, "PyJEM.sightx": sightx}
     if include_offline:
         offline = types.ModuleType("PyJEM.offline")
         offline.__path__ = []
-        offline.TEM3, offline.detector = tem3, det
+        offline.TEM3, offline.detector, offline.sightx = tem3, det, sightx
         package.offline = offline
-        modules.update({"PyJEM.offline": offline, "PyJEM.offline.TEM3": tem3, "PyJEM.offline.detector": det})
+        modules.update({"PyJEM.offline": offline, "PyJEM.offline.TEM3": tem3, "PyJEM.offline.detector": det,
+                        "PyJEM.offline.sightx": sightx})
     saved = {name: sys.modules.get(name) for name in modules}
     sys.modules.update(modules)
     try:

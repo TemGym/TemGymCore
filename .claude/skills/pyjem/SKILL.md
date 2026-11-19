@@ -1,125 +1,105 @@
 ---
 name: pyjem
-description: How to write PyJEM code for the JEOL microscope in this repository. Use it before writing or editing any script or notebook cell that calls PyJEM, on the real microscope or on the simulated microscope in TemGym.
+description: How to write microscope scripts for the JEOL NEOARM in this repository. Scripts handle the microscope through jemwrap, which wraps PyJEM. Use it before writing or editing any script or notebook cell that reads or changes the microscope, on the real microscope or on the simulated microscope in TemGym.
 ---
 
-# Writing PyJEM scripts
+# Writing microscope scripts
 
 DRAFT for David to edit.
 
-**This skill changes at stage 4 of `design/changes/neoarm-first-version.md`.** The principal
-decided on 2026-11-19 that scripts handle the microscope through jemwrap (`jemwrap/`), once
-jemwrap has control calls. Until that stage is done, do not write a new microscope script.
-The rules below on the order of a script, visible loops, printed steps, raw data and safety
-stay. The rules on calling PyJEM by its own names are replaced.
+A microscope script is a list of the things an operator does at the microscope, in order. A
+person who knows the microscope and has not seen the script before can read it once and say
+what it does to the column. The same script runs on the simulated microscope and on the real
+microscope.
 
-## Reading the microscope through jemwrap (before stage 4)
-
-jemwrap is in `jemwrap/`, a separate repository. Do not copy its code into TemGymCore and do
-not commit it here. jemwrap reads the microscope today. It does not set values yet.
-
-- **To watch the microscope, use `MicroscopeMonitor`.** It polls each value through one
-  rate limiter. `monitor.snapshot()` gives a `MicroscopeState` with named, typed fields,
-  for example `state.lens.CL3` and `state.deflectors.CLA1`. Do not write a polling loop of
-  PyJEM getters.
-- **A snapshot value can be old.** The monitor reads a value every 15 s, or every 1 s
-  while the value changes. Use a snapshot to show or log the state. Do not use it as the
-  start value that a script restores.
-- **To take a SightX frame, use `sightx_snapshot(state.sightx, adapter)`.** It decodes the
-  frame with the binning and bit depth that the camera has now.
-- **To read one value now, for example a start value, use the direct PyJEM getter**, as in
-  the Safety section. Stage 4 adds a jemwrap call for this.
-- **The adapter takes the PyJEM modules as arguments.** On the simulated microscope, give
-  it the simulated modules, as jemwrap's `main.py` does with `PyJEM.offline`.
-
-A PyJEM script is a list of the things an operator does at the microscope, in order. A
-person who knows the microscope and has not seen the script before can read it once and
-say what it does to the column. The same script runs on the simulated microscope and on
-the real microscope.
+Scripts handle the microscope through jemwrap (`jemwrap/`, a separate repository with its own
+copy of PyJEM). jemwrap spaces every call to the microscope by at least 0.1 s, refuses values
+that a script must not change, and restores the start values. The principal decided this on
+2026-11-19 (requirements J7 to J12).
 
 ## Read first
 
-1. The PyJEM calls that the simulated microscope has: `src/temgym_core/pyjem_simulator/pyjem.py`.
-   The simulated microscope raises `NotEmulatedError` for a call it does not have.
-2. The `readable-python` skill. Its rules for code and comments apply here.
+1. The "Control" section of `jemwrap/requirements.md`: the five functions and the values a
+   script may set (`SETTABLE` in `jemwrap/src/jemwrap/control.py`).
+2. The pattern below and `examples/neoarm/cla1_kicks.py`, the same script as a file that runs.
+3. `examples/neoarm/simulated_neoarm.py`: the simulated NEOARM behind PyJEM's names.
+4. The `readable-python` skill. Its rules for code and comments apply here.
 
-Do not use `examples/microscope_inversion/at_the_microscope/neoarm.py` or the scripts
-that use its `Neoarm` object as a pattern. They have the wrappers that this skill removes.
+Do not use `examples/microscope_inversion/at_the_microscope/neoarm.py` or the scripts that use
+its `Neoarm` object as a pattern. They have the wrappers that this skill removes.
 
 ## Rules
 
-1. **Call PyJEM by its own names.** Write `lens.SetCL3(31214)` and `deflector.GetCLA1()`.
-   The reader can find each call in the PyJEM manual.
-2. **No microscope object, no classes, no layers.** Do not write a `scope` object, a class
-   that holds the microscope, or a function that only renames a PyJEM call. Do not select
-   a PyJEM call with `getattr` and a string. Write the call.
+1. **Handle the microscope with jemwrap's five functions.** `read_value`, `set_value`,
+   `settable_snapshot`, `restore` and `take_frame` from `jemwrap.control`. Each takes the
+   monitor and a key that names the value as PyJEM does: `"deflectors.CLA1"` is
+   `Def3.GetCLA1` and `Def3.SetCLA1`, and `"lens.CL3"` is CL3 under free lens control. Do not
+   call a PyJEM setter in a script.
+2. **No microscope object, no classes, no layers.** The adapter and the monitor are the only
+   objects, and the script makes them in two plain lines. Do not wrap them, and do not write a
+   function that only renames a jemwrap call.
 3. **A script has this order:**
    1. A docstring that says what the script does to the microscope and what it saves.
-   2. The imports and the PyJEM objects (`TEM3.Lens3()`, `TEM3.Def3()`, `TEM3.EOS3()`,
-      the camera).
+   2. The imports, the switch to the simulated microscope, the adapter and the monitor.
    3. The settings, as named constants with units and sources.
    4. At most a few functions, each for an action that the script repeats.
    5. The steps, as plain lines from top to bottom.
 4. **A function is for a repeated action on the microscope**, such as "set a lens from
-   below" or "take a frame and find the beam". A function has a name that an operator
-   would say. A function does one action. A step that happens once is plain lines.
+   below" or "take a frame and find the beam". A function has a name that an operator would
+   say. A function does one action. A step that happens once is plain lines.
 5. **A shared file needs a reason.** When two scripts need the same function, put the
    function in one file of plain functions, `microscope_functions.py`, next to the scripts.
-   Each function takes the PyJEM objects it uses as arguments. The file has no classes and
-   no state. Say that you made this decision and why.
+   Each function takes the monitor as its first argument. The file has no classes and no
+   state. Say that you made this decision and why.
 6. **Loops are visible.** A loop over magnifications or over deflector values is a `for`
    statement in the steps. The reader sees what changes on each pass.
 7. **Print what the script does.** Before each change to the microscope, print one line:
    what changes and to which value. A person at the console can follow the script.
 8. **Save the raw data.** Save each frame and the lens and deflector values that the
    microscope had for that frame. Analysis is a different script or notebook.
-9. **Do not call PyJEM too often.** Many calls in a short time can crash PyJEM. Each script
-   has two constants at the top:
+9. **Wait where the microscope needs time.** jemwrap spaces the calls, so a script has no
+   pause between calls. A script waits only where the column needs time to settle, with a
+   named constant and a visible `time.sleep`:
 
    ```python
-   PAUSE_S = 0.1      # the shortest time between two PyJEM calls
-   SETTLE_S = 2.0     # the wait after a big change, so that the lenses settle
+   SETTLE_S = 2.0     # after a change between MAG and DIFF, so that the lenses settle
    ```
 
-   Write `time.sleep(PAUSE_S)` after each PyJEM call that is followed by another PyJEM
-   call. Write `time.sleep(SETTLE_S)` after each big change. A big change is a change
-   between MAG mode and DIFF mode. The sleeps are visible lines in the steps. No loop reads the
-   microscope without a sleep in the loop.
-10. **Rehearse on the simulated microscope first.** The script gets its two PyJEM modules
-   from one switch at the top. Everything below the switch is the same for both.
+   Give the source of each wait, or say that it is a choice.
+10. **Rehearse on the simulated microscope first.** One switch at the top decides which
+    microscope `import PyJEM` finds. Everything below the switch is the same for both.
 
-   ```python
-   SIMULATED = True      # False at the microscope
-   if SIMULATED:
-       from simulated_neoarm import TEM3, detector
-   else:
-       from PyJEM import TEM3, detector
-   ```
+    ```python
+    SIMULATED = True      # False at the microscope
+    if SIMULATED:
+        from simulated_neoarm import install_simulated_neoarm
+        install_simulated_neoarm()
+    from PyJEM import TEM3, detector, sightx
+    ```
 
-   Run the script on the simulated microscope and report the output before you hand the
-   script over.
+    Run the script on the simulated microscope and report the output before you hand the
+    script over.
 
 ## Safety
 
-Add a check only where a wrong value or a stopped script can leave the microscope in a bad
-state. The checks that apply:
+jemwrap does the checks that every script needs. It refuses a key that is not settable and a
+value outside the type and range of the endpoint table, before any call to the microscope. Do
+not repeat these checks in the script. The checks that the script does:
 
-1. **Read before you write.** At the start, read each value that the script will change
-   with its PyJEM call. Keep each value in a plain variable with a plain name, such as
-   `cla1_x_start`. Do not collect the values in a dictionary or an object.
-2. **Put the microscope back.** The steps are inside `try:` and the restore is inside
-   `finally:`. The restore sets each changed value to its start value and sets
-   free lens control to off for each lens the script changed. A script that stops on an
-   error or on Ctrl-C leaves the microscope as it found it.
-3. **Check each value before you send it.** A lens or deflector value is an integer from
-   0 to 65535. Use one `assert` with a message next to the call.
-4. **Set a lens from below.** Set the lens to 2000 units below the value, then to the
-   value. The lens then has the same magnetic history each time.
-5. **Do not touch what the task does not need.** Do not move the stage, change the high
-   voltage, change an aperture, or insert or retract a detector unless David asked for
-   that in this task.
-6. **Ask about anything new.** Before the first use of a PyJEM call that changes the
-   microscope and that no earlier script used, tell David which call and what it does.
+1. **Keep the start.** At the start, take `start = settable_snapshot(monitor)` for the
+   restore. Read each start value that the steps need with `read_value` into a plain variable
+   with a plain name, such as `cla1_x_start`.
+2. **Put the microscope back.** The steps are inside `try:` and `restore(monitor, start)` is
+   inside `finally:`. `restore` sets back each value that changed, and switches off free lens
+   control for each lens that was not under it at the start. A script that stops on an error
+   or on Ctrl-C leaves the microscope as it found it.
+3. **Set a lens from below.** Set the lens to 2000 units below the value, then to the value,
+   with two `set_value` lines. The lens then has the same magnetic history each time.
+4. **Do not touch what the task does not need.** jemwrap does not let a script move the
+   stage, change the high voltage, the gun or an aperture, or insert or retract a detector.
+   Do not ask for such a change unless David asked for it in this task.
+5. **Ask about anything new.** Before a value goes onto jemwrap's settable list, tell David
+   which value and why. A change to jemwrap follows the style of its author (requirement J12).
 
 Do not add checks for cases that cannot occur. Do not add retries, timeouts or logging
 frameworks.
@@ -129,8 +109,9 @@ frameworks.
 ```python
 """Measure how far CLA1 moves the beam at MAG 40k.
 
-The script changes CLA1 only. It saves five frames and the CLA1 values to cla1_kicks.npz.
-At the end the script sets CLA1 to its value at the start.
+The script changes CLA1 only. It saves five SightX frames and the CLA1 values to cla1_kicks.npz.
+At the end, also after an error or Ctrl-C, it sets every value that a script may change back to
+its value at the start.
 """
 import time
 
@@ -138,47 +119,47 @@ import numpy as np
 
 SIMULATED = True      # False at the microscope
 if SIMULATED:
-    from simulated_neoarm import TEM3, detector
-else:
-    from PyJEM import TEM3, detector
+    from simulated_neoarm import install_simulated_neoarm
+    install_simulated_neoarm()
+from PyJEM import TEM3, detector, sightx
 
-deflector = TEM3.Def3()
-camera = detector.Detector("screenCamera")
-frame_width_px = camera.get_detectorsetting()["ImagingArea"]["Width"]
+from jemwrap import MicroscopeMonitor, PyJEMAdapter
+from jemwrap.control import read_value, restore, set_value, settable_snapshot, take_frame
+
+adapter = PyJEMAdapter(connect=not SIMULATED, tem3_module=TEM3, detector_module=detector, sightx_module=sightx)
+monitor = MicroscopeMonitor(adapter=adapter)
 
 # A kick of 200 units moves the beam about 40 px at MAG 40k (recording of 2026-11-12).
 KICKS_DAC = (-400, -200, 0, 200, 400)
-PAUSE_S = 0.1      # the shortest time between two PyJEM calls
+# The wait after each change of CLA1, before a frame. This time is a choice. No measurement gives it.
+SETTLE_S = 0.2
 
-
-def take_frame():
-    """Return one camera frame as a 2D array of counts."""
-    raw = camera.snapshot_rawdata()
-    return np.frombuffer(raw, dtype=np.int32).reshape(-1, frame_width_px)
-
-
-cla1_x_start, cla1_y_start = deflector.GetCLA1()
+# Every value that a script may change, for the restore at the end.
+start = settable_snapshot(monitor)
+# jemwrap gives DAC values as unsigned 16-bit numbers. Plain integers can go below zero in a sum.
+cla1_x_start, cla1_y_start = (int(dac) for dac in read_value(monitor, "deflectors.CLA1"))
 frames = []
 try:
     for kick_dac in KICKS_DAC:
-        cla1_x = cla1_x_start + kick_dac
-        assert 0 <= cla1_x <= 65535, f"CLA1 x = {cla1_x} is outside 0 to 65535"
-        print(f"CLA1 x -> {cla1_x}")
-        deflector.SetCLA1(cla1_x, cla1_y_start)
-        time.sleep(PAUSE_S)
-        frames.append(take_frame())
-        time.sleep(PAUSE_S)
+        cla1 = (cla1_x_start + kick_dac, cla1_y_start)
+        print(f"CLA1 -> {cla1}")
+        set_value(monitor, "deflectors.CLA1", cla1)
+        time.sleep(SETTLE_S)
+        frames.append(take_frame(monitor))
 finally:
-    print(f"CLA1 -> {cla1_x_start}, {cla1_y_start} (the values at the start)")
-    deflector.SetCLA1(cla1_x_start, cla1_y_start)
+    print("every value that a script may change -> its value at the start")
+    restore(monitor, start)
 
 np.savez("cla1_kicks.npz", frames=np.array(frames), kicks_dac=KICKS_DAC,
          cla1_start=(cla1_x_start, cla1_y_start))
 ```
 
+jemwrap is installed in the project's environment with `pip install -e jemwrap`. At the
+microscope, install it the same way.
+
 ## Before handing over
 
 - Run the script on the simulated microscope. Report the command and the output.
-- List every PyJEM call that changes the microscope, and say where the script restores it.
+- List every `set_value` call, and say that `restore` in `finally:` covers it.
 - List every function in the script with the number of places that call it.
 - Say which of the safety checks the script has and which do not apply.

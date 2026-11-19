@@ -59,8 +59,8 @@ Read these before the first line of code, each time. Do not work from memory.
    Do not write a local replacement in the notebook.
 9. **Float64 always.** Enable `jax_enable_x64` at the top of the script or notebook.
 10. **The simulated microscope is `temgym_core.pyjem_simulator`.** Code that will run at
-    the real microscope talks to it through plain PyJEM calls only, so the same code runs
-    on both.
+    the real microscope talks to it through jemwrap's control functions (the `pyjem`
+    skill), so the same code runs on both.
 
 ## Plots
 

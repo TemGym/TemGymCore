@@ -145,6 +145,16 @@ See `stakeholders.md`.
   4. One call restores the settable values from a snapshot taken at the start (E6).
   5. The web page stays read-only. No call that changes the microscope is reachable from
      the network.
+- J13 `[record]` What stage 4 built (2026-11-19), on branch `control` of the jemwrap
+  repository: `jemwrap.control` with `read_value`, `set_value`, `settable_snapshot`,
+  `restore` and `take_frame`; a write path in the endpoint table; `MicroscopeMonitor.poll_now`.
+  Three choices are the agent's and wait for the principal: `[assumed]`
+  - plain functions that take the monitor, in place of a control object;
+  - the narrowest settable list (M1's lenses, SpotA, CLA1, CLA2, the shift and tilt balances,
+    the selector, MAG or DIFF, the spot size, alpha);
+  - every lens through free lens control, CL3 too, although the table has `SetCL3`.
+  Every settable key ran on the simulated NEOARM and on the offline PyJEM. No setter has
+  run on a real microscope.
 - J12 `[answered]` Every change to jemwrap conforms logically to the style that its author
   set. `[record]` That style is: a declarative table of endpoints, typed dataclasses for
   the state, one small module for each responsibility, a test for each behaviour in
@@ -156,9 +166,12 @@ See `stakeholders.md`.
 - J4 `[answered]` A script's calls and jemwrap's polling share one rate limiter (J9, item 1).
   This resolves R14 in one place.
 - J5 `[answered]` A script reads the values it needs at once with the call of J9, item 3.
-- J6 `[unknown]` Whether jemwrap runs on TemGym's simulated microscope without changes.
-  jemwrap reads PyJEM's `sightx` module and the gun, vacuum and EDS classes. The simulated
-  microscope has no `sightx` module. Resolved by running jemwrap's monitor on it.
+- J6 `[record]` jemwrap runs on TemGym's simulated microscope (2026-11-19, stage 3). The
+  simulator gained a `sightx` module, `GetAlphaSelectorEx` and `GetScreen`, and now returns
+  PyJEM's types for `GetCurrentMagSelectorID` and the camera settings. Every value this project
+  uses reads without an error. The gun, vacuum, stage, STEM detectors and EDS stay unemulated,
+  and jemwrap shows errors for them. A frame through jemwrap at the recorded MAG 40k state has
+  an rms beam size of 58 px. The real NEOARM gave 60 px.
 - J11 `[answered]` The width of the SightX stays at 12 cm (R28). jemwrap's notes give
   10636 pixels per metre for the camera, which gives 9 cm or 18 cm depending on the
   binning. The principal decided on 2026-11-19 not to use that value.
@@ -255,6 +268,19 @@ See `stakeholders.md`.
   then follows the beam when the spot size changes.
 - C7 `[answered]` Another condenser deflector, at the bottom of the condenser, is sometimes
   used and cannot be controlled. It is ignored for now.
+- C8 `[record]` On 2026-11-19 `examples/neoarm/fit_condenser.py` fitted CL1, CL3 and CM as
+  `PolePieceLens` components (M10) to the focus curve and the parallel settings at alpha 1.
+  - The beam size follows the focus curve within 2 % from MAG 30k to 500k. At MAG 40k the
+    model gives 60.8 px against the measured 59.8 px.
+  - E13 passes. At alpha 1 the model's focus is within 61 to 524 CL3 units of the console's
+    value at every spot, and it falls from spot 0 to spot 4 as the console's value does.
+  - The fit does not reach the operator's parallel settings. The model's parallel beam is
+    600 to 3000 CL3 units away, more at the larger spot sizes. A free source position or a
+    factor on the condenser coils does not remove this. The cause is not known.
+  - The fit cannot find the source size, which runs to zero. Only the spread of angles
+    matters for these data.
+  - No rotation measurement gives the ampere-turns per DAC unit of the condenser. It uses
+    the projector's mean value, `[assumed]`.
 
 ### Hysteresis
 
@@ -324,7 +350,7 @@ See `stakeholders.md`.
   things together, live or near live while the script runs: a cross-section view of the
   column with the beam, the beam on the detector, and the script that is called.
 - D7 `[answered]` The live view does not add code to the script. The script stays plain
-  PyJEM. The simulated microscope in TemGym redraws the view when the script changes the
+  jemwrap calls (J7). The simulated microscope in TemGym redraws the view when the script changes the
   microscope or takes a frame. A small addition to `pyjem_simulator` for this is approved.
   A small delay in the view is acceptable.
 - D8 `[unknown]` Which plotting library draws the live view (matplotlib, Plotly or another)

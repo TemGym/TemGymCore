@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The simulated microscope answers the PyJEM calls that jemwrap reads. `install()` registers
+  `PyJEM.sightx` (and `PyJEM.offline.sightx`) with the same `Detector` calls. `detector.set_ip`,
+  `EOS3.GetAlphaSelectorEx` and `Detector3.GetScreen` / `SetScreen` exist.
 - `PolePieceLens`: a magnetic lens with Lenz's field of two iron pole pieces, set by its gap
   and bore radius. Excitation is `turns * current` as for `ElectromagneticLens`, and the image
   rotation is the same. The lens is not thin. A fourth-order Runge-Kutta integration across
@@ -66,6 +69,9 @@ All notable changes to this project are documented here. The format follows
   `gpu-cuda12`, `dev`, `docs`.
 
 ### Changed
+- In the simulated microscope, `EOS3.GetCurrentMagSelectorID` returns the selector index as an
+  integer, as PyJEM does, not `[index, value]`. A detector's `BinningSize` and
+  `OutputImageInformation.ImageSize` are `{Width, Height}` mappings, as in PyJEM, not integers.
 - **Breaking:** `pathlength` is now the *excess* optical path, for rays and Gaussian beamlets alike:
   what is accumulated beyond straight-line axial travel from the launch plane. Free space adds
   `d * (dx**2 + dy**2) / 2` (`FreeSpaceParaxial` used to add `d`), a thin element adds its

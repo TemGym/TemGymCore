@@ -1,7 +1,7 @@
 # Build plan: the first version of the NEOARM predictor
 
-Date: 2026-11-19. Status: the principal answered the blocking questions on 2026-11-19. The
-build starts when the principal says so.
+Date: 2026-11-19. Status: stages 1, 2, 2b, 3 and 4 are built (2026-11-19). The build stops
+after stage 4 for the principal's review of the jemwrap interface (B3).
 
 This plan says what the first version contains, in which order the agent builds it, and
 how each stage is checked. Requirement and example numbers refer to `../requirements.md`
@@ -24,7 +24,7 @@ likes.
 |---|---|---|
 | 1 | **Checks.** The comment check and a check for scipy imports run on the new folder. `ruff` runs on the new folder. | The checks fail on a bad sample file and pass on a good one. |
 | 2 | **Notebook 1, the model** (D1). The column as plain TemGym components: one list of components that change (M1, C6) and one list of static components (M2, M9). Direct `run_to_end` calls. The column drawn with the legacy plot. Start values from the console data (R30) and the drawing (R31). | E8, E12. The agent opens each figure and checks the text. |
-| 2b | **A condenser that follows the real microscope** (C1). The hidden microscope of the rehearsal gets lens offsets of a realistic size, so that the condenser fitted to the real CL3 data can run in the rehearsal. Spot alignment is added as a deflector (C6). | E13. |
+| 2b | **A condenser that follows the real microscope** (C1). `fit_condenser.py` fits CL1, CL3 and CM to the real CL3 data (C8). Spot alignment is a deflector in notebook 1 (C6). The realistic lens offsets of the hidden microscope move to stage 3, where the simulated microscope is built from notebook 1's model. | E13. |
 | 3 | **jemwrap on the simulated microscope** (J6). A small file builds the simulated microscope from notebook 1's model. TemGym's `pyjem_simulator` gets what jemwrap reads and it lacks, such as a `sightx` module. jemwrap's monitor runs on it. | jemwrap's state table shows the simulated lens and deflector values with no error on the values this project uses. |
 | 4 | **Control in jemwrap** (J9, J12). On a branch of the jemwrap repository, in its author's style: a call that sets one value, the list of values that may be set, a call that reads one value at once, a call that restores from a snapshot. Tests in jemwrap's `tests/`. jemwrap's `requirements.md` updated. Then the PyJEM skill is rewritten around jemwrap, with an example script that runs. | jemwrap's tests pass. A set call outside the list is refused. E6, E7. |
 | 5 | **The recording script.** One script of plain steps that uses jemwrap to size and centre the beam, kick the deflectors (SpotA too) and change the projection lenses. Each projector lens moves up and down at several MAG rows and several camera lengths, so that the recording decides the lens law (M10) and R22 in DIFF. | E5, E6, E7. |

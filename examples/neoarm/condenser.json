@@ -1,0 +1,19 @@
+{
+ "source": "fit_condenser.py: CL1 and CL3 fit to beam_per_magnification.zip (2026-11-10) and the parallel settings of calimages.zip, CM at 26624 (alpha 1)",
+ "units": "lengths along the axis in L; source size in metres; spread in metres per L",
+ "misfit": 99.80251532381946,
+ "note": "The data do not determine source_size; the fit drives it to zero.",
+ "ampere_turns_per_dac": 0.08115656590774598,
+ "pole_gap": {
+  "CL1": 0.006996177335647474,
+  "CL3": 0.022929418857792924,
+  "CM": 0.0013803550874451217
+ },
+ "bore_radius": {
+  "CL1": 0.013246845943998602,
+  "CL3": 0.014330677692557588,
+  "CM": 0.0013467363041118707
+ },
+ "source_size": 1.5515672136690593e-29,
+ "source_spread": 2.0539595907976055e-05
+}

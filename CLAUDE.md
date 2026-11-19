@@ -9,9 +9,9 @@ DRAFT for David to edit. Rules here load in every session.
 - Before writing or editing any code that models optics, follow the `temgym` skill
   (`.claude/skills/temgym/SKILL.md`): TemGym components and tracing functions only, and stop
   and ask when TemGym lacks what is needed.
-- Before writing or editing any code that calls PyJEM, follow the `pyjem` skill
-  (`.claude/skills/pyjem/SKILL.md`): plain PyJEM calls, no microscope object, rehearsed on
-  the simulated microscope first.
+- Before writing or editing any code that reads or changes the microscope, follow the `pyjem`
+  skill (`.claude/skills/pyjem/SKILL.md`): jemwrap's control functions, no microscope object,
+  rehearsed on the simulated microscope first.
 - Numerical code is JAX. No scipy in new code under `examples/`.
 - No wrapper layers: a notebook is plain TemGym and JAX calls a reader can follow.
 

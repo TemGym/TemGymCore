@@ -562,3 +562,22 @@ def test_a_hidden_column_of_the_whole_console_behind_a_real_consoles_tables():
     assert [lens.GetIL1(), eos.SetSelector(1), lens.GetIL1()] == [20500, None, 20771]
     with pytest.raises(Exception):
         eos.SetSelector(2)                                  # the row out of order was left out
+
+
+def test_the_calls_jemwrap_reads_have_pyjems_names_and_types():
+    from temgym_core.pyjem_simulator import install
+
+    scope = microscope()
+    with install(scope):
+        from PyJEM import TEM3, sightx
+        from PyJEM.offline import sightx as offline_sightx
+        eos = TEM3.EOS3()
+        assert isinstance(eos.GetCurrentMagSelectorID(), int)
+        assert eos.GetAlphaSelectorEx()[0] == 0
+        assert TEM3.Detector3().GetScreen() == TEM3.Detector3().getScreen()
+        assert offline_sightx is sightx
+        sightx.set_ip("172.17.41.1")
+        settings = sightx.Detector("camera").get_detectorsetting()
+    binning = settings["BinningSize"]
+    image = settings["OutputImageInformation"]["ImageSize"]
+    assert (image["Width"] // binning["Width"], image["Height"] // binning["Height"]) == (64, 64)
