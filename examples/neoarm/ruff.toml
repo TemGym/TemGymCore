@@ -1,0 +1,9 @@
+# Ruff settings for the NEOARM notebooks and scripts. They add one rule to the settings
+# of the repository: code in this folder does not import scipy.
+extend = "../../pyproject.toml"
+
+[lint]
+extend-select = ["TID251"]
+
+[lint.flake8-tidy-imports.banned-api]
+"scipy".msg = "Use TemGym and JAX (jax.grad, jax.jacfwd, solve_model). See .claude/skills/temgym/SKILL.md."

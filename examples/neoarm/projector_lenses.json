@@ -1,0 +1,32 @@
+{
+ "source": "fit_projector_lenses.py: PolePieceLens fit to imaging-system-fitting-40k-40cm.zip (2026-11-10) and to the mean scale and MAG focus of console_tables.json (2026-11-17)",
+ "units": "lengths in L, the distance from the specimen to the SightX",
+ "misfit": 31.578683948271497,
+ "misfit_definition": "sum of squares of 104 residuals in units of their allowed errors, priors included",
+ "ampere_turns_per_dac": {
+  "IL1": -0.08142139500043082,
+  "IL2": -0.08073153263354634,
+  "IL3": -0.08145673169410693,
+  "PL1": 0.08101660430289981
+ },
+ "lens_z": {
+  "IL1": 0.273047811643797,
+  "IL2": 0.39311119572018566,
+  "IL3": 0.4803234347776163,
+  "PL1": 0.5536102329313324
+ },
+ "pole_gap": {
+  "IL1": 0.00821006173754249,
+  "IL2": 0.013362424163917875,
+  "IL3": 0.024442380785370574,
+  "PL1": 0.0060409340369878325
+ },
+ "bore_radius": {
+  "IL1": 0.013211879483242886,
+  "IL2": 0.004086478938036238,
+  "IL3": 0.01632739150250436,
+  "PL1": 0.0023516713005686013
+ },
+ "objective_f": 0.0028781654376655807,
+ "objective_z": 0.0029169128421920767
+}

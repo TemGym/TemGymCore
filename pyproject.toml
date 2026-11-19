@@ -129,8 +129,8 @@ Changelog = "https://github.com/TemGym/TemGymCore/blob/main/CHANGELOG.md"
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
-# Notebooks and examples are not linted.
-extend-exclude = ["examples"]
+# The older example folders are not linted. Ruff checks examples/neoarm.
+extend-exclude = ["examples/microscope_inversion", "examples/virtual_neoarm"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W"]

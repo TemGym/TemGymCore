@@ -108,7 +108,7 @@ See `stakeholders.md`.
 
 - R30 `[answered]` Data from the real microscope exists: the console's DAC values at
   various settings (the console JSON, read with `record_console_tables.py`). The fitted
-  model uses this data.
+  model uses this data for the MAG focus and the mean scale of MAG and DIFF (M11).
 - R31 `[answered]` The engineering drawing of the column is a loose guide to start from.
   `[record]` It is `examples/virtual_neoarm/neoarm_column_diagram.png`, with positions read
   by hand in `neoarm_column_diagram.json`.
@@ -191,6 +191,41 @@ See `stakeholders.md`.
   uses. It converts pixels to metres at the camera.
 - M7 `[answered]` The first scale on the sample plane is the console's nominal
   magnification with the camera width. A grating or diffraction rings is a later check.
+- M10 `[answered]` The lenses are TemGym `PolePieceLens` components: Lenz's field of two
+  pole pieces, set by a gap and a bore radius, with the excitation from the DAC value. The
+  principal chose this law for the projector lenses on 2026-11-19 (the condenser lenses use it
+  too, `[assumed]`), and rejected a fitted strength factor
+  exp(a x + b x^2) as not physical.
+  `[record]` Evidence of 2026-11-19 (session scratch fits, then
+  `examples/neoarm/fit_projector_lenses.py`):
+  - The projector lenses turn the image by up to 2 rad, so a thin lens is not a good model.
+  - On the lens changes recorded on 2026-11-10 at MAG 40k and DIFF 40 cm, the misfit was 88
+    for the thin lens, 26 for Glaser's bell field, 6.7 for a generic 3-number law and 2.7
+    for Lenz's field. These scratch fits used the sizes of the 16 ratios only, with an
+    allowed error of 1 %. `fit_projector_lenses.py` also fits the turn of each ratio, with
+    an allowed error of 0.5 %, so its misfit is larger and not comparable.
+  - A Lenz fit to the MAG changes alone predicts the DIFF changes best (median miss 37 % of
+    the effect, against 80 % to 99 % for the others). The recording has too few numbers to
+    confirm the law.
+  - Fits to every row of the console table, with each label held to a few per cent and each
+    row in focus, failed for every law. This held for a thicker objective, for free lens
+    positions and for free label factors.
+  - The Lenz fit to the lens changes alone, never fitted to the table, kept every MAG row in
+    focus. Its magnifications and camera lengths were a near-constant multiple of the labels
+    (about 1.75 in MAG and 0.54 in DIFF).
+  - With the labels setting only the mean MAG and mean DIFF scale, the fit gives MAG within
+    8 % of the labels from 20k to 500k and every DIFF camera length within 4 %. The lens
+    changes still fit to 0.5 %. MAG 8k to 15k comes out 7 to 16 % low. The objective focal
+    length comes out at 2.1 mm with the drawing's L. The manual gives 1.9 mm.
+- M11 `[answered]` The console table enters the fit in two ways only. Every MAG row keeps
+  the image in focus, and the labels set one mean scale for MAG and one for DIFF. Recordings
+  of lens and deflector changes give the rest. The principal called this result very good on
+  2026-11-19 and asked to continue with it.
+- M12 `[record]` One factor along the column stays free. Every axial length can stretch by
+  one factor with no change to the lens changes, the MAG magnifications or the MAG focus. The
+  DIFF labels, in metres, set that factor through the drawing's L. The manual's objective
+  focal length (1.9 mm) and the fitted 2.1 mm agree to about 10 %. A known diffraction ring
+  or a grating sets it independently (U2).
 - M8 `[answered]` Beyond M1, the first controls added from the alignment guide are the
   condenser pivot points (tilt balance and shift balance). The gun shift and tilt, the
   stigmators, the corrector beam tilt and the aperture are not in the first version.
@@ -257,6 +292,9 @@ See `stakeholders.md`.
 - R21 `[answered]` Beam size on the SightX: within 20 %.
 - R22 `[answered]` Range: MAG 8k to 500k and the DIFF camera lengths. Source: plan of
   2026-11-17.
+  `[record]` On 2026-11-19 no model followed the console table in MAG and DIFF together
+  (M10). Whether one model meets R22 in DIFF as well as in MAG is open until the recording of
+  stage 5.
 - R29 `[answered]` A calibration recording can take any length of time that is not hours
   of waiting.
 

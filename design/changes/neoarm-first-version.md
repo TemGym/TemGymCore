@@ -27,7 +27,7 @@ likes.
 | 2b | **A condenser that follows the real microscope** (C1). The hidden microscope of the rehearsal gets lens offsets of a realistic size, so that the condenser fitted to the real CL3 data can run in the rehearsal. Spot alignment is added as a deflector (C6). | E13. |
 | 3 | **jemwrap on the simulated microscope** (J6). A small file builds the simulated microscope from notebook 1's model. TemGym's `pyjem_simulator` gets what jemwrap reads and it lacks, such as a `sightx` module. jemwrap's monitor runs on it. | jemwrap's state table shows the simulated lens and deflector values with no error on the values this project uses. |
 | 4 | **Control in jemwrap** (J9, J12). On a branch of the jemwrap repository, in its author's style: a call that sets one value, the list of values that may be set, a call that reads one value at once, a call that restores from a snapshot. Tests in jemwrap's `tests/`. jemwrap's `requirements.md` updated. Then the PyJEM skill is rewritten around jemwrap, with an example script that runs. | jemwrap's tests pass. A set call outside the list is refused. E6, E7. |
-| 5 | **The recording script.** One script of plain steps that uses jemwrap to size and centre the beam, kick the deflectors (SpotA too) and change the projection lenses. | E5, E6, E7. |
+| 5 | **The recording script.** One script of plain steps that uses jemwrap to size and centre the beam, kick the deflectors (SpotA too) and change the projection lenses. Each projector lens moves up and down at several MAG rows and several camera lengths, so that the recording decides the lens law (M10) and R22 in DIFF. | E5, E6, E7. |
 | 6 | **Notebook 2, the fit** (D2, D3). The non-dimensional model fitted with JAX to the recording of stage 5. Tested on rows it never saw. The fit run twice with two static values. | E1, E2, E3, E9, E14. |
 | 7 | **The correction routine** (S3). A short script that moves the beam back to the centre with the fitted model. | E4. |
 | 8 | **Pivot points** (M8). CLA1 and CLA2 written as TemGym's `DoubleDeflector`, which already has tilt balance and shift balance. Two scripts from the alignment guide: tilt balance and shift balance. | E10. |
@@ -51,6 +51,8 @@ stage 4. That visit resolves U1 and H5.
 | Scripts handle the microscope through jemwrap. jemwrap gets control calls in its author's style (J7, J9, J12). | The principal | Yes |
 | The live view is drawn from jemwrap's state, not by the script (D6). | The agent proposed, the principal has not confirmed | Yes |
 | The sample-plane scale is the nominal magnification (M7). | The principal | Yes |
+| The lenses are `PolePieceLens` components, Lenz's field with a gap and a bore (M10). | The principal, 2026-11-19 | Yes |
+| The console table sets the MAG focus and the mean MAG and DIFF scale only (M11). | The principal, 2026-11-19 | Yes |
 
 ## Must, should, will not
 

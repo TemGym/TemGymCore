@@ -13,6 +13,25 @@ jemwrap has control calls. Until that stage is done, do not write a new microsco
 The rules below on the order of a script, visible loops, printed steps, raw data and safety
 stay. The rules on calling PyJEM by its own names are replaced.
 
+## Reading the microscope through jemwrap (before stage 4)
+
+jemwrap is in `jemwrap/`, a separate repository. Do not copy its code into TemGymCore and do
+not commit it here. jemwrap reads the microscope today. It does not set values yet.
+
+- **To watch the microscope, use `MicroscopeMonitor`.** It polls each value through one
+  rate limiter. `monitor.snapshot()` gives a `MicroscopeState` with named, typed fields,
+  for example `state.lens.CL3` and `state.deflectors.CLA1`. Do not write a polling loop of
+  PyJEM getters.
+- **A snapshot value can be old.** The monitor reads a value every 15 s, or every 1 s
+  while the value changes. Use a snapshot to show or log the state. Do not use it as the
+  start value that a script restores.
+- **To take a SightX frame, use `sightx_snapshot(state.sightx, adapter)`.** It decodes the
+  frame with the binning and bit depth that the camera has now.
+- **To read one value now, for example a start value, use the direct PyJEM getter**, as in
+  the Safety section. Stage 4 adds a jemwrap call for this.
+- **The adapter takes the PyJEM modules as arguments.** On the simulated microscope, give
+  it the simulated modules, as jemwrap's `main.py` does with `PyJEM.offline`.
+
 A PyJEM script is a list of the things an operator does at the microscope, in order. A
 person who knows the microscope and has not seen the script before can read it once and
 say what it does to the column. The same script runs on the simulated microscope and on
