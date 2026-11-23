@@ -720,5 +720,13 @@ Status of 2026-11-23 (the principal's review):
   E1, E2, E3, E14 pass as before; E15 1.1 px rms at X100k (was 5.3) and 0.6 px at 1 m out to
   9000 units. E9 passes, the focal length now 0.19 px (was 0.70). E25 still fails narrowly: CL1's
   position 2.2 px, the focal length 1.3 px (was 28), most in MAG with OLf 9000 units off, where no
-  frame can follow the beam. Open, for the principal: whether E25 should count only settings
+  frame can follow the beam. Superseded below: the principal's question was: whether E25 should count only settings
   whose beam a frame could measure.
+- The objective lens set aside `[deferred]` 2026-11-23 (the principal: "For now... let's stay
+  away from any alignment involving the objective lens and solve it later"). Set aside: OLf far
+  from its row, the objective's focal length as a measured number, and the guide's steps that
+  align to the objective (objective stigmator, image focus, the HT wobbler's rotation centre,
+  ht_centre.py). E25 now moves only the projector lenses; its cell still prints, for the record,
+  how far the fixed numbers move a prediction with OLf 9000 units off. The wide focus series
+  stays in the recording. Deferred to a later stage, owner the principal. Rerun: E25
+  passes (0.35 px at most, the focal length at MAG row 7); E1 to E15 and E9 as before.

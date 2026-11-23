@@ -708,6 +708,10 @@ and `../examples.md`.
   `lens_changes_simulated_wide_focus_2026-11-23.csv` (1729 frames). Refit: misfit 547; E15
   1.1 px rms at X100k (was 5.3); E9 focal length 0.19 px (was 0.70); E25 focal length 1.3 px
   (was 28), CL1 2.2 px (was 1.3): fails narrowly, in MAG at OLf 9000 off.
+- The objective lens set aside (2026-11-23, the principal: "let's stay away from any alignment
+  involving the objective lens and solve it later"). E25 moves only the projector lenses (3000
+  units); OLf 9000 is still printed, for the record. Rerun: E25 passes, 0.35 px at most (the
+  focal length); with OLf 9000 off, CL1 2.2 px and the focal length 1.3 px. E9 passes as before.
 - Corrector test (the principal: "we also need to be careful that our assumptions about the
   corrector have zero effect on our ability to model the real microscope, if the corrector is on
   or off", 2026-11-22). `HIDDEN["corrector"]` ("minus one" as before, identical). Running: three

@@ -148,11 +148,10 @@ spot table. It starts from a recent alignment that is nearly right, with every l
   lenses moved at once within 0.3 px (E3); spot 0 within 1.1 px (E14); the focus series within
   1.2 px at X100k and 1.1 px at 1 m, out to OLf 9000 units (E15). E9 passes: with each held
   number moved by its plausible error, the refits move the kept-back predictions by at most
-  0.19 px (the objective's focal length, 20 %). E25 fails narrowly: outside the recorded range,
-  CL1's position moves a prediction by up to 2.2 px and the focal length by 1.3 px, most in MAG
-  with OLf 9000 units off, where the beam cannot be measured. The rulers give 7.93 nm per px at
-  MAG X40k and 0.2315 mrad per px at DIFF row 10. The whole notebook takes about 40 minutes on
-  the GPU.
+  0.19 px (the objective's focal length, 20 %). E25 passes: with each projector lens 3000 units
+  outside the recorded range, the held numbers move a prediction by at most 0.35 px. The rulers
+  give 7.93 nm per px at MAG X40k and 0.2315 mrad per px at DIFF row 10. The whole notebook takes
+  about 40 minutes on a free GPU.
 - `record_rulers.py`: the grating's period within 1.2 % of the hidden column's, the gold 111
   ring 46.00 px against 46.62 (1.3 %). The script finds CL3 where the three rings match best.
 
@@ -163,9 +162,10 @@ spot table. It starts from a recent alignment that is nearly right, with every l
 - The model's beam assumes that every lens came to its value from below, as in the recording.
 - The gun, spot alignment, stigmator, diff focus and image focus steps of the alignment guide have
   no script.
-- Predictions in MAG with OLf far off (9000 units) rest on the held CL1 position and objective
-  focal length to about 2 px (E25). The recording cannot reach them: in MAG the beam leaves the
-  SightX or grows too large from 3000 to 6000 units off.
+- Alignment that involves the objective lens is set aside for now (2026-11-23): OLf far from its
+  row, the objective stigmator, image focus and the rotation centre. Predictions in MAG with OLf
+  9000 units off rest on the held CL1 position and objective focal length to about 2 px, and the
+  recording cannot reach them: in MAG the beam leaves the SightX from 3000 to 6000 units off.
 - `find_lost_beam` (in `microscope_functions.py`) has no caller yet. It is the routine for a beam
   lost off the SightX.
 - Nothing here has run on the real NEOARM yet.
