@@ -1,0 +1,54 @@
+{
+  "header": {
+    "date": "2026-11-22",
+    "jax": "0.10.2",
+    "device": "cuda:0",
+    "gpu_at_start": "NVIDIA GH200 144G HBM3e, 0 %, 10595 MiB",
+    "ruler_ms": 0.5548750050365925,
+    "config": "RenderConfig(cutoff=1e-12, coordinates='index', class_edges=None, n_classes=8, class_ratio=1.4142135623730951, bins_per_axis=256, forward=Tiles(pixels=32, beams=8, warps=4, stages=None), tangent=Tiles(pixels=32, beams=4, warps=2, stages=None), adjoint=Tiles(pixels=32, beams=4, warps=4, stages=None), rows=Tiles(pixels=16, beams=4, warps=1, stages=None), window_warps=1, items=32768, item_steps=256, nt_chunk=8, impl='auto', pixel_chunk=None)"
+  },
+  "cases": {
+    "narrow20k_256_w2.5": {
+      "fwd_ms": 0.8060090476647019,
+      "grad_ms": 1.1240530293434858,
+      "jvp_ms": 1.488625886850059,
+      "jac7_ms": 2.591847092844546
+    },
+    "narrow251k_w2.5": {
+      "fwd_ms": 6.288452073931694,
+      "grad_ms": 8.834635955281556,
+      "jvp_ms": 13.311266084201634,
+      "jac7_ms": 25.783148012124002
+    },
+    "narrow251k_w4.5": {
+      "fwd_ms": 17.136445036157966,
+      "grad_ms": 24.65304604265839,
+      "jvp_ms": 36.75216296687722,
+      "jac7_ms": 71.08025311026722
+    },
+    "narrow594k_w4.5": {
+      "fwd_ms": 40.05226003937423,
+      "grad_ms": 57.528989971615374,
+      "jvp_ms": 86.08273498248309,
+      "jac7_ms": 171.79299297276884
+    },
+    "broad20k_w15": {
+      "fwd_ms": 10.89560892432928,
+      "grad_ms": 15.98925597500056,
+      "jvp_ms": 23.223524098284543,
+      "jac7_ms": 44.47493702173233
+    },
+    "broad20k_256_w15": {
+      "fwd_ms": 8.79562902264297,
+      "grad_ms": 12.674311990849674,
+      "jvp_ms": 18.822540994733572,
+      "jac7_ms": 33.852607011795044
+    },
+    "broad20k_256_w40": {
+      "fwd_ms": 11.388050974346697,
+      "grad_ms": 23.114308016374707,
+      "jvp_ms": 25.727787986397743,
+      "jac7_ms": 48.88545605354011
+    }
+  }
+}
