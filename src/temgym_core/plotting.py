@@ -14,6 +14,7 @@ except ImportError as error:  # matplotlib is an optional extra
     ) from error
 
 from .components import (
+    ABCDTransfer,
     Component,
     DeflectionBiprism,
     Deflector,
@@ -647,6 +648,15 @@ def plot_model(
                     (0, lens_z), lens_width, height=lens_height / aspect,
                     theta1=180, theta2=0, linewidth=1,
                     fill=False, zorder=-1, edgecolor="k",
+                )
+            )
+        elif isinstance(c, ABCDTransfer) and float(c.length) > 0:
+            # A transfer over a region of the column is drawn as a box over that region.
+            _label_component(ax, label_x, float(c.z) + float(c.length) / 2, name, p)
+            ax.add_patch(
+                mpl.patches.Rectangle(
+                    (left_x, float(c.z)), right_x - left_x, float(c.length),
+                    linewidth=1, fill=False, edgecolor="k", zorder=999,
                 )
             )
         elif isinstance(c, Detector):

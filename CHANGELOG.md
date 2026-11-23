@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `ABCDTransfer` takes an optional `length` (metres, default 0). The map then spans a region of
+  the column: a ray at the entrance `z` leaves at `z + length`. The legacy plot draws such a
+  region as a box. A long transfer block, such as a corrector that is off (free space) or that
+  only images with magnification -1, is one component.
+- A spot row of the simulated microscope may hold a deflector's values, such as the console's
+  spot alignment `SpotA`. `SimulatedMicroscope.select_spot` (and `EOS3.SelectSpotSize`) sets that
+  deflector, as the console does. `from_console` takes `SpotA` from the console's spot table.
 - The simulated microscope answers the PyJEM calls that jemwrap reads. `install()` registers
   `PyJEM.sightx` (and `PyJEM.offline.sightx`) with the same `Detector` calls. `detector.set_ip`,
   `EOS3.GetAlphaSelectorEx` and `Detector3.GetScreen` / `SetScreen` exist.

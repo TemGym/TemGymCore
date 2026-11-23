@@ -51,6 +51,23 @@ CONDENSER_APERTURE = 1
 APERTURE_HOME = (2048, 2048)
 
 
+def _run_compiled(bundle, components):
+    """``run_to_end`` compiled once for a column's structure: the components are arguments, so a new lens
+    current needs no new compilation. Run op by op, a 16 129-beamlet bundle took about 0.9 s through the
+    simulated NEOARM's lower column (2026-11-22)."""
+    import jax
+
+    from ..run import run_to_end
+
+    global _RUN_COMPILED
+    if _RUN_COMPILED is None:
+        _RUN_COMPILED = jax.jit(run_to_end)
+    return _RUN_COMPILED(bundle, components)
+
+
+_RUN_COMPILED = None
+
+
 class UnmodelledStateError(RuntimeError):
     """The microscope state lies outside what the optical model can render.
 
@@ -143,7 +160,8 @@ class PhysicalSetting:
     aperture : tuple of int, optional
         With a condenser: the condenser aperture's hole (0 = none) and its Apt3 position x, y.
     console : tuple of (str, value), optional
-        With :attr:`OpticalTruth.whole_column`: every lens's (effective) DAC value and every deflector's DAC pair.
+        With :attr:`OpticalTruth.whole_column`: every lens's (effective) DAC value, every deflector's DAC pair and
+        ``CondenserAperture``: the condenser aperture's hole and its Apt3 position (x, y).
     """
 
     voltage_v: float
@@ -225,7 +243,9 @@ class SimulatedMicroscope:
         32768.
     spot_table : dict, optional
         Spot-size index -> DAC values of the condenser lenses the console changes with the spot (e.g. ``CL1``,
-        ``CL3``); they take the place of ``condenser_dac``'s at that spot. Not used with a condenser.
+        ``CL3``); they take the place of ``condenser_dac``'s at that spot. Not used with a condenser. A row may
+        also hold a deflector's ``(x, y)`` DAC values, such as the console's spot alignment ``SpotA``: selecting
+        the spot (:meth:`select_spot`) sets that deflector to them.
     camera : CameraModel, optional
         The camera; ideal by default.
     lower_cameras : sequence of LowerCamera, optional
@@ -240,12 +260,14 @@ class SimulatedMicroscope:
         Internal detector sub-samples per output pixel axis.
     seed : int, optional
         Seed of the camera noise.
+    ht_wobbler_v : float, optional
+        How far the HT wobbler moves the high tension each way (V). 0, the default, leaves it still.
     """
 
     def __init__(self, truth, electronics, *, magnification_table, incident_beam, diffraction_table=None,
                  diffraction_camera_length_m=None, magnification=None, condenser_dac=None, spot_table=None, camera=None,
                  lower_cameras=(), beam_current_a=1.602176634e-9, ray_sample_power=18, detector_samples_per_pixel=1,
-                 seed=0):
+                 seed=0, ht_wobbler_v=0.0):
         require_x64("the simulated microscope")
         if not isinstance(electronics, Electronics):
             raise TypeError("electronics must be an Electronics instance.")
@@ -261,6 +283,8 @@ class SimulatedMicroscope:
         self.condenser_dac = {n: int(v) for n, v in (condenser_dac or {}).items() if n in CONDENSER_LENSES}
         self.spot_table = {int(spot): {n: int(v) for n, v in row.items() if n in CONDENSER_LENSES}
                            for spot, row in (spot_table or {}).items()}
+        self.spot_deflectors = {int(spot): {n: [int(v) for v in row[n]] for n in row if n in DEFLECTORS}
+                                for spot, row in (spot_table or {}).items()}
         self.camera = camera or CameraModel()
         self.lower_cameras = {c.model.name: c for c in sorted(lower_cameras, key=lambda c: c.below_m)}
         if self.camera.name in self.lower_cameras or len(self.lower_cameras) != len(tuple(lower_cameras)):
@@ -270,6 +294,7 @@ class SimulatedMicroscope:
         self.detector_samples_per_pixel = int(detector_samples_per_pixel)
         self.rng = np.random.default_rng(seed)
         self.incident_beam = incident_beam
+        self.ht_wobbler_v = float(ht_wobbler_v)
         self._images = OrderedDict()
         self._pyjem = None
         self.reset()
@@ -460,7 +485,8 @@ class SimulatedMicroscope:
             ``mag`` = [value, unit, label] and every lens's DAC value) and ``spot_alpha`` (per spot and alpha: CL1,
             CL3, CM). The MAG and DIFF rows are kept in the console's order, so selector indices are the console's
             (a row out of order, like the NEOARM's last DIFF row, is left out). Selecting a row sets IL1-IL3 and
-            PL1; selecting a spot sets CL1, CL3 and CM; deflectors stay where they are put.
+            PL1; selecting a spot sets CL1, CL3 and CM, and SpotA where the table has it; other deflectors stay
+            where they are put.
         alpha : int, optional
             The console's alpha whose spot table is used. The simulated console's own alpha selector stays 0.
         whole_column : callable
@@ -479,7 +505,8 @@ class SimulatedMicroscope:
         rows = {mode: [r for i, r in enumerate(tables["rows"][mode])
                        if all(r["mag"][0] > earlier["mag"][0] for earlier in tables["rows"][mode][:i])]
                 for mode in ("MAG", "DIFF")}
-        spots = {r["spot"]: {n: r[n] for n in ("CL1", "CL3", "CM")} for r in tables["spot_alpha"] if r["alpha"] == alpha}
+        spots = {r["spot"]: {n: r[n] for n in ("CL1", "CL3", "CM", "SpotA") if n in r}
+                 for r in tables["spot_alpha"] if r["alpha"] == alpha}
         electronics = Electronics({n: LensDrive(dac_per_unit=1.0) for n in PROJECTOR_LENSES},
                                   DeflectorDrive(np.eye(4), reference_voltage_v=ht_v),      # not used
                                   objective_dac=tuple(rows["MAG"][0][n] for n in OBJECTIVE_LENSES),
@@ -491,7 +518,7 @@ class SimulatedMicroscope:
                     spot_table=spots, incident_beam=None, camera=camera, beam_current_a=beam_current_a,
                     ray_sample_power=ray_sample_power, detector_samples_per_pixel=detector_samples_per_pixel, seed=seed)
         if spot is not None:
-            scope.spot = int(spot)
+            scope.select_spot(spot)
             scope.settle()
         return scope
 
@@ -526,12 +553,21 @@ class SimulatedMicroscope:
         self.flc_switch = {name: 0 for name in LENS_IDS}
         self.flc_value = {name: None for name in LENS_IDS}
         self.deflectors = {name: [NEUTRAL_DAC, NEUTRAL_DAC] for name in DEFLECTORS}
+        self.select_spot(self.spot)          # the spot table's spot alignment, if it has one
         self.beam_blank = 0
+        # GUN3.SetHtWobbler switches this. While it is on, the high tension alternates between
+        # ht_v + ht_wobbler_v and ht_v - ht_wobbler_v from one camera frame to the next. A real wobbler swings it
+        # continuously.
+        self.ht_wobbler = False
+        self.ht_wobble_sign = 1
         self.aperture_kind = CONDENSER_APERTURE
         self.exp_kind = 0
         self.apertures = {kind: {"size": 0, "position": list(APERTURE_HOME)} for kind in APERTURE_KINDS}
         self.apertures[CONDENSER_APERTURE]["size"] = 1
         self.specimen = None                 # vacuum; or a TemGym component at the specimen plane
+        # With a specimen, None images it with rays, as its shadow. A number of beamlets across images it with
+        # one coherent Gaussian beam at the specimen. The beam is decomposed into that number squared of beamlets.
+        self.wave_beamlets = None
         self.stage = [0.0, 0.0, 0.0, 0.0, 0.0]
         self.lens_memory = {}                # per lens with hysteresis: (the DAC value it has, its backlash elements)
         self.settle()
@@ -641,11 +677,31 @@ class SimulatedMicroscope:
         self.settle()
         return law.effective_dac(self.lens_memory[name][1], dac)
 
+    def select_spot(self, spot):
+        """Select a spot-size index, as the console does: the tables reload, and a deflector that the spot table
+        holds for this spot (the spot alignment ``SpotA``) takes its value.
+
+        Parameters
+        ----------
+        spot : int
+            PyJEM's spot-size index.
+        """
+        self.spot = int(spot)
+        for name, value in self.spot_deflectors.get(self.spot, {}).items():
+            self.deflectors[name] = list(value)
+        self.reload_tables()
+
     def reload_tables(self):
         """A selector, function-mode or spot change reloads table values and clears direct settings."""
         self.direct = {}
 
     # ---------------------------------------------------------------- physics
+    def beam_voltage_v(self):
+        """Return the high tension of the next frame: ht_v, moved by the HT wobbler while it is on."""
+        if not self.ht_wobbler:
+            return float(self.ht_v)
+        return float(self.ht_v) + self.ht_wobble_sign * self.ht_wobbler_v
+
     def physical_setting(self):
         """Translate the current DAC values into relative lens strengths and the kick at the specimen.
 
@@ -678,8 +734,11 @@ class SimulatedMicroscope:
             lenses = tuple((n, float(NEUTRAL_DAC if self.lens_dac(n) is None else self.effective_dac(n)))
                            for n in LENS_IDS)
             deflectors = tuple((n, tuple(float(v) for v in pair)) for n, pair in self.deflectors.items())
-            return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=(), specimen_kick=(),
-                                   console=lenses + deflectors)
+            # The condenser aperture's hole (0 = none) and its Apt3 position, for hidden optics that have one.
+            aperture = self.apertures[CONDENSER_APERTURE]
+            condenser_aperture = (("CondenserAperture", (float(aperture["size"]), *map(float, aperture["position"]))),)
+            return PhysicalSetting(voltage_v=self.beam_voltage_v(), projector_controls=(), specimen_kick=(),
+                                   console=lenses + deflectors + condenser_aperture)
         for name in UNMODELLED_LENSES:
             if self.lens_dac(name) != NEUTRAL_DAC:
                 reasons.append(f"{name} is not modelled and must stay at {NEUTRAL_DAC}")
@@ -707,18 +766,18 @@ class SimulatedMicroscope:
             drives[n].control_at(self.effective_dac(n)) if n in self.electronics.hysteresis
             else drives[n].control(self.lens_dac(n)) for n in PROJECTOR_LENSES)
         dac_values = (*self.deflectors["CLA1"], *self.deflectors["CLA2"])
-        kick = tuple(float(k) for k in self.electronics.deflector.kick(dac_values, self.ht_v))
+        kick = tuple(float(k) for k in self.electronics.deflector.kick(dac_values, self.beam_voltage_v()))
         pla_kick = (0.0, 0.0)
         if self.truth.pla_kick is not None:
-            pla_kick = tuple(float(k) for k in self.truth.pla_kick(*self.deflectors["PLA"], self.ht_v, self.diffraction))
+            pla_kick = tuple(float(k) for k in self.truth.pla_kick(*self.deflectors["PLA"], self.beam_voltage_v(), self.diffraction))
         if condenser is not None:
             aperture = self.apertures[CONDENSER_APERTURE]
-            return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=projector_controls,
+            return PhysicalSetting(voltage_v=self.beam_voltage_v(), projector_controls=projector_controls,
                                    specimen_kick=kick, pla_kick=pla_kick,
                                    condenser_dac=tuple((n, self.effective_dac(n)) for n in ("CL1", "CL3", "CM")),
                                    aperture=(int(aperture["size"]), *map(int, aperture["position"])))
         cl3_dac = int(self.lens_dac("CL3")) if self.truth.beam_size is not None else None
-        return PhysicalSetting(voltage_v=float(self.ht_v), projector_controls=projector_controls, specimen_kick=kick,
+        return PhysicalSetting(voltage_v=self.beam_voltage_v(), projector_controls=projector_controls, specimen_kick=kick,
                                pla_kick=pla_kick, cl3_dac=cl3_dac)
 
     def expected_image(self, setting, binning, camera=None):
@@ -742,7 +801,7 @@ class SimulatedMicroscope:
         camera = camera or self.camera.name
         model = self.camera_models[camera]
         key = (setting, binning, camera, self.ray_sample_power, self.detector_samples_per_pixel, id(specimen),
-               self.incident_beam)
+               self.incident_beam, self.wave_beamlets)
         if key in self._images:
             self._images.move_to_end(key)
             return self._images[key]
@@ -763,7 +822,8 @@ class SimulatedMicroscope:
         column = tuple(projector) if specimen is None else (specimen, *projector)
         condenser = self.truth.condenser
         if setting.console is not None:          # the beam and the whole column are already there
-            column = projector
+            column = projector if specimen is None else tuple(
+                sorted((*projector, specimen), key=lambda part: float(part.z)))
         elif condenser is not None:              # from the source, through the condenser
             hole, *position = setting.aperture
             column = condenser.components(dict(setting.condenser_dac), hole=hole, aperture_position_dac=position,
@@ -779,12 +839,71 @@ class SimulatedMicroscope:
         shape, pitch, psf = model.geometry(binning)
         detector = Detector(z=0.0, shape=shape, pixel_size=(pitch, pitch), flip_y=not model.mirrored)
         rays = sample_rays(mean, covariance, z=start, voltage=setting.voltage_v, sample_power=self.ray_sample_power)
-        image = ray_image(rays, column, detector, samples_per_pixel=self.detector_samples_per_pixel, psf_sigma_pixels=psf)
+        if specimen is not None and self.wave_beamlets is not None:
+            image = self._wave_image(rays, column, specimen, detector, psf * pitch)
+        else:
+            image = ray_image(rays, column, detector, samples_per_pixel=self.detector_samples_per_pixel,
+                              psf_sigma_pixels=psf)
         image.setflags(write=False)
         self._images[key] = image
         if len(self._images) > 64:
             self._images.popitem(last=False)
         return image
+
+    def _wave_image(self, rays, column, specimen, detector, psf_sigma_m):
+        """Image of the specimen with one coherent Gaussian beam: flux per pixel, per incident electron.
+
+        The function traces the rays to the specimen plane. It weights each ray by what the apertures above let
+        through. One round Gaussian takes the rays' weighted centre, tilt, rms size and curvature there. That
+        Gaussian is the coherent part of the beam, and it leaves out the rest of the rays' spread. It carries the
+        fraction of the rays that got through. The function decomposes it into ``wave_beamlets**2`` beamlets
+        over +-3 rms. The beamlets go through the specimen and the column below it to the camera, where their
+        fields add.
+        """
+        import jax.numpy as jnp
+
+        from ..constants import energy2wavelength
+        from ..evaluate import gaussian_image
+        from ..gaussian import GaussianBeam
+        from ..components import GaussianActionComponent
+        from ..components._base import _uses_default_log_transmission
+        from ..run import run_iter
+        from ..source import decompose_gaussian
+
+        z = float(specimen.z)
+        above = [part for part in column if float(part.z) < z]
+        below = [part for part in column if float(part.z) > z]
+        # Rays carry no amplitude: the apertures above weight them by their intensity transmission, as in ray_image.
+        weights = jnp.ones_like(rays.x)
+        for component, at in run_iter(rays, [*above, Plane(z=z)]):
+            if isinstance(component, GaussianActionComponent) and not _uses_default_log_transmission(component):
+                weights *= jnp.exp(2 * component.log_transmission(at.r_xy))
+        weights = np.asarray(weights, float)
+        transmitted = weights.mean()
+        if transmitted == 0:                                # the apertures stop the whole beam
+            return np.zeros(detector.shape)
+        x, y, dx, dy = (np.asarray(v, float) for v in (at.x, at.y, at.dx, at.dy))
+        mean = {name: np.average(v, weights=weights) for name, v in (("x", x), ("y", y), ("dx", dx), ("dy", dy))}
+        vx = np.average((x - mean["x"]) ** 2, weights=weights)
+        vy = np.average((y - mean["y"]) ** 2, weights=weights)
+        variance = 0.5 * (vx + vy)
+        curvature = np.average((x - mean["x"]) * (dx - mean["dx"]) + (y - mean["y"]) * (dy - mean["dy"]),
+                               weights=weights) / (vx + vy)
+        width = 2 * np.sqrt(variance)                       # 1/e amplitude radius of the Gaussian of that rms size
+        voltage = float(np.ravel(at.voltage)[0])
+        k = 2 * np.pi / float(energy2wavelength(voltage))
+        beam = GaussianBeam(
+            x=jnp.asarray(mean["x"]), y=jnp.asarray(mean["y"]), dx=jnp.asarray(mean["dx"]), dy=jnp.asarray(mean["dy"]),
+            z=z, voltage=voltage, amplitude=jnp.sqrt(2 * transmitted / (jnp.pi * width**2)) + 0j,
+            Q_inv=(curvature + 2j / (k * width**2)) * jnp.eye(2), pathlength=0.0,
+        )
+        bundle = decompose_gaussian(beam, num_across=self.wave_beamlets, extent_rms=3.0)
+        end = float(column[-1].z)
+        camera = Detector(z=end, shape=detector.shape, pixel_size=detector.pixel_size, flip_y=detector.flip_y)
+        out = _run_compiled(bundle, [specimen, *below, camera])
+        image = gaussian_image(out, camera, samples_per_pixel=1, blur_sigma_m=psf_sigma_m if psf_sigma_m > 0 else None,
+                               method="auto")
+        return np.asarray(image)
 
     def acquire(self, camera=None):
         """Record one camera exposure with the current state and detector settings.
@@ -819,4 +938,6 @@ class SimulatedMicroscope:
         else:
             incident = self.beam_current_a * detector["exposure_us"] * 1e-6 / elementary_charge
             expected = self.expected_image(self.physical_setting(), binning, camera) * incident
+        if self.ht_wobbler:                      # the next frame sees the other side of the wobble
+            self.ht_wobble_sign = -self.ht_wobble_sign
         return model.expose(expected[y:y + height, x:x + width], self.rng, detector["frames"])

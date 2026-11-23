@@ -344,9 +344,8 @@ class EOS3(_Accessor):
         return int(self._scope.spot)
 
     def SelectSpotSize(self, size):
-        """Select a spot-size index (0-7; accepted, not modelled)."""
-        self._scope.spot = self._choice(size, range(8), "size")
-        self._scope.reload_tables()
+        """Select a spot-size index (0-7). The spot table's lenses and spot alignment follow it."""
+        self._scope.select_spot(self._choice(size, range(8), "size"))
 
     def GetAlpha(self):
         """Return the alpha-selector index."""
@@ -399,6 +398,17 @@ class HT3(_Accessor):
     def GetHtRange(self):
         """Return ``[maximum, minimum]`` high tension in volts."""
         return list(self._RANGE)
+
+
+class GUN3(_Accessor):
+    """The gun's HT wobbler switch. While it is on, the simulated high tension moves by the
+    microscope's ``ht_wobbler_v`` up and down, changing side at every camera frame."""
+
+    _kind = ErrorTypeKind.GUN
+
+    def SetHtWobbler(self, sw):
+        """Switch the HT wobbler on (1) or off (0)."""
+        self._scope.ht_wobbler = bool(self._choice(sw, (0, 1), "sw"))
 
 
 # ----------------------------------------------------------------- apertures
@@ -701,7 +711,7 @@ def pyjem_interface(scope):
     exception = types.ModuleType("PyJEM.TEM3.exception")
     exception.TEMError, exception.ErrorTypeKind, exception.ErrorCodeKind = TEMError, ErrorTypeKind, ErrorCodeKind
     tem3 = types.ModuleType("PyJEM.TEM3", "Virtual-microscope emulation of PyJEM.TEM3 (PyJEM 1.4).")
-    for cls in (Lens3, Def3, EOS3, HT3, Apt3, Stage3, Detector3):
+    for cls in (Lens3, Def3, EOS3, HT3, GUN3, Apt3, Stage3, Detector3):
         members = {"_scope": scope, "__doc__": cls.__doc__}
         if cls in (Lens3, EOS3):             # calls that can change a lens: let the lenses settle after each
             members.update({name: _then_settle(getattr(cls, name)) for name in dir(cls)

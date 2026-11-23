@@ -74,6 +74,20 @@ See `stakeholders.md`.
   PyJEM script demonstrates each alignment on the model microscope. Which alignments come
   first is open (Q2).
 - S7 `[deferred]` **Experiment design**, such as near-field ptychography (R5).
+- S8 `[answered]` **Alignment by recipe.** An alignment routine for TEM that follows the
+  principal's guide (`alignment_guide.md`), written as fixed recipes and tested on the NEOARM.
+  The principal (2026-11-22): "can it all be done with a hardcoded recipe we test on our
+  microscope?" `[assumed]` Each step is a closed loop on the SightX: wobble or change one value,
+  find the beam (or a feature), adjust the step's control, repeat until the guide's endpoint. A
+  recipe needs no fitted model; the model helps it choose step sizes and keep the beam on the
+  SightX (S2, S3), and the simulated microscope rehearses it (S4). Which steps the jemwrap
+  controls allow now, and which need new controls (rule 5 of the pyjem skill) or a specimen, is in
+  the change record (2026-11-22). Examples: E20, E21 (aperture centring), E22 (one pass with the
+  predictor). How S8 relates to S6 is Q15.
+  `[answered]` The principal (2026-11-22, on Q15): "I think recipe is simpler, but I still need
+  the predictor model too, I am not sure." Then: "we would need to run the predictor samples
+  first, then run the align recipe? I think that is so - so two run side by side then." So S8
+  sits beside S6: the recording for the predictor comes first, then the recipe aligns.
 
 ### 2.2 Demand uncertainties
 
@@ -82,14 +96,31 @@ See `stakeholders.md`.
 - U2 `[unknown]` How absolute units on the sample plane are obtained. Frames from one
   camera cannot give them without a ruler (a grating image, diffraction rings or a second
   camera). Source: `neoarm_model.ipynb`, section 7.
-- U5 `[unknown]` Whether the choice of a static value changes any prediction. Resolved by
-  example E9: fit twice with two different static values and compare the predictions.
+- U5 `[record]` Whether the choice of a fixed value changes any prediction. With only the gauge
+  freedoms fixed (M14), no: E9 moves each of the six fixed numbers by a plausible error, and the
+  kept-back predictions move by 0.08 px at most (2026-11-20, M13). Before that, the fixed
+  objective moved them by up to 17 px, and CL1's position, the other condenser positions and the
+  corrector were not settled.
 - U4 `[answered]` The model must be clear about which components are static and which
   change. The model must not depend on things that cannot be known at the real microscope.
   The principal wants a round of questions on how the TemGym model is represented before
   S5 is settled (Q6).
 - U3 `[unknown]` The condenser model follows the measured focus curve to 3 % but the
   rehearsal cannot use it yet. Source: session of 2026-11-18.
+- U6 `[unknown]` Whether the controls added to jemwrap on 2026-11-22 work on the real NEOARM:
+  the getters of CLs, OLs, GunA1, GunA2 and the aperture position (every script's snapshot now
+  reads them, J16), `Apt3.SetPosition` moving the condenser aperture, and `GUN3.SetHtWobbler`
+  (marked "Ver.1.2" in the bundled PyJEM). None has run there. Resolved by a first session that
+  reads and sets each once, with the console watching.
+- U7 `[unknown]` How far the predictor holds outside the recorded procedure. Two limits are
+  known (2026-11-22, simulated): the model assumes every lens came to its value from below (with
+  an unknown history its beam was 26 px off; with every lens brought from below, 0.3 px); and it
+  does not follow a change of ShiftBal or TiltBal, so after the pivot-point scripts its deflector
+  response no longer holds. Resolved by Q22 and by the real session's repeatability checks.
+- U8 `[unknown]` Notebook 2's model has no condenser aperture. With the large hole the simulated
+  beam does not touch it (2026-11-22); with an aperture that limits the beam, as for aperture
+  centring, the model's predictions of beam size and centre are not checked. Resolved by a
+  recording with a limiting aperture and, if it misses, an aperture in the model.
 
 ### 2.3 Interfaces with existing systems
 
@@ -154,7 +185,9 @@ See `stakeholders.md`.
   - plain functions that take the monitor, in place of a control object;
   - the narrowest settable list (M1's lenses, SpotA, CLA1, CLA2, the shift and tilt balances,
     the selector, MAG or DIFF, the spot size, alpha). CM and the objective go on the list
-    when a recording needs them, each with its reason (the pyjem skill, safety rule 5);
+    when a recording needs them, each with its reason (the pyjem skill, safety rule 5).
+    On 2026-11-20 the principal added the objective's fine focus OLf, for the focus series of
+    M15; the coarse focus OLc stays off the list;
   - every lens through free lens control, CL3 too, although the table has `SetCL3`, so that
     the restore of every lens is its switch;
   - the selector must be a row of its function mode: 31 MAG rows and 30 DIFF rows, from the
@@ -165,6 +198,14 @@ See `stakeholders.md`.
   copied unchanged out of the recording zips (2026-11-19). The zips stay outside git as the
   raw source. A fresh checkout reruns `fit_projector_lenses.py` and `fit_condenser.py`, and
   both give the same JSON as from the zips.
+- J16 `[answered]` Added at the principal's request on 2026-11-22, for the steps of the guide:
+  the condenser and objective stigmators (CLs, OLs), the gun shift and tilt (GunA1, GunA2) and the
+  position of the aperture selected on the console, each "full range, no window" (the
+  principal's choice of limits), and the HT wobbler switch, which PyJEM can set but not read
+  (`WRITE_ONLY`: restore switches it off first, only if the script switched it on). Stage Z
+  `[deferred]`: "there is no stage z getter in pyjem, but there is a setter - we can deal with
+  that later" (Q21). `[record]` A restore moves the aperture back only while the aperture the
+  script moved is still selected (review, 2026-11-22).
 - J12 `[answered]` Every change to jemwrap conforms logically to the style that its author
   set. `[record]` That style is: a declarative table of endpoints, typed dataclasses for
   the state, one small module for each responsibility, a test for each behaviour in
@@ -192,9 +233,90 @@ See `stakeholders.md`.
   IL1, IL2, IL3 and PL1, and the deflectors CLA1 and CLA2. Spot alignment (SpotA) is
   one more (C6). This split is for now, to keep
   things simple.
-- M2 `[answered]` **Components that are static**: CM, the objective pre-field, the
-  objective post-field and the corrector. They do not change much. The fit never changes
-  them.
+- M2 `[answered]` **Components that are static**: CM and the corrector. No console value of the
+  recorded settings changes them. Their positions and strengths are still numbers of the model,
+  and the fit adjusts every one that is not a gauge choice (M14). The objective's pre-field and
+  post-field are not set by the projector's console values. The fit adjusts their focal length and
+  their distance from the specimen, as M9 allows, and their focus follows OLf (M15). The principal
+  chose to fit the objective on 2026-11-20 after E9 failed with a fixed objective (M13). Moving CM
+  instead was rejected: in practice CM seldom changes.
+  - `[answered]` (Q13, 2026-11-20) The corrector is turned off on the NEOARM. There are no lenses
+    there, only a deflector that is sometimes used (the corrector beam tilt of the alignment guide,
+    M8). The principal: "There are no hidden lenses." The unequal corrector lenses of the harder
+    test of 2026-11-20 are not a form the real column can have.
+  - `[answered]` The corrector is still a transfer block: a long region between CLA2 and CM. The
+    model draws it as a rectangle about the corrector's length in the column diagram, as a
+    component. The principal is not sure that the corrector is off, so the model has two
+    versions of the block: free space (corrector off), and a transfer with a magnification of -1
+    and nothing else (corrector on). The fit runs with each, and the misfit shows which one the
+    microscope has.
+- M15 `[answered]` The objective's focus is a component that changes. On 2026-11-20 the
+  principal saw that the model holds only for the objective at the standard focus of the console
+  rows, in normal work at eucentric height, and chose to model a focus change. The objective's
+  excitation follows its fine focus OLf, with a fitted change per DAC unit; its focal length goes
+  as the inverse square of its excitation. The recording script records a focus series (OLf
+  -3000, -1000, +1000, +3000) at X15k, X40k, X100k, 20 cm, 40 cm and 1 m. The coarse focus OLc
+  and a refocus outside that range are not modelled. Changing the specimen's height alone changes
+  no lens and does not affect the predictions.
+- M14 `[answered]` The fitted microscope will always be wrong in its numbers. It must be a
+  physics-constrained predictor whose predictions do not depend on the values chosen for the
+  numbers held fixed, as long as the parts they describe do not change. The principal set this on
+  2026-11-20, and pointed out the gauge freedom: only the relations between the numbers can
+  matter. So the fit holds fixed exactly one number for each gauge freedom (a change of the
+  numbers that no recording can see) and fits every other number.
+  - The gauge freedoms come from the derivatives of everything the recording measures with
+    respect to all the numbers: the combinations with a zero singular value. In notebook 2 there
+    are five: a turn of the whole column about its axis, a move of CL1 to CLA2 together along the
+    axis (the corrector images them one to one), and three trade-offs among CM's gap and bore and
+    the corrector's two positions. The fit holds the camera's turn, CL1's position, CM's gap and
+    bore and the corrector's two positions; no zero is left. These six numbers hold one combination
+    more than the five freedoms: a change among CM and the corrector that the recording sees only
+    at about a millionth of its strongest change. Notebook 2 computes these singular values and
+    asserts the count; E9 shows that the sixth choice does not move a prediction either. The review
+    of 2026-11-20 found this.
+  - Notebook 2 checks every fixed number after the fit, first to first order from the fit's
+    derivatives, then in full (E9). The plausible errors (20 mrad, 5 mm, 10 %) and the 1 px of E9
+    are `[assumed]`.
+- M16 `[answered]` (Q7) The goal is that the model's form does not differ from the NEOARM's. The
+  principal, 2026-11-20: "to have the generalised model with enough gauge freedoms where we will
+  effectively have the recipe to one shot the scale invariant predictor microscope of the
+  neoarm". So the model is general enough that the form of the real column is absorbed by
+  fitted numbers, and one recording and one fit at the microscope give the predictor. Freedoms
+  that no recording can see are gauge freedoms and are held as M14 says. `[assumed]` A misfit
+  far above the scatter of the frames means the form is still wrong; the answer is to change
+  the model, not the pass rules. Source of the question: the harder test of 2026-11-20, whose
+  hidden microscope has lens hysteresis, unequal corrector lenses and a shorter objective field;
+  its fit misses the beam centres by 6 px rms against a scatter of 1 px.
+  - `[answered]` (Q12) "One shot": one recording session and one fit at the real NEOARM, with
+    no return visit to fix the model. The recovery routine of S3 stays allowed. The physics of
+    the form is understood already (the principal: "we have the physics already understood -
+    hysteresis etc."), so the hidden microscope of a rehearsal differs from the model only in
+    physics the real column has, not in invented components.
+  - `[answered]` (Q14) A freedom goes into the model when the model cannot otherwise follow a
+    part of the frames, and only if its physics is real for a column. After each addition the
+    gauge count (M14) is computed again.
+- M17 `[answered]` (Q8) The condenser is measured for better spot sizes on the SightX now
+  (R21; E2 and E14 fail in the harder test), "creeping toward a better representation" of it.
+  A prediction at the specimen (probe size, convergence angle) is not required yet; it is a
+  direction, not a target.
+- M18 `[answered]` Specimen images come from the Gaussian beam model, for the guide's steps that
+  need a specimen (HT wobbler, objective stigmator, image focus). The principal (2026-11-22): "I
+  do also need the gaussian beam model back anyway (made exceptionally fast to generate images on
+  a small downsample detector - 256 x 256)"; "We can use gold particles or the cross grating
+  (modelled after real images) as the sample"; "the gaussian beam model will play nicely with the
+  ray object already... it's an extended ray object"; plain wave optics "needs padding, does not
+  go through the optics automatically - this gaussian model will without too much bother -
+  provided we have sampled enough"; "keep on sampling gaussians until convergence"; a thin phase
+  object is "a harder problem... but still". Local refinement of the sampling was tried and set
+  aside by the principal (2026-11-22).
+- M19 `[record]` Where the Gaussian beam model stands (2026-11-22, change record): the sparse
+  Pallas renderer is back, 256 x 256 in about 2 ms; `converged_gaussian_image` refines the
+  beamlets until the image changes by less than a tolerance; against exact images a cross
+  grating at focus is 0.36 % off at 261 121 beamlets, and a 10 nm aperture at 10 um defocus
+  0.056 % at 65 025; defocus matches exact Fresnel diffraction. Since Q18 the simulated NEOARM
+  images a cross grating with one coherent Gaussian through its whole column, 0.08 s a frame
+  (PolePieceLens now carries Gaussian beams). Not yet: partial coherence, a thin phase object,
+  gold particles.
 - M3 `[answered]` A static component is a box that we do not know and do not change. It
   holds one non-dimensional value. In a non-dimensional microscope the choice of that value
   should not matter: another value would still fit the same microscope. The principal
@@ -249,6 +371,46 @@ See `stakeholders.md`.
   DIFF labels, in metres, set that factor through the drawing's L. The manual's objective
   focal length (1.9 mm) and the fitted 2.1 mm agree to about 10 %. A known diffraction ring
   or a grating sets it independently (U2).
+- M13 `[record]` The fit of 2026-11-20 (`examples/neoarm/neoarm_fit.ipynb`) starts from notebook 1
+  and fits the recording of the simulated NEOARM. It never reads the hidden numbers.
+  - The fitted microscope will always be wrong in its numbers. It must predict, and its
+    predictions must not depend on the values chosen for the parts that do not change (M14). A
+    fit that returns the hidden numbers is not the aim.
+  - The hidden microscope also differs in CM's gap (10 %), which the fit holds fixed as a gauge
+    choice, and in CLA1's position (3 mm), which it now fits. Its SightX is off the axis and
+    turned, which the fit's camera shift and its fitted deflector directions take up.
+  - The objective sits only 0.03 mm further from the specimen than its focal length. 1 % of the
+    focal length is 75 % of that distance. A hidden objective 8 % shorter made a column that the
+    recording script could not follow. Hidden differences are now chosen with a trace without
+    frames first.
+  - With the objective held fixed: a 10 % longer objective moved kept-back predictions by up to
+    3.7 px (E9 failed), and a hidden objective at another distance (2.20 mm against 2.10 mm, focal
+    length 2.15 mm against 2.07 mm) moved them by up to 17 px (E14 failed).
+  - The objective's focal length, distance and focus law are now fitted (M2, M15). From notebook
+    1's objective the fit gets lost. The notebook starts the focal length at 0.5 to 3 times
+    notebook 1's gap to the specimen, with both mirror choices, ten fits at once on the GPU. The
+    starts further from it end at the same fit (misfit 138) and predict the same. This is a check
+    of the fit's start, not E9.
+  - The fit ends at a distance of 1.84 mm, a focal length of 1.81 mm and 3.2e-7 of excitation per
+    OLf unit, not the hidden 2.20 mm, 2.15 mm and 4e-7. It still predicts every kept-back frame
+    within 1.2 px. The recording fixes what the objective does, not these numbers one by one.
+  - Kept-back rows (MAG and DIFF), settings with several lenses moved and spot 0 are predicted
+    within 0.1 px, the beam sizes within 0.3 % (median). The focus series of X100k and 1 m, which
+    the fit never saw, is predicted within 0.5 px and 0.1 px rms (E15; 2 of its 48 frames lost the
+    beam). These misses show that the fit recovers a column of this kind. They do not show the
+    accuracy at the real NEOARM (U1).
+  - The hidden microscope has the model's form: the same lens laws and focus law, and many of
+    notebook 1's numbers. It differs in its source size and in numbers the fit can follow. So the
+    test shows that a model of the right form predicts, not how a wrong form fails (review of
+    2026-11-20).
+  - With twelve numbers fixed, E9 failed or was not settled for seven of them. The fit now holds
+    only the six gauge-fixing numbers (M14) and fits the rest, 63 numbers. E9 moves each of the
+    six in twenty steps with a refit at each: every refit reaches the best misfit (138), and the
+    kept-back predictions move by 0.08 px at most. E9 passes. Moved by 5 mm, CL1 needs these small
+    steps: half a millimetre at once leaves a misfit of 270 000, and the fit follows by moving
+    CL3, SpotA, CLA1 and CLA2 and lengthening the corrector's focal length by 2 %.
+  - The fit needs the camera's mirror image. The other choice ends with a misfit of 20 000 against
+    138.
 - M8 `[answered]` Beyond M1, the first controls added from the alignment guide are the
   condenser pivot points (tilt balance and shift balance). The gun shift and tilt, the
   stigmators, the corrector beam tilt and the aperture are not in the first version.
@@ -338,10 +500,24 @@ See `stakeholders.md`.
 - R29 `[answered]` A calibration recording can take any length of time that is not hours
   of waiting.
 
+- R33 `[answered]` (Q10) One simulated round takes under 30 minutes: the simulated recording
+  within 15 minutes, and the fit with all its checks within 10 minutes on the GPU. On
+  2026-11-20 a round took more than two hours.
+
 ### 2.7 Testing, installation and service
 
 - R23 `[record]` The fit is tested on rows it never saw (kept-back rows), a kept-back spot
   size, and moves of several controls at once.
+
+- R34 `[answered]` (Q9) A fit is finished when its misfit falls by less than 0.1 % over 50 steps,
+  not after a fixed number of steps. A fit that reaches its step limit first says so, and its
+  predictions are not reported as final. Source: in the harder test of 2026-11-20 the refits of
+  E9 lowered the best fit's misfit and moved its predictions by 12 px.
+- R35 `[answered]` (Q11) Every group of settings in a recording earns its place, shown with the
+  fit's derivatives: for each group, the notebook shows how much the uncertainty of each kept-back
+  prediction grows when the group is left out. A group that changes no prediction's uncertainty by
+  more than 10 % is a candidate to drop. A new measurement (a condenser focus series, a pivot
+  point) goes in only if it lowers the uncertainty of a spot-size prediction by at least 20 %.
 
 ### 2.8 Portability and distribution
 
@@ -398,4 +574,124 @@ principal. Owns the instrument: handled by the principal (R26).
 
 ## Open questions
 
-None. Closed on 2026-11-19: sample-plane units (M7) and the model representation (M1 to M9).
+Closed on 2026-11-19: sample-plane units (M7) and the model representation (M1 to M9).
+
+Opened on 2026-11-20 by the harder test (the hidden microscope differs from the model in form)
+and its fit; in interview with the principal:
+
+Q7 to Q14 answered on 2026-11-20: M16, M17, M2 (corrector off), R33, R34, R35.
+
+Opened on 2026-11-22:
+
+- Q15 `[answered]` 2026-11-22: beside, not instead (S8). The predictor's recording runs first,
+  then the recipe. How the predictor then follows the alignment is Q22.
+- Q16 `[answered]` 2026-11-22: diff focus is the next recipe after the pivot points ("Q16 yes").
+  The rest stays open below. Original question: which steps of the guide are recipes in the first
+  version beyond the pivot
+  points: diff focus (controls allowed now); condenser stigmator, gun tilt and shift, aperture
+  centring (each needs a control on jemwrap's list, so David decides); HT wobbler, objective
+  stigmator and image focus (need a specimen and controls outside the list). For the principal,
+  resolves S8 (and Q2).
+- Q17 `[answered]` 2026-11-22: "Yes please". Aperture centring: the simulated NEOARM has no condenser aperture in its
+  column, so `Apt3.SetPosition` changes nothing there. Put one in (its height, hole, metres per
+  DAC unit and a hidden off-centre position are choices with no source), then a recipe through the
+  crossover? For the principal, resolves S8.
+- Q18 `[answered]` 2026-11-22: "Yes" (the cross grating first, then gold particles, as proposed);
+  one coherent beam first (the principal). Built 2026-11-22 for the cross grating.
+  Specimen frames in the simulated NEOARM: render its SightX frames with the
+  Gaussian beam model through the whole column with a specimen, and which specimen first (the
+  cross grating, gold particles)? For the principal, resolves M18, unblocks Q19.
+- Q19 `[answered]` 2026-11-22: the principal: "Ok review, Q 19, then Q 23". Built: every lens of
+  the simulated NEOARM follows the high tension, the HT wobbler moves it by HT_WOBBLER_V each way
+  between frames, and `ht_centre.py` sets CLA2 where the specimen's features swing least (E24).
+  Open: the real wobbler's amplitude and frequency are not known; 100 V is a choice. Original
+  question: the HT wobbler: let every lens depend on the high tension and wobble it between
+  frames, then a recipe that finds the shift of the specimen's features (cross-correlation) and
+  sets CLA2?
+- Q20 `[answered]` 2026-11-22: "Q20 yes": each script names the values it changes, and only
+  those are snapshotted and restored. Built 2026-11-22 (`settable_snapshot(monitor, keys)`). Original question: should a script snapshot and restore
+  only the values it changes? Today every
+  snapshot reads all settable values, so a getter that fails on the NEOARM stops every script
+  (U6), and a restore undoes what an alignment set unless the script leaves it out. For the
+  principal, resolves J16 and R25.
+- Q23 `[answered]` 2026-11-22: yes, built after the HT wobbler (Q19). The illumination at the
+  specimen from the predictor (the principal,
+  2026-11-22: "cant I get size from the specimen plane if the lens system below predicts mag....
+  so in a way we can predict that? We just view it through the projector."): the fitted model
+  traces to the specimen plane and gives, for any spot size and CL3, the illuminated patch's rms
+  size (seen in MAG, in focus, through the projector) and the convergence angle (seen in DIFF,
+  through the camera length), in nanometres once a ruler fixes the scale (U2: the cross grating's
+  463 nm period). `[record]` The principal on checking it: the microscope does not give the
+  true illumination; only the simulated NEOARM's hidden column can, in rehearsal. Example: E23.
+  Resolves M17's direction.
+- Q24 `[answered]` 2026-11-22: "ignore aberrations for now. yes to everything else": the rings
+  first (the coherent wave from just above the condenser aperture), in the simulator only; the
+  predictor stays paraxial and without an aperture until a real recording asks for more.
+  Aberrations and rings from the condenser aperture (the principal,
+  2026-11-22: "what about getting aberrations and defocus rings from the condenser aperture?"):
+  start the coherent wave just above the condenser aperture instead of at the specimen, so that
+  defocused and DIFF images show the aperture edge's Fresnel rings; and give the hidden column
+  condenser (and objective pre-field) aberrations with TemGym's Seidel terms, whose coefficients
+  are choices with no NEOARM source. The fitted model is paraxial and has no aperture (U8). For
+  the principal: which first, the rings or the aberrations; and does the predictor need to fit
+  them, or only the simulator show them? (Answered above.)
+- Q21 `[deferred]` Stage Z: settable as a value of `WRITE_ONLY`, and within which limits? Safety
+  limit: the principal or the instrument's owner decides. Deferred by the principal to later.
+- Q22 `[answered]` 2026-11-22. The principal: "so here I guess its iterative so... I know that
+  is something we have to worry about." Then "Q22a yes, Q22b yes": the loop is record for the
+  predictor and fit, run the recipe, re-record only what the alignment changed and refit those
+  parts, until neither changes (22a); the first version does one pass (record, align, short
+  refit), and the full loop waits until the real NEOARM's drift is seen (22b). Original question:
+  how the predictor follows an alignment: refit the parts it changed from a short
+  recording after the alignment, model the balances, or neither for now? And should scripts that
+  predict bring the lenses from below first (U7)? For the principal, with Q15.
+
+Status of 2026-11-22, evening (built without further questions, at the principal's request:
+"run to satisfy the requirements as best you can ... make sure that what we have has a good
+chance of working on the neoarm first time"):
+
+- Q13 (corrector) `[answered]` 2026-11-22: "its a probe corrector, but in TEM mode the software
+  shows that all currents are zero - even to the transfer lens. Except one deflector." The
+  simulated NEOARM's corrector is free space. The fit tries off, -1 and +1 (the last two by
+  starts with the deflectors' kicks reversed); a +1 test recording fitted as well as -1 (misfit
+  138 against 139).
+- PLA `[answered]` 2026-11-22: "Yes do add PLA for sure". On jemwrap's settable list; DIFF
+  patterns are centred with PLA in shift_balance.py, record_lens_changes.py and centre_beam.py,
+  and the fitted model has PLA.
+- Near-aligned start `[answered]` 2026-11-22: the simulated NEOARM starts from an alignment that
+  is nearly right, lenses from below. Its hidden condenser matches the console's whole spot table
+  (focus and SpotA) with the corrector off.
+- Q19 status: the condenser alignment tilt (HT wobbler) stops where CLA2 lowers the swing by less
+  than 10 % and reports the rest (E24 reworded, the principal: "Maybe 6 pixels is an ok error").
+  On the simulated NEOARM about 6 px stay, from CL1 and CL3 off the axis; the gun and spot
+  alignments, which have no script, would remove them.
+- Q23 status: the grating ruler works (1.2 % on the simulator); the gold ruler does not work on
+  the final simulator (no rings at the smallest DIFF spot). The predictor gives sizes in nm and
+  angles in px of DIFF row 10 until it does. Open, for the next session.
+- Q24 `[deferred]`: the aperture rings are not built.
+- New, for the principal: the beam-shift range of the NEOARM. No source was found; the simulator
+  assumes +-50 um over half the range, which agrees with the real recording of 2026-11-10 (one unit
+  of CLA1 about 1.25 nm at the specimen; the simulator 1.5 nm).
+- E9 status (2026-11-23): fails on the final simulator. The refits with CL1 moved 5 mm and the
+  objective's focal length moved 20 % end at a misfit of about 23 900 against the best 457; the
+  linear estimate moves the predictions by 0.03 and 0.58 px. Open, for the next session.
+
+Status of 2026-11-23 (the principal's review):
+
+- The model with positions `[answered]` 2026-11-23. The principal asked whether a predictive
+  model that is "very sensitive to values I can't know" forces a framework without positions,
+  which could not be extended. Agreed ("Yes, agree with 1 to 5 - fix E9 that way"):
+  1. Keep the physical model with positions. The held numbers stay unknowable; the requirement
+     is that the predictions do not depend on them.
+  2. E9 refits by continuation: each held number moves in 20 steps, and before each refit the
+     fitted numbers take the first-order change that follows the step (a predictor-corrector
+     continuation). The old refits in ten plain steps got lost in the misfit's curved valley; a
+     test of 2026-11-23 with continuation: CL1 at +-5 mm moves the predictions by 0.03 px
+     (misfit 445 and 469 against 457), the objective's focal length at +-20 % by 0.70 and
+     0.69 px (misfit 531 and 427).
+  3. A second check outside the recorded range: example E25.
+  4. For each extension, E9 and E25 run again. A held number that then matters is pinned by a
+     measurement that sees it, not by a change of framework.
+  5. A model without positions (the A and B elements as functions of the DAC values) and the
+     manifold boundary approximation method (Transtrum and Sethna) are analysis tools only, to
+     show which combinations of numbers the data fix.

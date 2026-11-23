@@ -22,6 +22,7 @@ if SIMULATED:
 from PyJEM import TEM3, detector, sightx  # noqa: E402
 
 from jemwrap import MicroscopeMonitor, PyJEMAdapter  # noqa: E402
+from microscope_functions import check_binning  # noqa: E402
 from jemwrap.control import (  # noqa: E402
     read_value,
     restore,
@@ -46,8 +47,11 @@ SETTLE_S = 0.2
 if SIMULATED:
     SETTLE_S = 0.0
 
-# Every value that a script may change, for the restore at the end.
-start = settable_snapshot(monitor)
+# CHANGES holds the values that this script changes, for the restore at the end (Q20 of
+# design/requirements.md). The script does not read or set back a value that it does not touch.
+CHANGES = ("deflectors.CLA1",)
+check_binning(monitor)
+start = settable_snapshot(monitor, CHANGES)
 # jemwrap gives DAC values as unsigned 16-bit numbers. Plain integers can go below zero in a sum.
 cla1_x_start, cla1_y_start = (int(dac) for dac in read_value(monitor, "deflectors.CLA1"))
 frames = []

@@ -85,9 +85,10 @@ def test_lens_off_the_axis_acts_about_its_own_axis():
     np.testing.assert_allclose([a.x - 2e-4, a.y + 1e-4, a.dx, a.dy], [b.x, b.y, b.dx, b.dy], atol=1e-15)
 
 
-def test_gaussian_beams_are_refused():
-    with pytest.raises(NotImplementedError):
-        lens(1.0)(make_gaussian(x=0.0, y=0.0, dx=0.0, dy=0.0, waist_x=1e-8, waist_y=1e-8, voltage=VOLTAGE))
+def test_gaussian_beams_pass():
+    """Gaussian beams are supported since 2026-11-22; tests/test_pole_piece_gaussian.py checks them."""
+    out = lens(1.0)(make_gaussian(x=0.0, y=0.0, dx=0.0, dy=0.0, waist_x=1e-8, waist_y=1e-8, voltage=VOLTAGE))
+    assert jnp.all(jnp.isfinite(out.Q_inv))
 
 
 def test_matrix_broadcasts_over_voltage():

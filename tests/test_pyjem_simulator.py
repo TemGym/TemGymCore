@@ -581,3 +581,74 @@ def test_the_calls_jemwrap_reads_have_pyjems_names_and_types():
     binning = settings["BinningSize"]
     image = settings["OutputImageInformation"]["ImageSize"]
     assert (image["Width"] // binning["Width"], image["Height"] // binning["Height"]) == (64, 64)
+
+
+def test_selecting_a_spot_sets_the_spot_alignment_of_the_console_table():
+    """A spot row with ``SpotA`` sets that deflector on every change of spot; the other deflectors stay."""
+    row = dict(mag=[40000, "X", "X40k"], IL1=41782, IL2=24862, IL3=35544, PL1=64000, OLc=45818, OLf=39269)
+    tables = dict(rows=dict(MAG=[row], DIFF=[]),
+                  spot_alpha=[dict(spot=s, alpha=1, CL1=26112 + 2560 * s, CL3=33000, CM=26624,
+                                   SpotA=[24864 + 100 * s, 32592 + 50 * s]) for s in (0, 1, 2)])
+
+    def whole_column(console, voltage_v):
+        return [Plane(z=1.0)], 0.0, np.zeros(4), np.diag([1e-3 ** 2] * 2 + [1e-12] * 2)
+
+    scope = SimulatedMicroscope.from_console(tables, whole_column, alpha=1, camera=SMALL_CAMERA, spot=1,
+                                             ray_sample_power=8)
+    TEM3, _ = scope.pyjem()
+    deflector, eos = TEM3.Def3(), TEM3.EOS3()
+    assert list(deflector.GetSpotA()) == [24964, 32642]
+    deflector.SetCLA1(1000, 2000)
+    deflector.SetSpotA(30000, 30000)
+    eos.SelectSpotSize(2)
+    assert list(deflector.GetSpotA()) == [25064, 32692]
+    assert list(deflector.GetCLA1()) == [1000, 2000]
+    scope.reset()                                            # power-on spot 2 takes its alignment too
+    assert list(deflector.GetSpotA()) == [25064, 32692]
+
+
+def test_the_ht_wobbler_switch_is_kept_and_refuses_other_values(scope):
+    """GUN3.SetHtWobbler keeps the switch and refuses values other than 0 and 1."""
+    tem3, _ = scope.pyjem()
+    gun = tem3.GUN3()
+    gun.SetHtWobbler(1)
+    assert scope.ht_wobbler is True
+    gun.SetHtWobbler(0)
+    assert scope.ht_wobbler is False
+    with pytest.raises(Exception):
+        gun.SetHtWobbler(2)
+
+
+def test_the_ht_wobbler_moves_the_high_tension_at_every_frame(scope):
+    """While the wobbler is on, the beam's voltage alternates between frames; off, it is ht_v."""
+    scope.ht_wobbler_v = 50.0
+    assert scope.beam_voltage_v() == scope.ht_v
+    scope.ht_wobbler = True
+    voltages = []
+    for _ in range(4):
+        voltages.append(scope.beam_voltage_v())
+        scope.acquire()
+    assert voltages == [scope.ht_v + 50.0, scope.ht_v - 50.0] * 2
+    scope.ht_wobbler = False
+    assert scope.beam_voltage_v() == scope.ht_v
+
+
+def test_a_wave_frame_and_a_ray_frame_agree_in_flux_and_centre(scope):
+    """With a specimen, the coherent wave frame (wave_beamlets) and the ray frame see the same
+    transmitted fraction and put the beam in the same place."""
+    from temgym_core.components import CrossGrating
+
+    scope.specimen = CrossGrating(z=0.0, period=40e-9, hole_fraction=0.6, bar_transmission=0.05,
+                                  edge_width=2e-9, rotation=0.3)
+    setting = scope.physical_setting()
+    frames = []
+    for beamlets in (None, 31):
+        scope.wave_beamlets = beamlets
+        frames.append(np.array(scope.expected_image(setting, 8)))
+    rays, waves = frames
+    assert abs(waves.sum() - rays.sum()) < 0.1 * rays.sum()
+    rows, columns = np.indices(rays.shape)
+    for image in (rays, waves):
+        image /= image.sum()
+    for index in (rows, columns):
+        assert abs((rays * index).sum() - (waves * index).sum()) < 1.0

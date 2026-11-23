@@ -7,6 +7,8 @@ import dataclasses
 import warnings
 
 
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import jax_dataclasses as jdc
@@ -349,6 +351,10 @@ class ABCDTransfer(Component):
     Transports positions, slopes and Gaussian curvature. This primitive does
     not add optical path or the coherent amplitude factor; physical wrappers
     such as HardEdgeSolenoid supply them.
+
+    With ``length`` (metres) the map spans a region of the column: it takes a
+    ray at its entrance ``z`` to its exit ``z + length``, and the legacy plot
+    draws the region as a rectangle. With ``length = 0`` the map acts at ``z``.
     """
 
     A: jnp.ndarray
@@ -360,6 +366,7 @@ class ABCDTransfer(Component):
         default_factory=lambda: jnp.eye(2, dtype=jnp.float64)
     )
     z: float = 0.0
+    length: float = 0.0
 
     def _call_ray(self, ray: Ray):
         A = jnp.asarray(self.A, dtype=jnp.float64)
@@ -374,6 +381,7 @@ class ABCDTransfer(Component):
             y=r_xy_new[..., 1],
             dx=d_xy_new[..., 0],
             dy=d_xy_new[..., 1],
+            z=ray.z + self.length,
         )
 
     def _call_gaussian(self, ray: GaussianBeam) -> GaussianBeam:
@@ -415,6 +423,7 @@ class ABCDTransfer(Component):
             dx=d_xy_new[..., 0],
             dy=d_xy_new[..., 1],
             Q_inv=Q_new,
+            z=ray.z + self.length,
         )
 
 
@@ -789,27 +798,9 @@ class PolePieceLens(Component):
         It acts on (r, r') and holds the focusing alone. Entries broadcast over ``voltage``.
         The ``[1, 0]`` entry is ``-1 / f``.
         """
-        larmor = self.rotation_angle(voltage)
-        half_width = self.gap / 2 + 6 * self.bore_radius / LENZ_WIDTH   # tanh(6) = 1 - 1.2e-5
-        h = 2 * half_width / POLE_PIECE_STEPS
-
-        def slope(z, m):
-            r, dr = m
-            return jnp.stack([dr, -(larmor * self.field_shape(z)) ** 2 * r])
-
-        def rk4(m, i):
-            z = -half_width + i * h
-            k1 = slope(z, m)
-            k2 = slope(z + h / 2, m + h / 2 * k1)
-            k3 = slope(z + h / 2, m + h / 2 * k2)
-            k4 = slope(z + h, m + h * k3)
-            return m + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4), None
-
-        one, zero = jnp.ones_like(larmor), jnp.zeros_like(larmor)
-        start = jnp.stack([jnp.stack([one, zero]), jnp.stack([zero, one])], axis=1)   # (r, r') x two rays
-        m, _ = lax.scan(rk4, start, jnp.arange(POLE_PIECE_STEPS))
-        back = jnp.array([[1.0, -half_width], [0.0, 1.0]])           # from the field's ends to the centre
-        return jnp.einsum("ij,jk...,kl->il...", back, m, back)
+        # One compiled integration: run op by op it took about 0.18 s a call (2026-11-22).
+        return _pole_piece_transfer(jnp.asarray(self.rotation_angle(voltage)), self.gap,
+                                    self.bore_radius, POLE_PIECE_STEPS)
 
     def _call_ray(self, ray: Ray) -> Ray:
         m = self.transfer_matrix(ray.voltage)
@@ -830,7 +821,67 @@ class PolePieceLens(Component):
         )
 
     def _call_gaussian(self, ray: GaussianBeam):
-        raise NotImplementedError("PolePieceLens is implemented for rays only.")
+        """The same linear map for Gaussian beamlets, about the lens's centre.
+
+        The centre, slope and path of each beamlet follow the ray map (``_call_ray``). Its
+        curvature follows the ABCD law ``Q' = (C + D Q)(A + B Q)^-1``. The blocks are those of
+        the radial transfer, followed by the Larmor rotation. The method carries the decay matrix
+        by congruence, as :class:`HardEdgeSolenoid` does, so that it stays positive. The amplitude
+        takes the coherent factor ``1 / sqrt(det(A + B Q))``. The bundle has one voltage, the
+        voltage of the first beamlet.
+        """
+        voltage = jnp.ravel(jnp.asarray(ray.voltage, dtype=jnp.float64))[0]
+        m = self.transfer_matrix(voltage)
+        angle = self.rotation_angle(voltage)
+        cos_a, sin_a = jnp.cos(angle), jnp.sin(angle)
+        rotation = jnp.array([[cos_a, -sin_a], [sin_a, cos_a]])
+        A, B = rotation * m[0, 0], rotation * m[0, 1]
+        C, D = rotation * m[1, 0], rotation * m[1, 1]
+        centred = ray.derive(x=ray.x - self.x0 * ray._one, y=ray.y - self.y0 * ray._one)
+        out = ABCDTransfer(A=A, B=B, C=C, D=D, z=self.z)(centred)
+        transport = A + _matmat(B, ray.Q_inv)
+        inverse = jnp.linalg.solve(transport, jnp.broadcast_to(
+            jnp.eye(2, dtype=transport.dtype), transport.shape))
+        decay = jnp.real(jnp.swapaxes(inverse.conj(), -1, -2) @ jnp.imag(ray.Q_inv) @ inverse)
+        curvature = jnp.real(out.Q_inv) + 1j * decay
+        # The rotation has determinant one, so the coherent factor is that of the radial map.
+        determinant = jnp.linalg.det(m[0, 0] * jnp.eye(2) + m[0, 1] * ray.Q_inv)
+        root = jnp.sqrt(determinant)
+        root = jnp.where(jnp.imag(determinant) < 0., -root, root)
+        chief = self._call_ray(ray)
+        return chief.derive(
+            Q_inv=0.5 * (curvature + jnp.swapaxes(curvature, -1, -2)),
+            amplitude=ray.amplitude / root,
+        )
+
+
+@partial(jax.jit, static_argnames=("steps",))
+def _pole_piece_transfer(larmor, gap, bore_radius, steps):
+    """The 2x2 transfer of :class:`PolePieceLens`, centre plane to centre plane, rotating frame."""
+    half_width = gap / 2 + 6 * bore_radius / LENZ_WIDTH   # tanh(6) = 1 - 1.2e-5
+    h = 2 * half_width / steps
+
+    def field_shape(z):
+        return (jnp.tanh(LENZ_WIDTH * (z + gap / 2) / bore_radius)
+                - jnp.tanh(LENZ_WIDTH * (z - gap / 2) / bore_radius)) / (2 * gap)
+
+    def slope(z, m):
+        r, dr = m
+        return jnp.stack([dr, -(larmor * field_shape(z)) ** 2 * r])
+
+    def rk4(m, i):
+        z = -half_width + i * h
+        k1 = slope(z, m)
+        k2 = slope(z + h / 2, m + h / 2 * k1)
+        k3 = slope(z + h / 2, m + h / 2 * k2)
+        k4 = slope(z + h, m + h * k3)
+        return m + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4), None
+
+    one, zero = jnp.ones_like(larmor), jnp.zeros_like(larmor)
+    start = jnp.stack([jnp.stack([one, zero]), jnp.stack([zero, one])], axis=1)   # (r, r') x two rays
+    m, _ = lax.scan(rk4, start, jnp.arange(steps))
+    back = jnp.array([[1.0, -half_width], [0.0, 1.0]])           # from the field's ends to the centre
+    return jnp.einsum("ij,jk...,kl->il...", back, m, back)
 
 
 @jdc.pytree_dataclass(kw_only=True)
