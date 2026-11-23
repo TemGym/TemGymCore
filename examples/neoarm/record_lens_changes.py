@@ -11,10 +11,11 @@ the beam, as an operator would. It walks the centring deflector out on a spiral.
 loses the beam, the script tries the kick the other way. For a y trial, it then also tries a smaller
 kick. If none of this finds the beam, the script stops and sets the microscope back. The table keeps
 a kicked or sizing frame that loses the beam, with no centre. At some rows, the script does the same
-with one projector lens moved up or down. It also does the same with several lenses moved at once,
-and with the objective's fine focus OLf moved up or down. At MAG 40k, it does the same at each spot
-size. There it also kicks SpotA where SpotA moves the beam. At a few rows, it brings each of CL1,
-CL3, IL1, IL2, IL3 and PL1 to the row's value from above, one at a time. Then it kicks the beam
+with one projector lens moved up or down. It also does the same with several lenses moved at once.
+It does the same with the objective's fine focus OLf moved up or down, at some rows far. At
+MAG 40k, it does the same at each spot size. There it also kicks SpotA where SpotA moves the beam.
+At a few rows, it brings each of CL1, CL3, IL1, IL2, IL3 and PL1 to the row's value from above,
+one at a time. Then it kicks the beam
 again. The jump between the two approaches shows each lens's lag.
 
 The script changes the function mode (MAG and DIFF only), the selector and the spot size. It also
@@ -104,6 +105,13 @@ COMBINED_CHANGES_DAC = ({"IL1": 1000, "IL3": -1000}, {"IL2": -1000, "IL3": 1000,
 # 5 um of focus. At X200k the rehearsal moved the beam 135 px for 3000 units.
 FOCUS_ROWS = {MAG: (9, 13, 17), DIFF: (4, 7, 11)}
 FOCUS_STEPS_DAC = (-3000, -1000, 1000, 3000)
+# The wide focus series lets the fit see the objective's focal length (example E25, the principal,
+# 2026-11-23). Within 3000 units, a focal length 20 % off moves no prediction by more than 1 px.
+# At 9000 units it moves one by 28 px. The wide steps go only where the beam stays on the SightX,
+# the DIFF rows. In MAG the beam left it or grew too large to centre, at X15k from 6000 units
+# (2026-11-23). The values are choices.
+WIDE_FOCUS_ROWS = {MAG: (), DIFF: (4, 7, 11)}
+WIDE_FOCUS_STEPS_DAC = (-9000, -6000, 6000, 9000)
 # The spot sizes recorded at X40k, as PyJEM's indices (spot sizes 1 to 5).
 SPOT_ROW = 13
 SPOTS = (0, 1, 2, 3, 4)
@@ -525,7 +533,8 @@ try:
                 # Free lens control may be off, and then the lens reading holds the row's value.
                 row_olf = state["OLf_flc_dac"] if state["OLf_flc_on"] else state["OLf"]
                 row_deflector = (state[f"{deflector}_x"], state[f"{deflector}_y"])
-                for step in FOCUS_STEPS_DAC:
+                wide = WIDE_FOCUS_STEPS_DAC if selector in WIDE_FOCUS_ROWS[mode] else ()
+                for step in FOCUS_STEPS_DAC + wide:
                     # Each step starts from the row's deflector value. It does not start from the
                     # centring of the step before.
                     set_value(monitor, f"deflectors.{deflector}", row_deflector)

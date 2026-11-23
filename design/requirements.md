@@ -712,3 +712,13 @@ Status of 2026-11-23 (the principal's review):
   the grains' shadow image has patches as small). Rehearsal: CL3 30693, the 111 ring 46.00 px
   against 46.62 (1.3 %); 0.2315 mrad per px at DIFF row 10. The blotchy rings are physical for a
   narrow beam: each lit grain diffracts into one spot.
+- Wide focus series `[answered]` 2026-11-23 (the principal: "Yes, add it"). record_lens_changes.py
+  moves OLf by +-6000 and +-9000 units at DIFF rows 4, 7 and 11 (in MAG the beam left the SightX
+  or grew too large to centre from 3000 to 6000 units). Recording:
+  `recordings/lens_changes_simulated_wide_focus_2026-11-23.csv`, 1729 frames; its other frames
+  agree with the corrector-off recording to the frame noise (median 0.02 px). Refit: misfit 547;
+  E1, E2, E3, E14 pass as before; E15 1.1 px rms at X100k (was 5.3) and 0.6 px at 1 m out to
+  9000 units. E9 passes, the focal length now 0.19 px (was 0.70). E25 still fails narrowly: CL1's
+  position 2.2 px, the focal length 1.3 px (was 28), most in MAG with OLf 9000 units off, where no
+  frame can follow the beam. Open, for the principal: whether E25 should count only settings
+  whose beam a frame could measure.

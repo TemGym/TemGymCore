@@ -703,6 +703,11 @@ and `../examples.md`.
   saturated direct beam and diffracted spots tie at the brightest count. record_rulers.py now
   centres on the largest bright patch and picks CL3 where the rings match best; rehearsal 46.00
   px against 46.62 (1.3 %). neoarm_fit.json now names the corrector-off recording.
+- Wide focus series (2026-11-23, the principal: "Yes, add it"). OLf +-6000 and +-9000 at DIFF
+  rows 4, 7, 11; in MAG the beam is lost from 3000 to 6000 units. New recording
+  `lens_changes_simulated_wide_focus_2026-11-23.csv` (1729 frames). Refit: misfit 547; E15
+  1.1 px rms at X100k (was 5.3); E9 focal length 0.19 px (was 0.70); E25 focal length 1.3 px
+  (was 28), CL1 2.2 px (was 1.3): fails narrowly, in MAG at OLf 9000 off.
 - Corrector test (the principal: "we also need to be careful that our assumptions about the
   corrector have zero effect on our ability to model the real microscope, if the corrector is on
   or off", 2026-11-22). `HIDDEN["corrector"]` ("minus one" as before, identical). Running: three

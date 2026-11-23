@@ -69,9 +69,10 @@ with no model. Then the recording and the fit give a predictor of the microscope
 3. **`record_lens_changes.py`: the recording.** It goes through the MAG rows X8000 to X500k and
    the DIFF camera lengths 8 cm to 2 m. It centres the beam (CLA1 in MAG, PLA in DIFF), kicks it
    (CLA1 in MAG, CLA2 in DIFF), moves each projector lens and the objective's fine focus, changes
-   the spot size, and brings lenses to their values from below and, at a few rows, from above. It
-   saves every frame and a table in `output/record_lens_changes/<time>/`. The recording that
-   notebook 2 uses is `recordings/lens_changes_simulated_corrector_off_2026-11-22.csv`.
+   the spot size, and brings lenses to their values from below and, at a few rows, from above. At
+   three DIFF rows it moves OLf up to 9000 units, so that the fit sees the objective's focal
+   length. It saves every frame and a table in `output/record_lens_changes/<time>/`. The
+   recording that notebook 2 uses is `recordings/lens_changes_simulated_wide_focus_2026-11-23.csv`.
 4. **`neoarm_fit.ipynb` (notebook 2): the fit.** It fits the model to the recording and predicts
    settings that the fit never saw (E1, E2, E3, E9, E14, E15, E17, E19, E25). It writes the fitted
    numbers to `neoarm_fit.json` and the deflector response of each row to `neoarm_response.json`.
@@ -142,14 +143,16 @@ spot table. It starts from a recent alignment that is nearly right, with every l
   not show); the shift wobbler 1.6 px before and 0.2 px after; the condenser tilt with the HT
   wobbler 5.9 px before and after (CL1 and CL3 sit off the axis, which the gun and spot alignments
   would set). The second pass changes nothing.
-- Notebook 2: the best of 72 starts reaches a misfit of 457 (corrector -1, mirror -1). Kept-back
-  MAG rows within 0.18 px rms, DIFF rows within 0.05 px, beam sizes within 0.5 % (E1, E2); several
+- Notebook 2: the best of 72 starts reaches a misfit of 547 (corrector -1, mirror -1). Kept-back
+  MAG rows within 0.18 px rms, DIFF rows within 0.05 px, beam sizes within 0.4 % (E1, E2); several
   lenses moved at once within 0.3 px (E3); spot 0 within 1.1 px (E14); the focus series within
-  5.4 px (E15). E9 passes: with each held number moved by its plausible error, the refits move
-  the kept-back predictions by at most 0.70 px (the objective's focal length, 20 %). E25 fails:
-  outside the recorded range, with OLf 9000 units off, the same focal length moves a prediction
-  by up to 28 px, and CL1's position by 1.3 px. The rulers give 7.93 nm per px at MAG X40k and
-  0.2315 mrad per px at DIFF row 10. The whole notebook takes about 40 minutes on the GPU.
+  1.2 px at X100k and 1.1 px at 1 m, out to OLf 9000 units (E15). E9 passes: with each held
+  number moved by its plausible error, the refits move the kept-back predictions by at most
+  0.19 px (the objective's focal length, 20 %). E25 fails narrowly: outside the recorded range,
+  CL1's position moves a prediction by up to 2.2 px and the focal length by 1.3 px, most in MAG
+  with OLf 9000 units off, where the beam cannot be measured. The rulers give 7.93 nm per px at
+  MAG X40k and 0.2315 mrad per px at DIFF row 10. The whole notebook takes about 40 minutes on
+  the GPU.
 - `record_rulers.py`: the grating's period within 1.2 % of the hidden column's, the gold 111
   ring 46.00 px against 46.62 (1.3 %). The script finds CL3 where the three rings match best.
 
@@ -160,9 +163,9 @@ spot table. It starts from a recent alignment that is nearly right, with every l
 - The model's beam assumes that every lens came to its value from below, as in the recording.
 - The gun, spot alignment, stigmator, diff focus and image focus steps of the alignment guide have
   no script.
-- Predictions far outside the recorded range rest on the held objective focal length (E25):
-  OLf moved three times as far as the recorded focus series is not predicted to 1 px. A focus
-  series over a wider OLf range would pin it.
+- Predictions in MAG with OLf far off (9000 units) rest on the held CL1 position and objective
+  focal length to about 2 px (E25). The recording cannot reach them: in MAG the beam leaves the
+  SightX or grows too large from 3000 to 6000 units off.
 - `find_lost_beam` (in `microscope_functions.py`) has no caller yet. It is the routine for a beam
   lost off the SightX.
 - Nothing here has run on the real NEOARM yet.
