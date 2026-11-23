@@ -73,7 +73,7 @@ with no model. Then the recording and the fit give a predictor of the microscope
    saves every frame and a table in `output/record_lens_changes/<time>/`. The recording that
    notebook 2 uses is `recordings/lens_changes_simulated_corrector_off_2026-11-22.csv`.
 4. **`neoarm_fit.ipynb` (notebook 2): the fit.** It fits the model to the recording and predicts
-   settings that the fit never saw (E1, E2, E3, E9, E14, E15, E17, E19). It writes the fitted
+   settings that the fit never saw (E1, E2, E3, E9, E14, E15, E17, E19, E25). It writes the fitted
    numbers to `neoarm_fit.json` and the deflector response of each row to `neoarm_response.json`.
    It tries the corrector off, imaging with -1, and (by reversed kicks) with +1. At its end it
    turns the model's pixels into nm and mrad at the specimen with the rulers (E23).
@@ -145,12 +145,13 @@ spot table. It starts from a recent alignment that is nearly right, with every l
 - Notebook 2: the best of 72 starts reaches a misfit of 457 (corrector -1, mirror -1). Kept-back
   MAG rows within 0.18 px rms, DIFF rows within 0.05 px, beam sizes within 0.5 % (E1, E2); several
   lenses moved at once within 0.3 px (E3); spot 0 within 1.1 px (E14); the focus series within
-  5.4 px (E15). E9 fails: the refits with CL1 moved 5 mm and with the objective's focal length
-  moved 20 % end at a misfit of about 23 900 and do not find the best fit's valley again. The
-  linear estimate of the same check moves the predictions by 0.03 and 0.58 px. Open. The grating
-  ruler gives 7.93 nm per px at MAG X40k. The whole notebook takes about 40 minutes on the GPU.
-- `record_rulers.py`: the grating's period within 1.2 % of the hidden column's. The gold ruler
-  does not find rings on this simulator.
+  5.4 px (E15). E9 passes: with each held number moved by its plausible error, the refits move
+  the kept-back predictions by at most 0.70 px (the objective's focal length, 20 %). E25 fails:
+  outside the recorded range, with OLf 9000 units off, the same focal length moves a prediction
+  by up to 28 px, and CL1's position by 1.3 px. The rulers give 7.93 nm per px at MAG X40k and
+  0.2315 mrad per px at DIFF row 10. The whole notebook takes about 40 minutes on the GPU.
+- `record_rulers.py`: the grating's period within 1.2 % of the hidden column's, the gold 111
+  ring 46.00 px against 46.62 (1.3 %). The script finds CL3 where the three rings match best.
 
 ## What this version does not do
 
@@ -159,7 +160,9 @@ spot table. It starts from a recent alignment that is nearly right, with every l
 - The model's beam assumes that every lens came to its value from below, as in the recording.
 - The gun, spot alignment, stigmator, diff focus and image focus steps of the alignment guide have
   no script.
-- The gold ruler (angles in mrad) does not work on the simulated NEOARM yet.
+- Predictions far outside the recorded range rest on the held objective focal length (E25):
+  OLf moved three times as far as the recorded focus series is not predicted to 1 px. A focus
+  series over a wider OLf range would pin it.
 - `find_lost_beam` (in `microscope_functions.py`) has no caller yet. It is the routine for a beam
   lost off the SightX.
 - Nothing here has run on the real NEOARM yet.

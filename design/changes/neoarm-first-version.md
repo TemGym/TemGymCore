@@ -690,6 +690,19 @@ and `../examples.md`.
   objective's focal length (0.58 px against 0.5); E9 decides. E9 fails: with CL1 moved 5 mm or the
   focal length 20 %, the refits (ten steps) end near a misfit of 23 900 and their predictions
   differ by 39 and 44 px. Open: the refits do not find the valley again.
+- E9 by continuation, E25 and the gold ruler (2026-11-23, the principal's review). The
+  principal asked whether a model this sensitive to values that cannot be known forces a
+  framework without positions. A test showed the sensitivity was the old refits': each held
+  number moved in 20 steps, with the first-order change of the fitted numbers before each refit
+  (a predictor-corrector continuation), keeps the refits on the misfit's valley floor. CL1 at
+  +-5 mm moves the predictions by 0.03 px, the objective's focal length at +-20 % by 0.70 px.
+  Agreed (requirements, status of 2026-11-23): keep the model with positions; E9 by
+  continuation; E25 outside the recorded range; rerun both for each extension. neoarm_fit.ipynb
+  re-executed: E9 passes (0.70 px at most); E25 fails (the focal length moves a prediction by up
+  to 28 px, CL1 by 1.3 px, with OLf 9000 units off). The gold ruler's fault was its centre: the
+  saturated direct beam and diffracted spots tie at the brightest count. record_rulers.py now
+  centres on the largest bright patch and picks CL3 where the rings match best; rehearsal 46.00
+  px against 46.62 (1.3 %). neoarm_fit.json now names the corrector-off recording.
 - Corrector test (the principal: "we also need to be careful that our assumptions about the
   corrector have zero effect on our ability to model the real microscope, if the corrector is on
   or off", 2026-11-22). `HIDDEN["corrector"]` ("minus one" as before, identical). Running: three

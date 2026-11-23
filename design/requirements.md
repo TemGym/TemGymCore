@@ -665,14 +665,16 @@ chance of working on the neoarm first time"):
   than 10 % and reports the rest (E24 reworded, the principal: "Maybe 6 pixels is an ok error").
   On the simulated NEOARM about 6 px stay, from CL1 and CL3 off the axis; the gun and spot
   alignments, which have no script, would remove them.
-- Q23 status: the grating ruler works (1.2 % on the simulator); the gold ruler does not work on
+- Q23 status (superseded below): the grating ruler works (1.2 % on the simulator); the gold
+  ruler does not work on
   the final simulator (no rings at the smallest DIFF spot). The predictor gives sizes in nm and
   angles in px of DIFF row 10 until it does. Open, for the next session.
 - Q24 `[deferred]`: the aperture rings are not built.
 - New, for the principal: the beam-shift range of the NEOARM. No source was found; the simulator
   assumes +-50 um over half the range, which agrees with the real recording of 2026-11-10 (one unit
   of CLA1 about 1.25 nm at the specimen; the simulator 1.5 nm).
-- E9 status (2026-11-23): fails on the final simulator. The refits with CL1 moved 5 mm and the
+- E9 status (2026-11-23, superseded below): fails on the final simulator. The refits with CL1
+  moved 5 mm and the
   objective's focal length moved 20 % end at a misfit of about 23 900 against the best 457; the
   linear estimate moves the predictions by 0.03 and 0.58 px. Open, for the next session.
 
@@ -695,3 +697,18 @@ Status of 2026-11-23 (the principal's review):
   5. A model without positions (the A and B elements as functions of the DAC values) and the
      manifold boundary approximation method (Transtrum and Sethna) are analysis tools only, to
      show which combinations of numbers the data fix.
+
+- Results of 2026-11-23 (neoarm_fit.ipynb re-executed): E1, E2, E3, E14, E15 pass as before. E9
+  passes: the refits by continuation move the kept-back predictions by at most 0.70 px (the
+  objective's focal length, misfit 531 against 457; CL1 0.03 px, misfit 445). E25 fails: at the
+  settings outside the recorded range, the objective's focal length moves a prediction by up to
+  28 px and CL1's position by 1.3 px, both most with OLf 9000 units off (MAG row 23). By
+  decision 4, the remedy is a measurement that sees the focal length, such as a focus series
+  over a wider OLf range; for the principal.
+- Q23 status, 2026-11-23: the gold ruler works on the simulator. Its fault was the centre: in
+  DIFF the direct beam and many diffracted spots saturate the SightX, and the brightest pixel was
+  often a diffracted spot. record_rulers.py now centres on the largest bright patch and picks CL3
+  where the three rings match best (the smallest spot by area failed: above the console's CL3,
+  the grains' shadow image has patches as small). Rehearsal: CL3 30693, the 111 ring 46.00 px
+  against 46.62 (1.3 %); 0.2315 mrad per px at DIFF row 10. The blotchy rings are physical for a
+  narrow beam: each lit grain diffracts into one spot.
